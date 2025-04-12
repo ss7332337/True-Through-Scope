@@ -25,36 +25,40 @@ constexpr UINT MAX_CB_SLOTS = 14;       // D3D11_COMMONSHADER_CONSTANT_BUFFER_AP
 struct SavedState
 {
 	// IA Stage
-	ID3D11InputLayout* pInputLayout = nullptr;
-	ID3D11Buffer* pVertexBuffers[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
-	UINT VertexStrides[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
-	UINT VertexOffsets[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
-	ID3D11Buffer* pIndexBuffer = nullptr;
-	DXGI_FORMAT IndexBufferFormat = DXGI_FORMAT_UNKNOWN;
-	UINT IndexBufferOffset = 0;
-	D3D11_PRIMITIVE_TOPOLOGY PrimitiveTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+	ID3D11InputLayout* pInputLayout;
+	ID3D11Buffer* pVertexBuffers[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
+	UINT VertexStrides[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
+	UINT VertexOffsets[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
+	ID3D11Buffer* pIndexBuffer;
+	DXGI_FORMAT IndexBufferFormat;
+	UINT IndexBufferOffset;
+	D3D11_PRIMITIVE_TOPOLOGY PrimitiveTopology;
+
 	// VS Stage
-	ID3D11VertexShader* pVS = nullptr;
-	ID3D11Buffer* pVSCBuffers[MAX_CB_SLOTS] = {};
-	ID3D11ShaderResourceView* pVSSRVs[MAX_SRV_SLOTS] = {};
-	ID3D11SamplerState* pVSSamplers[MAX_SAMPLER_SLOTS] = {};
+	ID3D11VertexShader* pVS;
+	ID3D11Buffer* pVSCBuffers[MAX_CB_SLOTS];
+	ID3D11ShaderResourceView* pVSSRVs[MAX_SRV_SLOTS];
+	ID3D11SamplerState* pVSSamplers[MAX_SAMPLER_SLOTS];
+
 	// PS Stage
-	ID3D11PixelShader* pPS = nullptr;
-	ID3D11Buffer* pPSCBuffers[MAX_CB_SLOTS] = {};
-	ID3D11ShaderResourceView* pPSSRVs[MAX_SRV_SLOTS] = {};
-	ID3D11SamplerState* pPSSamplers[MAX_SAMPLER_SLOTS] = {};
+	ID3D11PixelShader* pPS;
+	ID3D11Buffer* pPSCBuffers[MAX_CB_SLOTS];
+	ID3D11ShaderResourceView* pPSSRVs[MAX_SRV_SLOTS];
+	ID3D11SamplerState* pPSSamplers[MAX_SAMPLER_SLOTS];
+
 	// RS Stage
-	D3D11_VIEWPORT Viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
-	UINT NumViewports = 0;
-	ID3D11RasterizerState* pRasterizerState = nullptr;
+	D3D11_VIEWPORT Viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+	UINT NumViewports;
+	ID3D11RasterizerState* pRasterizerState;
+
 	// OM Stage
-	ID3D11RenderTargetView* pRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
-	ID3D11DepthStencilView* pDSV = nullptr;
-	ID3D11BlendState* pBlendState = nullptr;
-	FLOAT BlendFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-	UINT SampleMask = 0xFFFFFFFF;
-	ID3D11DepthStencilState* pDepthStencilState = nullptr;
-	UINT StencilRef = 0;
+	ID3D11RenderTargetView* pRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT];
+	ID3D11DepthStencilView* pDSV;
+	ID3D11BlendState* pBlendState;
+	FLOAT BlendFactor[4];
+	UINT SampleMask;
+	ID3D11DepthStencilState* pDepthStencilState;
+	UINT StencilRef;
 };
 
 
@@ -177,6 +181,30 @@ HRESULT CreateShaderFromFile(const WCHAR* csoFileNameInOut, const WCHAR* hlslFil
 	return hr;
 }
 
+DirectX::XMMATRIX Hook::GetGameViewMatrix()
+{
+	auto state = RE::BSGraphics::State::GetSingleton();
+	const auto& viewMat = state.cameraState.camViewData.viewMat;
+	// 视图矩阵以行主序存储，直接构造XMMATRIX
+	return DirectX::XMMATRIX(
+		viewMat[0].m128_f32[0], viewMat[0].m128_f32[1], viewMat[0].m128_f32[2], viewMat[0].m128_f32[3],
+		viewMat[1].m128_f32[0], viewMat[1].m128_f32[1], viewMat[1].m128_f32[2], viewMat[1].m128_f32[3],
+		viewMat[2].m128_f32[0], viewMat[2].m128_f32[1], viewMat[2].m128_f32[2], viewMat[2].m128_f32[3],
+		viewMat[3].m128_f32[0], viewMat[3].m128_f32[1], viewMat[3].m128_f32[2], viewMat[3].m128_f32[3]);
+}
+
+DirectX::XMMATRIX Hook::GetGameProjectionMatrix()
+{
+	auto state = RE::BSGraphics::State::GetSingleton();
+	const auto& projMat = state.cameraState.camViewData.projMat;
+	// 投影矩阵同样以行主序存储，直接构造XMMATRIX
+	return DirectX::XMMATRIX(
+		projMat[0].m128_f32[0], projMat[0].m128_f32[1], projMat[0].m128_f32[2], projMat[0].m128_f32[3],
+		projMat[1].m128_f32[0], projMat[1].m128_f32[1], projMat[1].m128_f32[2], projMat[1].m128_f32[3],
+		projMat[2].m128_f32[0], projMat[2].m128_f32[1], projMat[2].m128_f32[2], projMat[2].m128_f32[3],
+		projMat[3].m128_f32[0], projMat[3].m128_f32[1], projMat[3].m128_f32[2], projMat[3].m128_f32[3]);
+}
+
 
 DirectX::XMMATRIX GetMainCameraViewMatrix(RE::NiCamera* camera)
 {
@@ -190,72 +218,172 @@ DirectX::XMMATRIX GetMainCameraViewMatrix(RE::NiCamera* camera)
 	return viewMatrix;
 }
 
-DirectX::XMMATRIX GetMainCameraProjectionMatrix(RE::NiCamera* camera)
-{
-	if (!camera)
-		return DirectX::XMMatrixIdentity();
-	const auto& frustum = camera->viewFrustum;
-	if (frustum.ortho) {
-		return DirectX::XMMatrixOrthographicOffCenterLH(
-			frustum.left, frustum.right,
-			frustum.bottom, frustum.top,
-			frustum.nearPlane + 0.15f,  // 增加近平面偏移
-			frustum.farPlane);
-	} else {
-		float verticalFov = 2.0f * atanf(frustum.top / (frustum.nearPlane + 0.1f));  // 调整近平面
-		float aspectRatio = (frustum.right - frustum.left) / (frustum.top - frustum.bottom);
-
-		return DirectX::XMMatrixPerspectiveFovLH(
-			verticalFov,
-			aspectRatio,
-			frustum.nearPlane + 0.1f,  // 避免深度冲突
-			frustum.farPlane);
-	}
-}
 
 void Hook::UpdateMirrorViewMatrix()
 {
-	using namespace DirectX;
-
-	RE::NiCamera* mainCamera = RE::Main::GetSingleton()->WorldRootCamera();
-	if (!mainCamera || !m_mirrorConstantBuffer)
+	if (!m_mirrorConstantBuffer)
 		return;
 
-	// 获取主相机视图矩阵
-	XMMATRIX viewMatrix = GetMainCameraViewMatrix(mainCamera);
-	XMVECTOR determinant;
-	XMMATRIX invView = XMMatrixInverse(&determinant, viewMatrix);
+	// Get the current view and projection matrices from the game
+	// This is game-specific and might require finding these matrices
+	// For this example, we'll create a mirror view by reflecting the current view
 
-	// 提取相机位置和方向
-	XMVECTOR camPos = invView.r[3];
-	XMVECTOR camForward = invView.r[2];
-	XMVECTOR camUp = invView.r[1];
+	// Find game's view matrix (placeholder - you need to implement this)
+	DirectX::XMMATRIX gameViewMatrix = GetGameViewMatrix();
+	DirectX::XMMATRIX gameProjMatrix = GetGameProjectionMatrix();
 
-	// 创建后视镜视图矩阵 - 反转前向量
-	XMMATRIX mirrorViewMatrix = XMMatrixLookToLH(
-		camPos,
-		camForward,
-		camUp);
+	// Define the mirror plane (position and normal)
+	// This should be adjusted based on where you want the mirror to be in the game world
+	DirectX::XMFLOAT3 mirrorPosition = { 0.0f, 0.0f, 10.0f };  // Position of mirror in world space
+	DirectX::XMFLOAT3 mirrorNormal = { 0.0f, 0.0f, -1.0f };    // Normal pointing toward viewer
 
-	// 获取投影矩阵
-	XMMATRIX projMatrix = GetMainCameraProjectionMatrix(mainCamera);
+	// Normalize the mirror normal
+	DirectX::XMVECTOR normal = DirectX::XMVector3Normalize(DirectX::XMLoadFloat3(&mirrorNormal));
 
-	// 更新常量缓冲区
-	D3D11_MAPPED_SUBRESOURCE mapped;
-	if (SUCCEEDED(g_Context->Map(m_mirrorConstantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-		MirrorConstantBuffer* cbData = static_cast<MirrorConstantBuffer*>(mapped.pData);
-		cbData->ViewProjection = XMMatrixTranspose(mirrorViewMatrix * projMatrix);
-		cbData->World = XMMatrixIdentity();
+	// Create a reflection matrix for the mirror plane
+	DirectX::XMVECTOR position = DirectX::XMLoadFloat3(&mirrorPosition);
+	float d = -DirectX::XMVectorGetX(DirectX::XMVector3Dot(normal, position));
+	DirectX::XMFLOAT4 plane = {
+		DirectX::XMVectorGetX(normal),
+		DirectX::XMVectorGetY(normal),
+		DirectX::XMVectorGetZ(normal),
+		d
+	};
+
+	DirectX::XMMATRIX reflectionMatrix = DirectX::XMMatrixReflect(DirectX::XMLoadFloat4(&plane));
+
+	// Create mirror view matrix by reflecting the camera
+	DirectX::XMMATRIX mirrorViewMatrix = reflectionMatrix * gameViewMatrix;
+
+	// Update constant buffer with new matrices
+	D3D11_MAPPED_SUBRESOURCE mappedResource;
+	HRESULT hr = g_Context->Map(m_mirrorConstantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
+	if (SUCCEEDED(hr)) {
+		MirrorConstants* constants = (MirrorConstants*)mappedResource.pData;
+		constants->viewMatrix = DirectX::XMMatrixTranspose(mirrorViewMatrix);
+		constants->projectionMatrix = DirectX::XMMatrixTranspose(gameProjMatrix);
+		constants->mirrorPlane = plane;
 		g_Context->Unmap(m_mirrorConstantBuffer, 0);
 	}
+}
+
+void Hook::CompileMirrorShaders()
+{
+	// Vertex shader code for rendering a quad
+	const char* vsCode = R"(
+        struct VS_INPUT {
+            float3 Position : POSITION;
+            float2 TexCoord : TEXCOORD0;
+        };
+        
+        struct VS_OUTPUT {
+            float4 Position : SV_POSITION;
+            float2 TexCoord : TEXCOORD0;
+        };
+        
+        VS_OUTPUT main(VS_INPUT input) {
+            VS_OUTPUT output;
+            output.Position = float4(input.Position, 1.0f);
+            output.TexCoord = input.TexCoord;
+            return output;
+        }
+    )";
+
+	// Pixel shader code for sampling the mirror texture
+	const char* psCode = R"(
+        Texture2D mirrorTexture : register(t0);
+        SamplerState mirrorSampler : register(s0);
+        
+        struct PS_INPUT {
+            float4 Position : SV_POSITION;
+            float2 TexCoord : TEXCOORD0;
+        };
+        
+        float4 main(PS_INPUT input) : SV_TARGET {
+            float4 color = mirrorTexture.Sample(mirrorSampler, input.TexCoord);
+            // Add some effects to make it look like a mirror (slight tint, etc.)
+            color.rgb *= float3(0.95f, 0.97f, 1.0f); // Slight blue tint
+            color.a = 0.9f; // Slight transparency
+            return color;
+        }
+    )";
+
+	// Compile shaders
+	ID3DBlob* pVSBlob = nullptr;
+	ID3DBlob* pPSBlob = nullptr;
+	ID3DBlob* pErrorBlob = nullptr;
+
+	// Use D3DCompile to compile shaders
+	HRESULT hr = D3DCompile(vsCode, strlen(vsCode), "MirrorVS", nullptr, nullptr, "main", "vs_5_0",
+		D3DCOMPILE_ENABLE_STRICTNESS, 0, &pVSBlob, &pErrorBlob);
+
+	if (FAILED(hr)) {
+		if (pErrorBlob) {
+			logger::error("Vertex shader compilation failed: %s", (char*)pErrorBlob->GetBufferPointer());
+			pErrorBlob->Release();
+		}
+		return;
+	}
+
+	hr = D3DCompile(psCode, strlen(psCode), "MirrorPS", nullptr, nullptr, "main", "ps_5_0",
+		D3DCOMPILE_ENABLE_STRICTNESS, 0, &pPSBlob, &pErrorBlob);
+
+	if (FAILED(hr)) {
+		if (pErrorBlob) {
+			logger::error("Pixel shader compilation failed: %s", (char*)pErrorBlob->GetBufferPointer());
+			pErrorBlob->Release();
+		}
+		if (pVSBlob)
+			pVSBlob->Release();
+		return;
+	}
+
+	// Create shader objects
+	hr = g_Device->CreateVertexShader(pVSBlob->GetBufferPointer(), pVSBlob->GetBufferSize(), nullptr, m_mirrorVS.GetAddressOf());
+	if (FAILED(hr)) {
+		logger::error("Failed to create vertex shader");
+		if (pVSBlob)
+			pVSBlob->Release();
+		if (pPSBlob)
+			pPSBlob->Release();
+		return;
+	}
+
+	hr = g_Device->CreatePixelShader(pPSBlob->GetBufferPointer(), pPSBlob->GetBufferSize(), nullptr, m_mirrorPS.GetAddressOf());
+	if (FAILED(hr)) {
+		logger::error("Failed to create pixel shader");
+		if (pVSBlob)
+			pVSBlob->Release();
+		if (pPSBlob)
+			pPSBlob->Release();
+		return;
+	}
+
+	// Create input layout
+	D3D11_INPUT_ELEMENT_DESC layout[] = {
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	};
+
+	hr = g_Device->CreateInputLayout(layout, 2, pVSBlob->GetBufferPointer(), pVSBlob->GetBufferSize(), m_mirrorInputLayout.GetAddressOf());
+	if (FAILED(hr)) {
+		logger::error("Failed to create input layout");
+	}
+
+	// Release shader blobs
+	if (pVSBlob)
+		pVSBlob->Release();
+	if (pPSBlob)
+		pPSBlob->Release();
 }
 
 
 void Hook::InitMirrorResources()
 {
-	if (!g_Device.Get())
+	if (mirror_initialized)
 		return;
-	// 1. 创建后视镜纹理
+
+	// Create mirror texture
 	D3D11_TEXTURE2D_DESC texDesc = {};
 	texDesc.Width = MIRROR_WIDTH;
 	texDesc.Height = MIRROR_HEIGHT;
@@ -263,104 +391,137 @@ void Hook::InitMirrorResources()
 	texDesc.ArraySize = 1;
 	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	texDesc.SampleDesc.Count = 1;
+	texDesc.SampleDesc.Quality = 0;
 	texDesc.Usage = D3D11_USAGE_DEFAULT;
 	texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-	HR(g_Device->CreateTexture2D(&texDesc, nullptr, &pMirrorTexture));
+	texDesc.CPUAccessFlags = 0;
+	texDesc.MiscFlags = 0;
 
-	// 创建输入布局
-	D3D11_INPUT_ELEMENT_DESC layout[] = {
-		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }
-	};
+	ID3D11Texture2D* pMirrorTexture = nullptr;
+	HRESULT hr = g_Device->CreateTexture2D(&texDesc, nullptr, &pMirrorTexture);
+	if (FAILED(hr)) {
+		logger::error("Failed to create mirror texture");
+		return;
+	}
 
+	// Create RTV for the mirror texture
+	hr = g_Device->CreateRenderTargetView(pMirrorTexture, nullptr, &pMirrorRTV);
+	if (FAILED(hr)) {
+		logger::error("Failed to create mirror RTV");
+		SAFE_RELEASE(pMirrorTexture);
+		return;
+	}
 
+	// Create SRV for the mirror texture
+	hr = g_Device->CreateShaderResourceView(pMirrorTexture, nullptr, &pMirrorSRV);
+	if (FAILED(hr)) {
+		logger::error("Failed to create mirror SRV");
+		SAFE_RELEASE(pMirrorTexture);
+		SAFE_RELEASE(pMirrorRTV);
+		return;
+	}
 
-	// 2. 创建RTV
-	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
-	rtvDesc.Format = texDesc.Format;
-	rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-	HR(g_Device->CreateRenderTargetView(pMirrorTexture, &rtvDesc, &pMirrorRTV));
-	// 3. 创建SRV
-	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-	srvDesc.Format = texDesc.Format;
-	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-	srvDesc.Texture2D.MipLevels = 1;
-	HR(g_Device->CreateShaderResourceView(pMirrorTexture, &srvDesc, &pMirrorSRV));
-	// 4. 创建深度缓冲区
+	// Create depth texture for mirror
 	texDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
 	texDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
-	ID3D11Texture2D* pDepthTexture = nullptr;
-	HR(g_Device->CreateTexture2D(&texDesc, nullptr, &pDepthTexture));
-	// 5. 创建DSV
+
+	ID3D11Texture2D* pMirrorDepthTexture = nullptr;
+	hr = g_Device->CreateTexture2D(&texDesc, nullptr, &pMirrorDepthTexture);
+	if (FAILED(hr)) {
+		logger::error("Failed to create mirror depth texture");
+		SAFE_RELEASE(pMirrorTexture);
+		SAFE_RELEASE(pMirrorRTV);
+		SAFE_RELEASE(pMirrorSRV);
+		return;
+	}
+
+	// Create DSV for the mirror depth texture
 	D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
 	dsvDesc.Format = texDesc.Format;
 	dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-	HR(g_Device->CreateDepthStencilView(pDepthTexture, &dsvDesc, &pMirrorDSV));
-	SAFE_RELEASE(pDepthTexture);
-	// 6. 创建深度状态
+	dsvDesc.Texture2D.MipSlice = 0;
+
+	hr = g_Device->CreateDepthStencilView(pMirrorDepthTexture, &dsvDesc, &pMirrorDSV);
+	if (FAILED(hr)) {
+		logger::error("Failed to create mirror DSV");
+		SAFE_RELEASE(pMirrorTexture);
+		SAFE_RELEASE(pMirrorRTV);
+		SAFE_RELEASE(pMirrorSRV);
+		SAFE_RELEASE(pMirrorDepthTexture);
+		return;
+	}
+
+	// Create depth stencil state
 	D3D11_DEPTH_STENCIL_DESC dsDesc = {};
-	dsDesc.DepthEnable = true;
+	dsDesc.DepthEnable = TRUE;
 	dsDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
-	dsDesc.DepthFunc = D3D11_COMPARISON_LESS;
-	HR(g_Device->CreateDepthStencilState(&dsDesc, &pMirrorDepthState));
-	// 7. 顶点着色器代码
-	const char* vsCode =
-		"struct VS_IN { "
-		"    float3 pos : POSITION; "
-		"    float2 tex : TEXCOORD; "
-		"}; "
-		"struct VS_OUT { "
-		"    float4 pos : SV_POSITION; "
-		"    float2 tex : TEXCOORD; "
-		"}; "
-		"VS_OUT main(VS_IN input) { "
-		"    VS_OUT output; "
-		"    output.pos = float4(input.pos, 1.0f); "
-		"    output.tex = input.tex; "
-		"    return output; "
-		"}";
+	dsDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+	dsDesc.StencilEnable = FALSE;
 
+	hr = g_Device->CreateDepthStencilState(&dsDesc, &pMirrorDepthState);
+	if (FAILED(hr)) {
+		logger::error("Failed to create mirror depth stencil state");
+		SAFE_RELEASE(pMirrorTexture);
+		SAFE_RELEASE(pMirrorRTV);
+		SAFE_RELEASE(pMirrorSRV);
+		SAFE_RELEASE(pMirrorDepthTexture);
+		SAFE_RELEASE(pMirrorDSV);
+		return;
+	}
 
-	ID3DBlob* vsBlob = nullptr;
-	D3DCompile(vsCode, strlen(vsCode), nullptr, nullptr, nullptr, "main", "vs_5_0", 0, 0, &vsBlob, nullptr);
-	HR(g_Device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, m_mirrorVS.GetAddressOf()));
-
-	HR(g_Device->CreateInputLayout(layout, 2, vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), m_mirrorInputLayout.GetAddressOf()));
-	const char* psCode =
-		"Texture2D tex : register(t0);"
-		"SamplerState samp : register(s0);"
-		"struct PS_IN { float4 pos : SV_POSITION; float2 tex : TEXCOORD; };"
-		"float4 main(PS_IN input) : SV_Target { "
-		"    float4 color = tex.Sample(samp, input.tex);"
-		"    return float4(color.rgb, 1.0);"  // 显式使用RGB通道，避免可能的BGR问题
-		"}";
-
-	ID3DBlob* psBlob = nullptr;
-	D3DCompile(psCode, strlen(psCode), nullptr, nullptr, nullptr, "main", "ps_5_0", 0, 0, &psBlob, nullptr);
-	HR(g_Device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr,m_mirrorPS.GetAddressOf()));
-	// 8. 创建采样器
+	// Create sampler state
 	D3D11_SAMPLER_DESC sampDesc = {};
 	sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
 	sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
 	sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
 	sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-	HR(g_Device->CreateSamplerState(&sampDesc, &pMirrorSampler));
+	sampDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+	sampDesc.MinLOD = 0;
+	sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
 
-	// 计算常量缓冲区大小（16字节对齐）
-	m_cbSize = (sizeof(MirrorConstantBuffer) + 15) & ~15;
-	D3D11_BUFFER_DESC cbDesc;
-	ZeroMemory(&cbDesc, sizeof(cbDesc));
-	cbDesc.ByteWidth = m_cbSize;
-	cbDesc.Usage = D3D11_USAGE_DYNAMIC;
-	cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-	cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-
-	HRESULT hr = g_Device->CreateBuffer(&cbDesc, nullptr, &m_mirrorConstantBuffer);
+	hr = g_Device->CreateSamplerState(&sampDesc, &pMirrorSampler);
 	if (FAILED(hr)) {
-		logger::error("Failed to create mirror constant buffer: 0x{:08X}", hr);
+		logger::error("Failed to create mirror sampler state");
+		SAFE_RELEASE(pMirrorTexture);
+		SAFE_RELEASE(pMirrorRTV);
+		SAFE_RELEASE(pMirrorSRV);
+		SAFE_RELEASE(pMirrorDepthTexture);
+		SAFE_RELEASE(pMirrorDSV);
+		SAFE_RELEASE(pMirrorDepthState);
 		return;
 	}
+
+	// Create constant buffer for mirror view matrix
+	D3D11_BUFFER_DESC bufferDesc = {};
+	bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
+	bufferDesc.ByteWidth = sizeof(MirrorConstants);
+	bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	bufferDesc.MiscFlags = 0;
+	bufferDesc.StructureByteStride = 0;
+
+	hr = g_Device->CreateBuffer(&bufferDesc, nullptr, &m_mirrorConstantBuffer);
+	if (FAILED(hr)) {
+		logger::error("Failed to create mirror constant buffer");
+		SAFE_RELEASE(pMirrorTexture);
+		SAFE_RELEASE(pMirrorRTV);
+		SAFE_RELEASE(pMirrorSRV);
+		SAFE_RELEASE(pMirrorDepthTexture);
+		SAFE_RELEASE(pMirrorDSV);
+		SAFE_RELEASE(pMirrorDepthState);
+		SAFE_RELEASE(pMirrorSampler);
+		return;
+	}
+
+	// Create shaders for rendering mirror to screen
+	CompileMirrorShaders();
+
+	// Cleanup textures (views retain references)
+	SAFE_RELEASE(pMirrorTexture);
+	SAFE_RELEASE(pMirrorDepthTexture);
+
 	mirror_initialized = true;
+	logger::info("Mirror resources initialized successfully");
 }
 
 void __stdcall Hook::DrawIndexedHook(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation)
@@ -375,24 +536,30 @@ void __stdcall Hook::DrawIndexedHook(ID3D11DeviceContext* pContext, UINT IndexCo
 	// 先执行原始绘制（主场景渲染）
 	_instance->oldFuncs.phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 
+	// Check if mirror resources are initialized
 	if (!_instance->mirror_initialized || !_instance->pMirrorRTV || !_instance->pMirrorDSV)
 		return;
 
+	// Only render to mirror for certain draw calls (optional optimization)
+	// You can add filtering here to only render important geometry to the mirror
 
-	// 保存原始状态
-	SavedState originalState = {};
-	SaveState(pContext, originalState);
+	// Store a flag to avoid recursion
 	renderingMirror = true;
 
-	// 设置后视镜渲染目标
+	// Save original state
+	SavedState originalState = {};
+	SaveState(pContext, originalState);
+
+	// Configure for mirror rendering
+	// Set the mirror render target and depth buffer
 	pContext->OMSetRenderTargets(1, &_instance->pMirrorRTV, _instance->pMirrorDSV);
 
-	// 清除
+	// Clear the mirror render target and depth buffer
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 	pContext->ClearRenderTargetView(_instance->pMirrorRTV, clearColor);
-	pContext->ClearDepthStencilView(_instance->pMirrorDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
+	pContext->ClearDepthStencilView(_instance->pMirrorDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-	// 设置视口
+	// Set mirror viewport
 	D3D11_VIEWPORT vp = {
 		0.0f, 0.0f,
 		static_cast<float>(_instance->MIRROR_WIDTH),
@@ -401,146 +568,154 @@ void __stdcall Hook::DrawIndexedHook(ID3D11DeviceContext* pContext, UINT IndexCo
 	};
 	pContext->RSSetViewports(1, &vp);
 
-	// 更新后视镜视图矩阵
-	_instance->UpdateMirrorViewMatrix();
-
-	// 设置深度状态
+	// Set mirror depth state
 	pContext->OMSetDepthStencilState(_instance->pMirrorDepthState, 0);
 
-	// 设置常量缓冲区
-	pContext->VSSetConstantBuffers(0, 1, &_instance->m_mirrorConstantBuffer);
-	//pContext->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation);
+	// Update and set the mirror view matrix constant buffer
+	_instance->UpdateMirrorViewMatrix();
 
+	// Backup original VS constant buffers so we can restore them after
+	ID3D11Buffer* originalVSConstantBuffers[8] = {};
+	pContext->VSGetConstantBuffers(0, 8, originalVSConstantBuffers);
+
+	// Set our mirror constant buffer to the first slot
+	// Note: You may need to use a different slot depending on the game's shader expectations
+	pContext->VSSetConstantBuffers(0, 1, &_instance->m_mirrorConstantBuffer);
+
+	// Now perform the mirror draw call
+	// This renders the scene from the mirror's perspective
 	_instance->oldFuncs.phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 
-	// 恢复状态
+	// Restore original VS constant buffers
+	pContext->VSSetConstantBuffers(0, 8, originalVSConstantBuffers);
+	for (int i = 0; i < 8; i++) {
+		SAFE_RELEASE(originalVSConstantBuffers[i]);
+	}
+
+	// Restore original state
 	RestoreState(pContext, originalState);
+
+	// Reset flag
 	renderingMirror = false;
 }
 
 
 HRESULT __stdcall Hook::PresentHook(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
 {
-	// 确保后视镜已初始化
+	// Ensure mirror resources are initialized
 	static bool firstFrame = true;
-	static bool captureNextFrame = false;
-
 	if (firstFrame) {
 		_instance->InitMirrorResources();
 		firstFrame = false;
 	}
 
-	 // 触发截帧（例如按F12）
-    if(GetAsyncKeyState(VK_F4) & 1) {
-       // captureNextFrame = true;
+	// Handle RenderDoc capture trigger
+	if (GetAsyncKeyState(VK_F4) & 1) {
 		logger::info("Frame capture requested");
-		rdoc_api->TriggerCapture();
-    }
-	// 绘制后视镜到屏幕上
+		if (rdoc_api)
+			rdoc_api->TriggerCapture();
+	}
+
+	// Draw mirror to screen if initialized
 	if (_instance->mirror_initialized && _instance->pMirrorSRV) {
 		ID3D11Texture2D* pBackBuffer = nullptr;
 		HRESULT hr = pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+
 		if (SUCCEEDED(hr)) {
 			ID3D11RenderTargetView* pRTV = nullptr;
-			_instance->g_Device->CreateRenderTargetView(pBackBuffer, nullptr, &pRTV);
+			hr = _instance->g_Device->CreateRenderTargetView(pBackBuffer, nullptr, &pRTV);
 
-			// 保存状态
-			SavedState originalState;
-			SaveState(_instance->g_Context.Get(), originalState);
+			if (SUCCEEDED(hr)) {
+				// Save current state
+				SavedState originalState;
+				SaveState(_instance->g_Context.Get(), originalState);
 
-			// 设置后备缓冲区为渲染目标
-			_instance->g_Context->OMSetRenderTargets(1, &pRTV, nullptr);
+				// Set render target
+				_instance->g_Context->OMSetRenderTargets(1, &pRTV, nullptr);
 
-			// 设置着色器
-			_instance->g_Context->VSSetShader(_instance->m_mirrorVS.Get(), nullptr, 0);
-			_instance->g_Context->PSSetShader(_instance->m_mirrorPS.Get(), nullptr, 0);
+				// Set shaders for rendering mirror quad
+				_instance->g_Context->VSSetShader(_instance->m_mirrorVS.Get(), nullptr, 0);
+				_instance->g_Context->PSSetShader(_instance->m_mirrorPS.Get(), nullptr, 0);
 
-			// 设置后视镜纹理
-			_instance->g_Context->PSSetShaderResources(0, 1, &_instance->pMirrorSRV);
-			_instance->g_Context->PSSetSamplers(0, 1, &_instance->pMirrorSampler);
+				// Set mirror texture
+				_instance->g_Context->PSSetShaderResources(0, 1, &_instance->pMirrorSRV);
+				_instance->g_Context->PSSetSamplers(0, 1, &_instance->pMirrorSampler);
 
-			// 设置视口（右上角）
-			D3D11_VIEWPORT vp = {};
-			vp.Width = static_cast<float>(_instance->MIRROR_WIDTH);
-			vp.Height = static_cast<float>(_instance->MIRROR_HEIGHT);
-			vp.TopLeftX = static_cast<float>(_instance->windowWidth - _instance->MIRROR_WIDTH - 10);
-			vp.TopLeftY = 10.0f;
-			vp.MinDepth = 0.0f;
-			vp.MaxDepth = 1.0f;
-			_instance->g_Context->RSSetViewports(1, &vp);
+				// Set viewport for mirror display (position in top-right corner)
+				D3D11_VIEWPORT vp = {};
+				vp.Width = static_cast<float>(_instance->MIRROR_WIDTH);
+				vp.Height = static_cast<float>(_instance->MIRROR_HEIGHT);
+				vp.TopLeftX = static_cast<float>(_instance->windowWidth - _instance->MIRROR_WIDTH - 10);
+				vp.TopLeftY = 10.0f;
+				vp.MinDepth = 0.0f;
+				vp.MaxDepth = 0.1f;
+				_instance->g_Context->RSSetViewports(1, &vp);
 
-			// 设置混合状态以支持透明度
-			ID3D11BlendState* pOldBlendState = nullptr;
-			FLOAT oldBlendFactor[4] = {};
-			UINT oldSampleMask = 0;
-			_instance->g_Context->OMGetBlendState(&pOldBlendState, oldBlendFactor, &oldSampleMask);
+				// Create and set blend state for transparency
+				ID3D11BlendState* pMirrorBlendState = nullptr;
+				D3D11_BLEND_DESC blendDesc = {};
+				blendDesc.RenderTarget[0].BlendEnable = TRUE;
+				blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+				blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+				blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+				blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+				blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+				blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+				blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 
-			D3D11_BLEND_DESC blendDesc = {};
-			blendDesc.RenderTarget[0].BlendEnable = TRUE;
-			blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-			blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-			blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-			blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-			blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
-			blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-			blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+				_instance->g_Device->CreateBlendState(&blendDesc, &pMirrorBlendState);
+				_instance->g_Context->OMSetBlendState(pMirrorBlendState, nullptr, 0xffffffff);
 
-			ID3D11BlendState* pMirrorBlendState = nullptr;
-			_instance->g_Device->CreateBlendState(&blendDesc, &pMirrorBlendState);
-			_instance->g_Context->OMSetBlendState(pMirrorBlendState, nullptr, 0xffffffff);
+				// Create quad vertices
+				struct Vertex
+				{
+					DirectX::XMFLOAT3 pos;
+					DirectX::XMFLOAT2 tex;
+				};
 
-			// 使用四边形绘制镜像
-			struct Vertex
-			{
-				DirectX::XMFLOAT3 pos;
-				DirectX::XMFLOAT2 tex;
-			};
+				Vertex vertices[] = {
+					{ { -1.0f, -1.0f, 0.0f }, { 0.0f, 1.0f } },  // Bottom left
+					{ { -1.0f, 1.0f, 0.0f }, { 0.0f, 0.0f } },   // Top left
+					{ { 1.0f, -1.0f, 0.0f }, { 1.0f, 1.0f } },   // Bottom right
+					{ { 1.0f, 1.0f, 0.0f }, { 1.0f, 0.0f } }     // Top right
+				};
 
-			Vertex vertices[] = {
-				{ { -1.0f, -1.0f, 0.0f }, { 0.0f, 1.0f } },  // 左下
-				{ { -1.0f, 1.0f, 0.0f }, { 0.0f, 0.0f } },   // 左上
-				{ { 1.0f, -1.0f, 0.0f }, { 1.0f, 1.0f } },   // 右下
-				{ { 1.0f, 1.0f, 0.0f }, { 1.0f, 0.0f } }     // 右上
-			};
+				// Create vertex buffer
+				D3D11_BUFFER_DESC bd = {};
+				bd.ByteWidth = sizeof(vertices);
+				bd.Usage = D3D11_USAGE_DEFAULT;
+				bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
 
-			// 创建顶点缓冲区
-			D3D11_BUFFER_DESC bd = {};
-			bd.ByteWidth = sizeof(vertices);
-			bd.Usage = D3D11_USAGE_DEFAULT;
-			bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+				D3D11_SUBRESOURCE_DATA initData = {};
+				initData.pSysMem = vertices;
 
-			D3D11_SUBRESOURCE_DATA initData = {};
-			initData.pSysMem = vertices;
+				ID3D11Buffer* pVertexBuffer = nullptr;
+				_instance->g_Device->CreateBuffer(&bd, &initData, &pVertexBuffer);
 
-			ID3D11Buffer* pVertexBuffer = nullptr;
-			_instance->g_Device->CreateBuffer(&bd, &initData, &pVertexBuffer);
+				// Set vertex buffer
+				UINT stride = sizeof(Vertex);
+				UINT offset = 0;
+				_instance->g_Context->IASetVertexBuffers(0, 1, &pVertexBuffer, &stride, &offset);
+				_instance->g_Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+				_instance->g_Context->IASetInputLayout(_instance->m_mirrorInputLayout.Get());
 
-			// 设置顶点缓冲区
-			UINT stride = sizeof(Vertex);
-			UINT offset = 0;
-			_instance->g_Context->IASetVertexBuffers(0, 1, &pVertexBuffer, &stride, &offset);
-			_instance->g_Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-			_instance->g_Context->IASetInputLayout(_instance->m_mirrorInputLayout.Get());
+				// Draw the quad
+				_instance->g_Context->Draw(4, 0);
 
-			// 绘制四边形
-			_instance->g_Context->Draw(4, 0);
+				// Cleanup resources
+				SAFE_RELEASE(pVertexBuffer);
+				SAFE_RELEASE(pMirrorBlendState);
+				SAFE_RELEASE(pRTV);
 
-			// 恢复混合状态
-			_instance->g_Context->OMSetBlendState(pOldBlendState, oldBlendFactor, oldSampleMask);
-			SAFE_RELEASE(pOldBlendState);
-			SAFE_RELEASE(pMirrorBlendState);
+				// Restore original state
+				RestoreState(_instance->g_Context.Get(), originalState);
+			}
 
-			// 清理资源
-			SAFE_RELEASE(pVertexBuffer);
-			SAFE_RELEASE(pRTV);
 			SAFE_RELEASE(pBackBuffer);
-
-			// 恢复原始状态
-			RestoreState(_instance->g_Context.Get(), originalState);
 		}
 	}
 
-	// 继续原始Present
+	// Continue with original Present function
 	return _instance->oldFuncs.phookD3D11Present(pSwapChain, SyncInterval, Flags);
 }
 

@@ -28,6 +28,12 @@ private:
 
 	bool InitMirrorShaders();
 	void UpdateMirrorViewMatrix();
+	void CompileMirrorShaders();
+	DirectX::XMMATRIX GetGameProjectionMatrix();
+	DirectX::XMMATRIX GetGameViewMatrix();
+	void RecreateMirrorDepthBuffer();
+	HRESULT CreateMirrorTexture(ID3D11Resource* pSourceResource, DXGI_FORMAT format, ID3D11Texture2D** ppMirrorTex);
+	void CreateMirrorRTVs(ID3D11DeviceContext* pContext);
 
 	struct OldFuncs
 	{
@@ -36,11 +42,6 @@ private:
 		D3D11DrawIndexedHook phookD3D11DrawIndexed = nullptr;
 	} oldFuncs;
 
-	struct MirrorConstantBuffer
-	{
-		DirectX::XMMATRIX ViewProjection;
-		DirectX::XMMATRIX World;
-	};
 	ID3D11Buffer* m_mirrorConstantBuffer = nullptr;
 	UINT m_cbSize = 0;
 
@@ -58,7 +59,9 @@ private:
 
 	#pragma region MirrorParm
 	// 后视镜相关变量
+	//ID3D11Texture2D* pMirrorTexture = nullptr;
 	ID3D11Texture2D* pMirrorTexture = nullptr;
+	ID3D11Texture2D* pMirrorDepthTexture = nullptr;
 	ID3D11RenderTargetView* pMirrorRTV = nullptr;
 	ID3D11ShaderResourceView* pMirrorSRV = nullptr;
 	ID3D11DepthStencilView* pMirrorDSV = nullptr;
@@ -66,18 +69,24 @@ private:
 	ID3D11SamplerState* pMirrorSampler = nullptr;
 	ID3D11Buffer* mirrorConstantBuffer = nullptr;
 
+	ID3D11Texture2D* pMainDepthTexture = nullptr;
+	ID3D11DepthStencilView* pMainDSV = nullptr;
+	DXGI_FORMAT mainDepthFormat = DXGI_FORMAT_UNKNOWN;
+
+	std::vector<ID3D11RenderTargetView*> mirrorRTVs;
+
 	ComPtr<ID3D11VertexShader> m_mirrorVS;
 	ComPtr<ID3D11PixelShader> m_mirrorPS;
 	ComPtr<ID3D11InputLayout> m_mirrorInputLayout;
 	// 后视镜尺寸
-	const int MIRROR_WIDTH = 400;
-	const int MIRROR_HEIGHT = 300;
+	const UINT MIRROR_WIDTH = 400;
+	const UINT MIRROR_HEIGHT = 300;
 
 	int windowWidth;
 	int windowHeight;
 
 	// 后视镜位置和大小
-	RECT mirrorRect = { 0, 0, MIRROR_WIDTH, MIRROR_HEIGHT };
+	RECT mirrorRect = { 0, 0, (LONG)MIRROR_WIDTH, (LONG)MIRROR_HEIGHT };
 	static bool mirror_initialized;
 
 	// 顶点结构
@@ -101,6 +110,16 @@ private:
 		void** original;
 		const char* name;  // 用于日志
 	};
+
+	struct MirrorConstants
+	{
+		DirectX::XMMATRIX viewMatrix;
+		DirectX::XMMATRIX projectionMatrix;
+		DirectX::XMFLOAT4 mirrorPlane;  // Define mirror plane for reflection
+	};
+
+
+
 
 #pragma endregion
 };
