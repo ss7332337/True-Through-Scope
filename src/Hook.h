@@ -19,21 +19,12 @@ public:
 	~Hook() = default;
 	void InitRenderDoc();
 	DWORD __stdcall HookDX11_Init();
-	void InitMirrorResources();
 
 private:
 
 	static HRESULT __stdcall PresentHook(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags);
 	static void __stdcall DrawIndexedHook(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
 
-	bool InitMirrorShaders();
-	void UpdateMirrorViewMatrix();
-	void CompileMirrorShaders();
-	DirectX::XMMATRIX GetGameProjectionMatrix();
-	DirectX::XMMATRIX GetGameViewMatrix();
-	void RecreateMirrorDepthBuffer();
-	HRESULT CreateMirrorTexture(ID3D11Resource* pSourceResource, DXGI_FORMAT format, ID3D11Texture2D** ppMirrorTex);
-	void CreateMirrorRTVs(ID3D11DeviceContext* pContext);
 
 	struct OldFuncs
 	{
@@ -88,6 +79,7 @@ private:
 	// 后视镜位置和大小
 	RECT mirrorRect = { 0, 0, (LONG)MIRROR_WIDTH, (LONG)MIRROR_HEIGHT };
 	static bool mirror_initialized;
+	static bool mirror_firstClear;
 
 	// 顶点结构
 	struct SimpleVertex

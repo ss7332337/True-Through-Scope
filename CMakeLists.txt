@@ -59,6 +59,8 @@ project(
 find_package(spdlog REQUIRED CONFIG)
 find_package(imgui REQUIRED CONFIG)
 find_package(nlohmann_json REQUIRED CONFIG)
+find_library(DETOURS_LIBRARY detours REQUIRED)
+find_package(minhook CONFIG REQUIRED)
 
 configure_file(
 	${CMAKE_CURRENT_SOURCE_DIR}/cmake/Version.h.in
@@ -116,7 +118,6 @@ target_include_directories(
 
 )
 
-find_package(minhook CONFIG REQUIRED)
 
 target_link_libraries(
 	${PROJECT_NAME}
@@ -125,6 +126,7 @@ target_link_libraries(
 		CommonLibF4::CommonLibF4
 		spdlog::spdlog
 		imgui::imgui
+		${DETOURS_LIBRARY}
 )
 
 target_precompile_headers(
