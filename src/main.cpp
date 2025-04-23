@@ -11,21 +11,29 @@ using namespace RE;
 using namespace BSScript;
 using namespace std;
 using namespace RE::BSGraphics;
+using namespace RE::DrawWorld;
 Hook* hook = nullptr;
 
 // Our global variables
 NiCamera* g_ScopeCamera = nullptr;
 NiCamera* g_OriCamera = nullptr;
 
+RenderTargetManager* gRtMan;
+Renderer* gRenderer;
+
 REL::Relocation<uintptr_t> DrawWorld_Render_PreUI_Ori{ REL::ID(984743) };
 REL::Relocation<uintptr_t> DrawWorld_Begin_Ori{ REL::ID(502840) };
+REL::Relocation<uintptr_t> DrawWorld_MainAccum_Ori{ REL::ID(718911) };
+REL::Relocation<uintptr_t> DrawWorld_MainRenderSetup_Ori{ REL::ID(339369) };
+REL::Relocation<uintptr_t> DrawWorld_DeferredPrePass_Ori{ REL::ID(56596) };
+REL::Relocation<uintptr_t> DrawWorld_DeferredLightsImpl_Ori{ REL::ID(1108521) };
+REL::Relocation<uintptr_t> DrawWorld_DeferredComposite_Ori{ REL::ID(728427) };
 REL::Relocation<uintptr_t> DrawWorld_Forward_Ori{ REL::ID(656535) };
 REL::Relocation<uintptr_t> DrawWorld_Refraction_Ori{ REL::ID(1572250) };
 
 REL::Relocation<uintptr_t> Main_DrawWorldAndUI_Ori{ REL::ID(408683) };
 REL::Relocation<uintptr_t> Main_Swap_Ori{ REL::ID(1075087) };
 
-REL::Relocation<NiCamera**> ptr_DrawWorldCamera{ REL::ID(1444212) };
 REL::Relocation<uintptr_t**	> ptr_DrawWorldShadowNode{ REL::ID(1327069) };
 REL::Relocation<NiAVObject**> ptr_DrawWorld1stPerson{ REL::ID(1491228) };
 
@@ -33,6 +41,17 @@ REL::Relocation<uintptr_t> Renderer_CreateaRenderTarget_Ori{ REL::ID(425575) };
 REL::Relocation<uintptr_t> RenderTargetManager_CreateaRenderTarget_Ori{ REL::ID(43433) };
 REL::Relocation<BSShaderManagerState*> ptr_BSShaderManager_State{ REL::ID(1327069) };
 
+REL::Relocation<bool*> ptr_DrawWorld_b1stPersonEnable{ REL::ID(922366) };
+REL::Relocation<bool*> ptr_DrawWorld_b1stPersonInWorld{ REL::ID(34473) };
+REL::Relocation<BSShaderAccumulator**> ptr_Draw1stPersonAccum{ REL::ID(1211381) };
+
+REL::Relocation<BSCullingGroup**> ptr_k1stPersonCullingGroup{ REL::ID(731482) };
+
+REL::Relocation<NiCamera**> ptr_BSShaderManagerSpCamera{ REL::ID(543218) };
+REL::Relocation<NiCamera**> ptr_DrawWorldCamera{ REL::ID(1444212) };
+REL::Relocation<NiCamera**> ptr_DrawWorldSpCamera{ REL::ID(543218) };
+
+REL::Relocation<uintptr_t> RenderTargetManager_SetCurrentRenderTarget_Ori{ REL::ID(1502425) };
 
 // Flag to ensure we initialize only once
 bool g_bInitialized = false;
@@ -43,41 +62,33 @@ void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground)
 void __fastcall hkMain_Swap();
 RenderTarget* __fastcall hkRenderer_CreateRenderTarget(Renderer* renderer, int aId, const wchar_t* apName, const RenderTargetProperties* aProperties);
 void __fastcall hkRTManager_CreateRenderTarget(int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
-void hkDrawWorld_Refraction(uint64_t this_ptr);
-
-std::vector<int> aidList; 
+void __fastcall hkDrawWorld_Refraction(uint64_t this_ptr);
+void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld);
+void __fastcall hkSetCurrentRenderTarget(RenderTargetManager* manager,int aIndex,int aRenderTarget,SetRenderTargetMode aMode);
+	
 
 void Init_Hook()
 {
+	gRtMan = RenderTargetManager::GetSingleton();
+	gRenderer = Renderer::GetSingleton();
+
 	DetourTransactionBegin();
 	DetourUpdateThread(GetCurrentThread());
 	DetourAttach(&(PVOID&)DrawWorld_Render_PreUI_Ori, hkRender_PreUI);
 	DetourAttach(&(PVOID&)DrawWorld_Begin_Ori, hkBegin);
 	DetourAttach(&(PVOID&)Main_DrawWorldAndUI_Ori, hkMain_DrawWorldAndUI);
 	//DetourAttach(&(PVOID&)Main_Swap_Ori, hkMain_Swap);
+	DetourAttach(&(PVOID&)DrawWorld_Forward_Ori, hkDrawWorld_Forward);
 	DetourAttach(&(PVOID&)DrawWorld_Refraction_Ori, hkDrawWorld_Refraction);
 	DetourTransactionCommit();
+
 }
 
-static void SetCameraFov(float fov)
+static void BSCullingGroupCleanup(BSCullingGroup* thisptr, bool abCleanP1, bool abCleanP2)
 {
-	using func_t = decltype(&SetCameraFov);
-	static REL::Relocation<func_t> func{ REL::ID(1473890) };
-	return func(fov);
-}
-
-static void SetCamera(NiCamera* cam)
-{
-	using func_t = decltype(&SetCamera);
-	static REL::Relocation<func_t> func{ REL::ID(850430) };
-	return func(cam);
-}
-
-static void SetUpdateCameraFOV(bool isUpdate)
-{
-	using func_t = decltype(&SetUpdateCameraFOV);
+	using func_t = decltype(&BSCullingGroupCleanup);
 	static REL::Relocation<func_t> func{ REL::ID(1102729) };
-	return func(isUpdate);
+	return func(thisptr, abCleanP1, abCleanP2);
 }
 
 inline RE::NiNode* CreateBone(const char* name)
@@ -177,7 +188,7 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	NiCamera* originalCamera = (NiCamera*)((*ptr_DrawWorldCamera)->CreateClone(tempP));
 
 
-	if (g_ScopeCamera->parent) {
+	 if (g_ScopeCamera->parent) {
 		SetCamera(g_ScopeCamera);
 		(*fn)(ptr_drawWorld);
 		SetCamera(originalCamera);
@@ -186,12 +197,24 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	D3DPERF_EndEvent();
 }
 
+// 实现hook函数
+void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
+{
+	typedef void (*FnDrawWorld_Forward)(uint64_t);
+	FnDrawWorld_Forward fn = (FnDrawWorld_Forward)DrawWorld_Forward_Ori.address();
+
+	if (!fn) return;
+	(*fn)(ptr_drawWorld);
+}
+
 void __fastcall hkBegin(uint64_t ptr_drawWorld)
 {
 	typedef void (*hkBegin)(uint64_t ptr_drawWorld);
 	hkBegin fn = (hkBegin)DrawWorld_Begin_Ori.address();
 	if (!fn) return;
+
 	(*fn)(ptr_drawWorld);
+
 }
 
 void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground)
@@ -202,6 +225,42 @@ void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground)
 		return;
 	(*fn)(ptr_drawWorld, abBackground);
 }
+
+void __fastcall hkSetCurrentRenderTarget(
+	BSGraphics::RenderTargetManager* manager,
+	int aIndex,
+	int aRenderTarget,
+	BSGraphics::SetRenderTargetMode aMode)
+{
+	typedef void (*FnSetCurrentRenderTarget)(
+		BSGraphics::RenderTargetManager*,
+		int, int, BSGraphics::SetRenderTargetMode);
+
+	static FnSetCurrentRenderTarget fn =
+		(FnSetCurrentRenderTarget)RenderTargetManager_SetCurrentRenderTarget_Ori.address();
+
+	// Call original function
+	(*fn)(manager, aIndex, aRenderTarget, aMode);
+}
+
+// A simplified function to render the world without full pipeline
+void RenderWorldForScope()
+{
+	auto renderer = Renderer::GetSingleton();
+	renderer->SetClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
+	// Example (you'll need to adjust this):
+	DrawWorld::Begin(0);
+	DrawWorld::MainAccum(0);
+	DrawWorld::MainRenderSetup(0);
+	DrawWorld::DeferredPrePass(0);
+	DrawWorld::DeferredLightsImpl(0);
+	DrawWorld::DeferredComposite(0);
+	DrawWorld::Forward(0);
+
+	 renderer->Flush();
+}
+
 
 void hkMain_Swap()
 {
@@ -221,18 +280,13 @@ void InitScopeSystem()
 
 DWORD WINAPI MainThread(HMODULE hModule) 
 {
-	while (!BSGraphics::RendererData::GetSingleton() 
-		|| !BSGraphics::RendererData::GetSingleton()->renderWindow 
-		|| !BSGraphics::RendererData::GetSingleton()->renderWindow->hwnd 
-		|| !BSGraphics::RendererData::GetSingleton()->renderWindow->swapChain 
-		|| !RE::BSGraphics::RendererData::GetSingleton()->device
-		|| !RE::BSGraphics::RendererData::GetSingleton()->context
-		|| !RE::PlayerCharacter::GetSingleton()
+	while (!RE::PlayerCharacter::GetSingleton()
 		|| !RE::PlayerCharacter::GetSingleton()->Get3D()
 		|| !RE::PlayerControls::GetSingleton()
 		|| !RE::PlayerCamera::GetSingleton()
 		|| !RE::Main::WorldRootCamera()
-		) {
+		) 
+	{
 		Sleep(10);
 	}
 	hook->HookDX11_Init();
