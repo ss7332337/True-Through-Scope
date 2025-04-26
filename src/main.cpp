@@ -538,10 +538,8 @@ void __fastcall hkMainAccum(uint64_t ptr_drawWorld)
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_MainAccum_Ori.address();
 	if (g_IsRenderingForScope) {
-		D3DPERF_BeginEvent(0xffffffff, L"hkMainAccum");
 		(*fn)(ptr_drawWorld);
 		auto accum = *ptr_Draw1stPersonAccum;
-		D3DPERF_EndEvent();
 		return;
 	}
 
@@ -582,79 +580,12 @@ void __fastcall hkOpaqueWireframe(uint64_t ptr_drawWorld)
 	Fn fn = (Fn)DrawWorld_OpaqueWireframe_Ori.address();
 
 	if (g_IsRenderingForScope) {
-		D3DPERF_BeginEvent(0xffffffff, L"hkOpaqueWireframe");
 		(*fn)(ptr_drawWorld);
-		D3DPERF_EndEvent();
 		return;
 	}
 	(*fn)(ptr_drawWorld);
 }
 
-//void ClearDepthStencilDirectD3D11()
-//{
-//	// Get the renderer data which contains the D3D11 device and context
-//	BSGraphics::RendererData* rendererData = BSGraphics::RendererData::GetSingleton();
-//	if (!rendererData || !rendererData->context) {
-//		logger::error("Failed to get renderer data");
-//		return;
-//	}
-//
-//	// Get the D3D11 device context
-//	ID3D11DeviceContext* d3dContext = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
-//
-//	// Get the current depth stencil target from the RenderTargetManager
-//	auto* rtManager = BSGraphics::RenderTargetManager::GetSingleton();
-//	if (!rtManager) {
-//		logger::error("Failed to get render target manager");
-//		return;
-//	}
-//
-//
-//	// Get the platform depth stencil ID
-//	int depthStencilID = rtManager->QCurrentDepthStencilTarget();
-//
-//	// Get the depth stencil view
-//	ID3D11DepthStencilView* dsView = reinterpret_cast<ID3D11DepthStencilView*>(rendererData->depthStencilTargets[depthStencilID].dsView[0]);
-//	if (!dsView) {
-//		logger::error("Failed to get depth stencil view");
-//		return;
-//	}
-//
-//	// Clear the depth stencil buffer
-//	// Parameters: depth stencil view, clear flags (depth=1, stencil=2, both=3), depth value, stencil value
-//	d3dContext->ClearDepthStencilView(dsView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
-//
-//	logger::info("Depth stencil buffer cleared directly using D3D11");
-//}
-
-void ClearCurrentDepthStencilBuffer()
-{
-	// Get the D3D11 device and context directly
-	BSGraphics::RendererData* rendererData = BSGraphics::RendererData::GetSingleton();
-	if (!rendererData || !rendererData->device || !rendererData->context) {
-		logger::error("Failed to get D3D11 device or context");
-		return;
-	}
-
-	REX::W32::ID3D11DeviceContext* context = rendererData->context;
-
-	// Get ONLY the currently bound depth stencil view directly from the context
-	REX::W32::ID3D11DepthStencilView* currentDSV = nullptr;
-	context->OMGetRenderTargets(0, nullptr, &currentDSV);  // Get only DSV, no RTVs
-
-	// If we have a valid depth stencil view, clear it
-	if (currentDSV) {
-		// Clear only depth (not stencil) to default value
-		context->ClearDepthStencilView(currentDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
-
-		// Release our reference to avoid memory leaks
-		currentDSV->Release();
-
-		logger::info("Successfully cleared only the depth buffer");
-	} else {
-		logger::error("No depth stencil view was bound to the pipeline");
-	}
-}
 
 void __fastcall hkDeferredPrePass(uint64_t ptr_drawWorld)
 {
