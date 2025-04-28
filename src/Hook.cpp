@@ -86,7 +86,7 @@ HRESULT __stdcall Hook::PresentHook(IDXGISwapChain* pSwapChain, UINT SyncInterva
 	return _instance->oldFuncs.phookD3D11Present(pSwapChain, SyncInterval, Flags);
 }
 
-bool CreateAndEnableHook(void* target, void* hook, void** original, const char* hookName)
+static bool CreateAndEnableHook(void* target, void* hook, void** original, const char* hookName)
 {
 	if (MH_CreateHook(target, hook, original) != MH_OK) {
 		logger::error("Failed to create %s hook", hookName);

@@ -8,7 +8,16 @@
 #include <Windows.h>
 #include <winternl.h>
 
+#include <MinHook.h>
+
+
+
 #pragma comment(lib, "d3d9.lib")
+
+#define D3DEventNode(x,y)\
+D3DPERF_BeginEvent(0xffffffff, y);\
+x;\
+D3DPERF_EndEvent();\
 
 using namespace RE;
 using namespace BSScript;
@@ -25,6 +34,7 @@ RenderTargetManager* gRtMan;
 Renderer gRenderer;
 ID3D11Device* gDevice;
 NiTexture* g_ScopeNiTexture = nullptr;
+static ID3D11Texture2D* tempDepthTexture = nullptr;
 
 //NiPointer<NiTexture> g_ScopeNiTexture = nullptr;
 Texture* g_ScopeBSTexture = nullptr;
@@ -45,24 +55,33 @@ RenderTarget* g_ScopeRenderTarget = nullptr;
 	REL::Relocation<uintptr_t> DrawWorld_DeferredComposite_Ori{ REL::ID(728427) };
 	REL::Relocation<uintptr_t> DrawWorld_Forward_Ori{ REL::ID(656535) };
 	REL::Relocation<uintptr_t> DrawWorld_Refraction_Ori{ REL::ID(1572250) };
+#pragma region DrawWorld_SubFn
+
+	REL::Relocation<uintptr_t> DrawWorld_Add1stPersonGeomToCuller_Ori{ REL::ID(414086) };
+	REL::Relocation<uintptr_t> BSShaderAccumulator_RenderBatches_Ori{ REL::ID(1048494) };
+	REL::Relocation<uintptr_t> BSShaderAccumulator_RenderOpaqueDecals_Ori{ REL::ID(163409) };
+	REL::Relocation<uintptr_t> BSShaderAccumulator_RenderBlendedDecals_Ori{ REL::ID(761249) };
 #pragma endregion
 
+#pragma endregion
+#pragma region Main
+	REL::Relocation<uintptr_t> DrawWorld_Begin_Ori{ REL::ID(502840) };
+	REL::Relocation<uintptr_t> Main_DrawWorldAndUI_Ori{ REL::ID(408683) };
+	REL::Relocation<uintptr_t> Main_Swap_Ori{ REL::ID(1075087) };
+#pragma endregion
 
-REL::Relocation<uintptr_t> DrawWorld_Begin_Ori{ REL::ID(502840) };
-
-REL::Relocation<uintptr_t> DrawWorld_Add1stPersonGeomToCuller_Ori{ REL::ID(414086) };
 REL::Relocation<uintptr_t> BSCullingGroup_Process_Ori{ REL::ID(1147875) };
-
-REL::Relocation<uintptr_t> BSShaderAccumulator_RenderBatches_Ori{ REL::ID(1048494) };
-REL::Relocation<uintptr_t> BSShaderAccumulator_RenderOpaqueDecals_Ori{ REL::ID(163409) };
-REL::Relocation<uintptr_t> BSShaderAccumulator_RenderBlendedDecals_Ori{ REL::ID(761249) };
-
-
-REL::Relocation<uintptr_t> Main_DrawWorldAndUI_Ori{ REL::ID(408683) };
-REL::Relocation<uintptr_t> Main_Swap_Ori{ REL::ID(1075087) };
-
 REL::Relocation<uintptr_t> Renderer_CreateaRenderTarget_Ori{ REL::ID(425575) };
 REL::Relocation<uintptr_t> RenderTargetManager_CreateaRenderTarget_Ori{ REL::ID(43433) };
+
+REL::Relocation<uintptr_t> Renderer_DoZPrePass_Ori{ REL::ID(1491502) };
+REL::Relocation<uintptr_t> BSGraphics_RenderZPrePass_Ori{ REL::ID(901559) };
+REL::Relocation<uintptr_t> BSGraphics_RenderAlphaTestZPrePass_Ori{ REL::ID(767228) };
+
+REL::Relocation<uintptr_t> BSDistantObjectInstanceRenderer_Render_Ori{ REL::ID(148163) };
+REL::Relocation<uintptr_t> BSShaderAccumulator_ResetSunOcclusion_Ori{ REL::ID(371166) };
+REL::Relocation<uintptr_t> RenderTargetManager_ResummarizeHTileDepthStencilTarget_Ori{ REL::ID(777723) };
+REL::Relocation<uintptr_t> RenderTargetManager_DecompressDepthStencilTarget_Ori{ REL::ID(338650) };
 #pragma endregion
 
 #pragma region Pointer
@@ -76,9 +95,24 @@ REL::Relocation<BSShaderAccumulator**> ptr_DrawWorldAccum{ REL::ID(1211381) };
 REL::Relocation<BSCullingGroup**> ptr_k1stPersonCullingGroup{ REL::ID(731482) };
 REL::Relocation<NiCamera**> ptr_BSShaderManagerSpCamera{ REL::ID(543218) };
 REL::Relocation<NiCamera**> ptr_DrawWorldCamera{ REL::ID(1444212) };
+REL::Relocation<NiCamera**> ptr_DrawWorld1stCamera{ REL::ID(380177) };
 REL::Relocation<NiCamera**> ptr_DrawWorldSpCamera{ REL::ID(543218) };
-REL::Relocation<Context**> ptr_DefaultContext{ REL::ID(33539) };
+static REL::Relocation<Context**> ptr_DefaultContext{ REL::ID(33539) };
 REL::Relocation<uint32_t*> ptr_tls_index{ REL::ID(842564) };
+
+REL::Relocation<ZPrePassDrawData**> ptr_pFPZPrePassDrawDataA{ REL::ID(548629) };
+REL::Relocation<ZPrePassDrawData**> ptr_pZPrePassDrawDataA{ REL::ID(1503321) };
+
+REL::Relocation<AlphaTestZPrePassDrawData**> ptr_pFPAlphaTestZPrePassDrawDataA{ REL::ID(919131) };
+REL::Relocation<AlphaTestZPrePassDrawData**> ptr_pAlphaTestZPrePassDrawDataA{ REL::ID(297801) };
+
+static REL::Relocation<uint32_t*> FPZPrePassDrawDataCount{ REL::ID(163482) };
+static REL::Relocation<uint32_t*> ZPrePassDrawDataCount{ REL::ID(844802) };
+static REL::Relocation<uint32_t*> MergeInstancedZPrePassDrawDataCount{ REL::ID(1283533) };
+
+static REL::Relocation<uint32_t*> FPAlphaTestZPrePassDrawDataCount{ REL::ID(382658) };
+static REL::Relocation<uint32_t*> AlphaTestZPrePassDrawDataCount{ REL::ID(1064092) };
+static REL::Relocation<uint32_t*> AlphaTestMergeInstancedZPrePassDrawDataCount{ REL::ID(602241) };
 #pragma endregion
 
 
@@ -92,8 +126,12 @@ bool g_OverrideFirstPersonCulling = false;
 
 bool g_AdjustmentMode = false;
 float g_AdjustmentSpeed = 1.0f;
-NiPoint3 deltaPos = {0,0,0};
+//NiPoint3 deltaPos = { 0, 624, 0 };
+//NiPoint3 cacheDeltaPos = { 0, 624, 0 };
+NiPoint3 deltaPos = { 0, 0, 0 };
+NiPoint3 cacheDeltaPos = { 0, 0, 0 };
 NiMatrix3 deltaRot;
+NiMatrix3 cacheDeltaRot;
 int g_targetFov = 90;
 enum AdjustmentTarget
 {
@@ -102,7 +140,11 @@ enum AdjustmentTarget
 };
 AdjustmentTarget g_CurrentTarget = POSITION;
 int g_CurrentAxis = 0;  // 0 = X, 1 = Y, 2 = Z
+bool ori_b1stPerson;
+bool ori_bRenderDecals;
+etRenderMode ori_eRenderMode;
 
+#pragma region Hook declear
 void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld);
 void __fastcall hkBegin(uint64_t ptr_drawWorld);
 void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground);
@@ -110,7 +152,7 @@ void __fastcall hkMain_Swap();
 RenderTarget* __fastcall hkRenderer_CreateRenderTarget(Renderer* renderer, int aId, const wchar_t* apName, const RenderTargetProperties* aProperties);
 void __fastcall hkRTManager_CreateRenderTarget(int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
 
-void __fastcall hkSetCurrentRenderTarget(RenderTargetManager* manager,int aIndex,int aRenderTarget,SetRenderTargetMode aMode);
+void __fastcall hkSetCurrentRenderTarget(RenderTargetManager* manager, int aIndex, int aRenderTarget, SetRenderTargetMode aMode);
 
 void __fastcall hkBSCullingGroup_Process(BSCullingGroup* thisPtr, bool someFlag);
 
@@ -118,6 +160,18 @@ void __fastcall hkAdd1stPersonGeomToCuller(uint64_t ptr_drawWorld);
 void __fastcall hkBSShaderAccumulator_RenderBatches(BSShaderAccumulator* thisPtr, int aiShader, bool abAlphaPass, int aeGroup);
 void __fastcall hkBSShaderAccumulator_RenderOpaqueDecals(BSShaderAccumulator* thisPtr);
 void __fastcall hkBSShaderAccumulator_RenderBlendedDecals(BSShaderAccumulator* thisPtr);
+void __fastcall hkRenderer_DoZPrePass(uint64_t thisPtr, NiCamera* apFirstPersonCamera, NiCamera* apWorldCamera, float afFPNear, float afFPFar, float afNear, float afFar);
+void __fastcall hkRenderTargetManager_ResummarizeHTileDepthStencilTarget(RenderTargetManager*, int);
+void __fastcall hkBSShaderAccumulator_ResetSunOcclusion(BSShaderAccumulator* thisPtr);
+
+void __fastcall hkBSDistantObjectInstanceRenderer_Render(uint64_t thisPtr);
+void __fastcall hkDecompressDepthStencilTarget(RenderTargetManager*, int);
+void __fastcall hkRenderZPrePass(RendererShadowState* rshadowState, ZPrePassDrawData* aZPreData,
+	unsigned __int64* aVertexDesc, unsigned __int16* aCullmode, unsigned __int16* aDepthBiasMode);
+void __fastcall hkRenderAlphaTestZPrePass(RendererShadowState* rshadowState, AlphaTestZPrePassDrawData* aZPreData,
+	unsigned __int64* aVertexDesc, unsigned __int16* aCullmode,
+	unsigned __int16* aDepthBiasMode, ID3D11SamplerState** aCurSamplerState);
+
 //in Render_PreUI
 void __fastcall hkMainAccum(uint64_t ptr_drawWorld);
 void __fastcall hkOcclusionMapRender();
@@ -129,18 +183,74 @@ void __fastcall hkDeferredComposite(uint64_t ptr_drawWorld);
 void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld);
 void __fastcall hkDrawWorld_Refraction(uint64_t this_ptr);
 
+typedef void (*DoZPrePassOriginalFuncType)(uint64_t, NiCamera*, NiCamera*, float, float, float, float);
+typedef void (*RenderZPrePassOriginalFuncType)(RendererShadowState*, ZPrePassDrawData*, unsigned __int64*, unsigned __int16*, unsigned __int16*);
+typedef void (*RenderAlphaTestZPrePassOriginalFuncType)(RendererShadowState*, AlphaTestZPrePassDrawData*, unsigned __int64*, unsigned __int16*, unsigned __int16*, ID3D11SamplerState**);
+typedef void (*ResetSunOcclusionOriginalFuncType)(BSShaderAccumulator*);
+typedef void (*BSDistantObjectInstanceRenderer_Render_OriginalFuncType)(uint64_t);
+typedef void (*RenderTargetManager_ResummarizeHTileDepthStencilTarget_OriginalFuncType)(RenderTargetManager*, int);
+typedef void (*RenderTargetManager_DecompressDepthStencilTarget_OriginalFuncType)(RenderTargetManager*, int);
+// 存储原始函数的指针
+DoZPrePassOriginalFuncType g_pDoZPrePassOriginal = nullptr;
+RenderZPrePassOriginalFuncType g_RenderZPrePassOriginal = nullptr;
+RenderAlphaTestZPrePassOriginalFuncType g_RenderAlphaTestZPrePassOriginal = nullptr;
+ResetSunOcclusionOriginalFuncType g_ResetSunOcclusionOriginal = nullptr;
+BSDistantObjectInstanceRenderer_Render_OriginalFuncType g_BSDistantObjectInstanceRenderer_RenderOriginal = nullptr;
+RenderTargetManager_ResummarizeHTileDepthStencilTarget_OriginalFuncType g_ResummarizeHTileDepthStencilTarget_RenderOriginal = nullptr;
+RenderTargetManager_DecompressDepthStencilTarget_OriginalFuncType g_DecompressDepthStencilTargetOriginal = nullptr;
+#pragma endregion
+
+
+
+static bool CreateAndEnableHook(void* target, void* hook, void** original, const char* hookName)
+{
+	if (MH_CreateHook(target, hook, original) != MH_OK) {
+		logger::error("Failed to create %s hook", hookName);
+		return false;
+	}
+	if (MH_EnableHook(target) != MH_OK) {
+		logger::error("Failed to enable %s hook", hookName);
+		return false;
+	}
+	return true;
+}
 
 void Init_Hook()
 {
 	gRtMan = RenderTargetManager::GetSingleton();
 	gRenderer = Renderer::GetSingleton();
 
+	 // 初始化MinHook
+	if (MH_Initialize() != MH_OK) {
+		logger::info("MH_Initialize Failed!");
+		return;
+	}
+
+	CreateAndEnableHook((LPVOID)Renderer_DoZPrePass_Ori.address(), &hkRenderer_DoZPrePass, reinterpret_cast<LPVOID*>(&g_pDoZPrePassOriginal), "DoZPrePass");
+	CreateAndEnableHook((LPVOID)BSGraphics_RenderZPrePass_Ori.address(), &hkRenderZPrePass, reinterpret_cast<LPVOID*>(&g_RenderZPrePassOriginal), "RenderZPrePass");
+	CreateAndEnableHook((LPVOID)BSGraphics_RenderAlphaTestZPrePass_Ori.address(), &hkRenderAlphaTestZPrePass, reinterpret_cast<LPVOID*>(&g_RenderAlphaTestZPrePassOriginal), "RenderAlphaTestZPrePass");
+
+	CreateAndEnableHook((LPVOID)BSShaderAccumulator_ResetSunOcclusion_Ori.address(), &hkBSShaderAccumulator_ResetSunOcclusion,
+		reinterpret_cast<LPVOID*>(&g_ResetSunOcclusionOriginal), "ResetSunOcclusion");
+
+	CreateAndEnableHook((LPVOID)BSDistantObjectInstanceRenderer_Render_Ori.address(), &hkBSDistantObjectInstanceRenderer_Render,
+		reinterpret_cast<LPVOID*>(&g_BSDistantObjectInstanceRenderer_RenderOriginal), "BSDistantObjectInstanceRenderer_Render");
+
+	CreateAndEnableHook((LPVOID)RenderTargetManager_ResummarizeHTileDepthStencilTarget_Ori.address(), &hkRenderTargetManager_ResummarizeHTileDepthStencilTarget,
+		reinterpret_cast<LPVOID*>(&g_ResummarizeHTileDepthStencilTarget_RenderOriginal), "ResummarizeHTileDepthStencilTarget");
+
+	CreateAndEnableHook((LPVOID)RenderTargetManager_DecompressDepthStencilTarget_Ori.address(), &hkDecompressDepthStencilTarget,
+		reinterpret_cast<LPVOID*>(&g_DecompressDepthStencilTargetOriginal), "DecompressDepthStencilTarget");
+
+
+	std::cout << "MinHook success" << std::endl;
+
 	DetourTransactionBegin();
 	DetourUpdateThread(GetCurrentThread());
 	DetourAttach(&(PVOID&)DrawWorld_Render_PreUI_Ori, hkRender_PreUI);
 	DetourAttach(&(PVOID&)DrawWorld_Begin_Ori, hkBegin);
 	DetourAttach(&(PVOID&)Main_DrawWorldAndUI_Ori, hkMain_DrawWorldAndUI);
-	DetourAttach(&(PVOID&)Main_Swap_Ori, hkMain_Swap);
+	//DetourAttach(&(PVOID&)Main_Swap_Ori, hkMain_Swap);
 	DetourAttach(&(PVOID&)BSCullingGroup_Process_Ori, hkBSCullingGroup_Process);
 
 	DetourAttach(&(PVOID&)DrawWorld_MainAccum_Ori, hkMainAccum);
@@ -161,43 +271,6 @@ void Init_Hook()
 
 }
 
-void UpdateCameraWorldTransform()
-{
-	if (!g_ScopeCamera || !g_ScopeCamera->parent)
-		return;
-
-	// 强制更新世界变换矩阵
-	NiUpdateData updateData;
-	g_ScopeCamera->UpdateWorldData(&updateData);
-
-	// 检查是否有特定位置要覆盖
-	if (g_ScopeCamera->local.translate.x != 0.0f ||
-		g_ScopeCamera->local.translate.y != 0.0f ||
-		g_ScopeCamera->local.translate.z != 0.0f) {
-		// 计算父节点世界位置上添加本地位置的效果
-		NiPoint3 worldPos;
-		NiMatrix3 parentRotation = g_ScopeCamera->parent->world.rotate;
-
-		// 将本地位置通过父节点旋转转换到世界空间
-		worldPos.x = parentRotation.entry[0].x * g_ScopeCamera->local.translate.x +
-		             parentRotation.entry[0].y * g_ScopeCamera->local.translate.y +
-		             parentRotation.entry[0].z * g_ScopeCamera->local.translate.z;
-
-		worldPos.y = parentRotation.entry[1].x * g_ScopeCamera->local.translate.x +
-		             parentRotation.entry[1].y * g_ScopeCamera->local.translate.y +
-		             parentRotation.entry[1].z * g_ScopeCamera->local.translate.z;
-
-		worldPos.z = parentRotation.entry[2].x * g_ScopeCamera->local.translate.x +
-		             parentRotation.entry[2].y * g_ScopeCamera->local.translate.y +
-		             parentRotation.entry[2].z * g_ScopeCamera->local.translate.z;
-
-		// 添加父节点世界位置
-		worldPos += g_ScopeCamera->parent->world.translate;
-
-		// 设置新的世界位置
-		g_ScopeCamera->world.translate = worldPos;
-	}
-}
 
 void ProcessCameraAdjustment()
 {
@@ -281,10 +354,14 @@ void ProcessCameraAdjustment()
 		if (deltaPos.x != 0.0f || deltaPos.y != 0.0f || deltaPos.z != 0.0f) {
 			g_ScopeCamera->local.translate += deltaPos;
 
-			logger::info("Camera position: [{:.3f}, {:.3f}, {:.3f}]",
-				g_ScopeCamera->local.translate.x,
-				g_ScopeCamera->local.translate.y,
-				g_ScopeCamera->local.translate.z);
+			if (cacheDeltaPos != deltaPos)
+			{
+				logger::info("Camera position: [{:.3f}, {:.3f}, {:.3f}]",
+					g_ScopeCamera->local.translate.x,
+					g_ScopeCamera->local.translate.y,
+					g_ScopeCamera->local.translate.z);
+				cacheDeltaPos = deltaPos;
+			}
 		}
 	} else {
 		// Adjust rotation on all axes simultaneously
@@ -390,7 +467,6 @@ void CreateScopeCamera()
 {
 	// Get the player camera
 	const auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-	//g_Swapchain = (IDXGISwapChain*)static_cast<void*>(rendererData->renderWindow->swapChain);
 	gDevice = (ID3D11Device*)static_cast<void*>(rendererData->device);
 
 	auto playerCamera = RE::PlayerCamera::GetSingleton();
@@ -403,35 +479,59 @@ void CreateScopeCamera()
 	g_ScopeCamera->port = ((NiCamera*)playerCamera->cameraRoot.get())->port;
 }
 
-void RenderForScope(uint64_t ptr_drawWorld)
+void __fastcall hkRenderZPrePass(BSGraphics::RendererShadowState* rshadowState, BSGraphics::ZPrePassDrawData* aZPreData,
+	unsigned __int64* aVertexDesc, unsigned __int16* aCullmode, unsigned __int16* aDepthBiasMode)
 {
-	// Save original state
-	g_IsRenderingForScope = true;
+	g_RenderZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode);
+}
 
-	// Call the render function
-	typedef void (*FnRender_PreUI)(uint64_t);
-	FnRender_PreUI fn = (FnRender_PreUI)DrawWorld_Render_PreUI_Ori.address();
-	(*fn)(ptr_drawWorld);
+void __fastcall hkRenderAlphaTestZPrePass(BSGraphics::RendererShadowState* rshadowState,
+        BSGraphics::AlphaTestZPrePassDrawData *aZPreData,
+        unsigned __int64 *aVertexDesc,
+        unsigned __int16 *aCullmode,
+        unsigned __int16 *aDepthBiasMode,
+        ID3D11SamplerState **aCurSamplerState)
+{
+	g_RenderAlphaTestZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode, aCurSamplerState);
+}
 
-	g_IsRenderingForScope = false;
+void __fastcall hkRenderer_DoZPrePass(uint64_t thisPtr, NiCamera* apFirstPersonCamera, NiCamera* apWorldCamera, float afFPNear, float afFPFar, float afNear, float afFar) 
+{
+	if (g_IsRenderingForScope) {
+		*FPZPrePassDrawDataCount = 0;
+		*FPAlphaTestZPrePassDrawDataCount = 0;
+		D3DEventNode(g_pDoZPrePassOriginal(thisPtr, apFirstPersonCamera, apWorldCamera, afFPNear, afFPFar, afNear, afFar), L"hkRenderer_DoZPrePass");
+		return;
+	}
+	g_pDoZPrePassOriginal(thisPtr, apFirstPersonCamera, apWorldCamera, afFPNear, afFPFar, afNear, afFar);
+}
+void __fastcall hkBSDistantObjectInstanceRenderer_Render(uint64_t thisPtr)
+{
+	D3DEventNode((*g_BSDistantObjectInstanceRenderer_RenderOriginal)(thisPtr), L"hkBSDistantObjectInstanceRenderer_Render");
+	
+}
+
+void __fastcall hkRenderTargetManager_ResummarizeHTileDepthStencilTarget(RenderTargetManager* thisPtr, int index)
+{
+	D3DEventNode((*g_ResummarizeHTileDepthStencilTarget_RenderOriginal)(thisPtr, index), L"hkRenderTargetManager_ResummarizeHTileDepthStencilTarget");
+	
+}
+void __fastcall hkBSShaderAccumulator_ResetSunOcclusion(BSShaderAccumulator* thisPtr) 
+{
+	D3DEventNode((*g_ResetSunOcclusionOriginal)(thisPtr), L"hkBSShaderAccumulator_ResetSunOcclusion");
+}
+
+void __fastcall hkDecompressDepthStencilTarget(RenderTargetManager* thisPtr, int index)
+{
+	D3DEventNode((*g_DecompressDepthStencilTargetOriginal)(thisPtr, index), L"hkBSShaderAccumulator_ResetSunOcclusion");
 }
 
 void __fastcall hkAdd1stPersonGeomToCuller(uint64_t thisPtr)
 {
-	if (g_IsRenderingForScope) {
-		//Renderer::GetSingleton().ClearDepthStencil(ClearFlag::CLEAR_DEPTH_STENCIL_TARGET_ALL);
-		return;
-	}
-	if (g_IsRenderingForScope) {
-		// We'll let the culling happen, but we'll skip actual rendering later
-		g_ModifyFirstPersonRender = true;
-	}
-
 	typedef void (*FnhkAdd1stPersonGeomToCuller)(uint64_t);
 	FnhkAdd1stPersonGeomToCuller fn = (FnhkAdd1stPersonGeomToCuller)DrawWorld_Add1stPersonGeomToCuller_Ori.address();
-	if (!fn) return;
+	if (g_IsRenderingForScope) return;
 	(*fn)(thisPtr);
-	return;
 }
 
 void __fastcall hkBSShaderAccumulator_RenderBatches(
@@ -439,13 +539,7 @@ void __fastcall hkBSShaderAccumulator_RenderBatches(
 {
 	// Original function pointer
 	typedef void (*FnRenderBatches)(BSShaderAccumulator*, int, bool, int);
-	FnRenderBatches fn = (FnRenderBatches)BSShaderAccumulator_RenderBatches_Ori.address();
-
-	if (g_IsRenderingForScope && thisPtr == *ptr_Draw1stPersonAccum) {
-		(*fn)(thisPtr, aiShader, abAlphaPass, aeGroup);
-		return;
-	}
-	if(!fn) return;
+	FnRenderBatches fn = (FnRenderBatches)BSShaderAccumulator_RenderBatches_Ori.address();	
 	(*fn)(thisPtr, aiShader, abAlphaPass, aeGroup);
 }
 
@@ -454,11 +548,6 @@ void __fastcall hkBSShaderAccumulator_RenderBlendedDecals(BSShaderAccumulator* t
 {
 	typedef void (*Fn)(BSShaderAccumulator*);
 	Fn fn = (Fn)BSShaderAccumulator_RenderBlendedDecals_Ori.address();
-	if (g_IsRenderingForScope && thisPtr == *ptr_Draw1stPersonAccum) {
-		(*fn)(thisPtr);
-		return;
-	}
-	if(!fn) return;
 	(*fn)(thisPtr);
 }
 
@@ -466,11 +555,6 @@ void __fastcall hkBSShaderAccumulator_RenderOpaqueDecals(BSShaderAccumulator* th
 {
 	typedef void (*Fn)(BSShaderAccumulator*);
 	Fn fn = (Fn)BSShaderAccumulator_RenderOpaqueDecals_Ori.address();
-	if (g_IsRenderingForScope && thisPtr == *ptr_Draw1stPersonAccum) {
-		(*fn)(thisPtr);
-		return;
-	}
-	if(!fn) return;
 	(*fn)(thisPtr);
 }
 
@@ -498,11 +582,26 @@ void __fastcall hkRTManager_CreateRenderTarget(int aIndex, const RenderTargetPro
 	(*fn)(aIndex, arProperties, aPersistent);
 }
 
+void RenderForScope(uint64_t ptr_drawWorld)
+{
+	// Save original state
+	g_IsRenderingForScope = true;
+	// Call the render function
+	typedef void (*FnRender_PreUI)(uint64_t);
+	FnRender_PreUI fn = (FnRender_PreUI)DrawWorld_Render_PreUI_Ori.address();
+
+	(*fn)(ptr_drawWorld);
+
+	g_IsRenderingForScope = false;
+	
+}
+
 void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 {
 	typedef void (*FnRender_PreUI)(uint64_t ptr_drawWorld);
 	FnRender_PreUI fn = (FnRender_PreUI)DrawWorld_Render_PreUI_Ori.address();
 	D3DPERF_BeginEvent(0xffffffff, L"First Render_PreUI");
+
 	(*fn)(ptr_drawWorld);
 	D3DPERF_EndEvent();
 
@@ -511,21 +610,29 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 
 	NiCloningProcess tempP{};
 	NiCamera* originalCamera = (NiCamera*)((*ptr_DrawWorldCamera)->CreateClone(tempP));
+	auto originalCamera1st = *ptr_DrawWorldCamera;
+	auto originalCamera1stport = (*ptr_DrawWorld1stCamera)->port;
 	g_ScopeCamera->local.translate = originalCamera->local.translate;
 	g_ScopeCamera->local.rotate = originalCamera->local.rotate;
 	ProcessCameraAdjustment();
 
-	
+	originalCamera1st->port.left = 0.50f;
+	originalCamera1st->port.right = 1.0f;
+	originalCamera1st->port.top = 1.0f;
+	originalCamera1st->port.bottom = 0.5f;
+
+
 	D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
 	DrawWorld::SetCamera(g_ScopeCamera);
 	DrawWorld::SetUpdateCameraFOV(true);
 	DrawWorld::SetAdjusted1stPersonFOV(g_targetFov);
 	DrawWorld::SetCameraFov(g_targetFov);
-
+	
 	//(*ptr_DrawWorld_b1stPersonEnable) = false;
 
 	RenderForScope(ptr_drawWorld);
 
+	(*ptr_DrawWorld1stCamera)->port = originalCamera1stport;
 	DrawWorld::SetCamera(originalCamera);
 	DrawWorld::SetUpdateCameraFOV(true);
 	DrawWorld::SetAdjusted1stPersonFOV(90);
@@ -537,12 +644,6 @@ void __fastcall hkMainAccum(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_MainAccum_Ori.address();
-	if (g_IsRenderingForScope) {
-		(*fn)(ptr_drawWorld);
-		auto accum = *ptr_Draw1stPersonAccum;
-		return;
-	}
-
 	(*fn)(ptr_drawWorld);
 }
 
@@ -550,14 +651,7 @@ void __fastcall hkOcclusionMapRender()
 {
 	typedef void (*Fn)();
 	Fn fn = (Fn)DrawWorld_OcclusionMapRender_Ori.address();
-	if (g_IsRenderingForScope) {
-		D3DPERF_BeginEvent(0xffffffff, L"hkOcclusionMapRender");
-		(*fn)();
-		D3DPERF_EndEvent();
-		return;
-	}
-
-	(*fn)();
+	D3DEventNode((*fn)(), L"hkOcclusionMapRender");
 }
 
 void __fastcall hkMainRenderSetup(uint64_t ptr_drawWorld)
@@ -565,13 +659,7 @@ void __fastcall hkMainRenderSetup(uint64_t ptr_drawWorld)
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_MainRenderSetup_Ori.address();
 
-	if (g_IsRenderingForScope) {
-		D3DPERF_BeginEvent(0xffffffff, L"hkMainRenderSetup");
-		(*fn)(ptr_drawWorld);
-		D3DPERF_EndEvent();
-		return;
-	}
-	(*fn)(ptr_drawWorld);
+	D3DEventNode((*fn)(ptr_drawWorld), L"hkMainRenderSetup");
 }
 
 void __fastcall hkOpaqueWireframe(uint64_t ptr_drawWorld)
@@ -579,11 +667,7 @@ void __fastcall hkOpaqueWireframe(uint64_t ptr_drawWorld)
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_OpaqueWireframe_Ori.address();
 
-	if (g_IsRenderingForScope) {
-		(*fn)(ptr_drawWorld);
-		return;
-	}
-	(*fn)(ptr_drawWorld);
+	D3DEventNode((*fn)(ptr_drawWorld), L"hkOpaqueWireframe");
 }
 
 
@@ -591,77 +675,41 @@ void __fastcall hkDeferredPrePass(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_DeferredPrePass_Ori.address();
-	// Check if we're rendering for scope and this is the 1st person accumulator
-
-	bool wasInScopeRendering = g_IsRenderingForScope;
-
-	// Set render state to write depth only
 	D3DPERF_BeginEvent(0xffffffff, L"hkDeferredPrePass");
 	(*fn)(ptr_drawWorld);
-
-	if (wasInScopeRendering) {
-		// Ensure the flag is reset before we leave
-		g_ModifyFirstPersonRender = false;
-	}
-
 	D3DPERF_EndEvent();
-
-	(*fn)(ptr_drawWorld);
 }
 
 void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_DeferredLightsImpl_Ori.address();
-	if (g_IsRenderingForScope) {
-		D3DPERF_BeginEvent(0xffffffff, L"hkDeferredLightsImpl");
-		(*fn)(ptr_drawWorld);
-		D3DPERF_EndEvent();
-		return;
-	}
-
-	(*fn)(ptr_drawWorld);
+	D3DEventNode((*fn)(ptr_drawWorld), L"hkDeferredLightsImpl");
 }
 
 void __fastcall hkDeferredComposite(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_DeferredComposite_Ori.address();
-
-	if (g_IsRenderingForScope) {
-		D3DPERF_BeginEvent(0xffffffff, L"hkDeferredComposite");
-		(*fn)(ptr_drawWorld);
-		D3DPERF_EndEvent();
-		return;
-	}
-	(*fn)(ptr_drawWorld);
+	
+	D3DEventNode((*fn)(ptr_drawWorld), L"hkDeferredComposite");
 }
 
 void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_Forward_Ori.address();
-
-	if (g_IsRenderingForScope) {
-		D3DPERF_BeginEvent(0xffffffff, L"hkDrawWorld_Forward");
-		(*fn)(ptr_drawWorld);
-		D3DPERF_EndEvent();
+	if (g_IsRenderingForScope && PlayerCharacter::GetSingleton()->Get3D(true))
 		return;
-	}
-	(*fn)(ptr_drawWorld);
+
+	D3DEventNode((*fn)(ptr_drawWorld), L"hkDrawWorld_Forward");
 }
 
 void __fastcall hkDrawWorld_Refraction(uint64_t this_ptr)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_Refraction_Ori.address();
-	if (g_IsRenderingForScope) {
-		D3DPERF_BeginEvent(0xffffffff, L"hkDrawWorld_Refraction");
-		(*fn)(this_ptr);
-		D3DPERF_EndEvent();
-		return;
-	}
-	(*fn)(this_ptr);
+	D3DEventNode((*fn)(this_ptr), L"hkDrawWorld_Refraction");
 }
 
 
@@ -671,9 +719,7 @@ void __fastcall hkBegin(uint64_t ptr_drawWorld)
 	typedef void (*hkBegin)(uint64_t ptr_drawWorld);
 	hkBegin fn = (hkBegin)DrawWorld_Begin_Ori.address();
 	if (!fn) return;
-
 	(*fn)(ptr_drawWorld);
-
 }
 
 
@@ -683,7 +729,8 @@ void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground)
 	FnMain_DrawWorldAndUI fn = (FnMain_DrawWorldAndUI)Main_DrawWorldAndUI_Ori.address();
 	if (!fn)
 		return;
-	(*fn)(ptr_drawWorld, abBackground);
+
+	D3DEventNode((*fn)(ptr_drawWorld, abBackground), L"hkMain_DrawWorldAndUI");
 }
 
 void __fastcall hkSetCurrentRenderTarget(
@@ -702,9 +749,9 @@ void hkMain_Swap()
 {
 	typedef void (*hkMain_Swap)();
 	hkMain_Swap fn = (hkMain_Swap)Main_Swap_Ori.address();
-
 	if (!fn) return;
 	(*fn)();
+	
 }
 
 DWORD WINAPI MainThread(HMODULE hModule) 
@@ -783,6 +830,7 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_f4se, F4
 	logger::info("FakeThroughScope Loaded!");
 
 	
+	F4SE::AllocTrampoline(16 * 8);
 
 	return true;
 }
@@ -796,7 +844,6 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 #endif
 
 	F4SE::Init(a_f4se);
-	F4SE::AllocTrampoline(8 * 8);
 	hook = new Hook(RE::PlayerCamera::GetSingleton());
 	
 	
