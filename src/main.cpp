@@ -24,7 +24,6 @@ using namespace RE::BSGraphics;
 using namespace RE::DrawWorld;
 Hook* hook = nullptr;
 
-// Our global variables
 NiCamera* g_ScopeCamera = nullptr;
 NiCamera* g_OriCamera = nullptr;
 
@@ -115,7 +114,6 @@ static REL::Relocation<uint32_t*> AlphaTestZPrePassDrawDataCount{ REL::ID(106409
 static REL::Relocation<uint32_t*> AlphaTestMergeInstancedZPrePassDrawDataCount{ REL::ID(602241) };
 #pragma endregion
 
-// Flag to ensure we initialize only once
 bool g_bInitialized = false;
 bool g_IsRenderingForScope = false;
 bool g_OverrideFirstPersonCulling = false;
@@ -123,8 +121,6 @@ bool g_ScopeIsCubeMapRendering = false;  // 标记是否正在进行CubeMap渲�
 
 bool g_AdjustmentMode = false;
 float g_AdjustmentSpeed = 1.0f;
-//NiPoint3 deltaPos = { 0, 624, 0 };
-//NiPoint3 cacheDeltaPos = { 0, 624, 0 };
 NiPoint3 deltaPos = { 0, 0, 0 };
 NiPoint3 cacheDeltaPos = { 0, 0, 0 };
 NiMatrix3 deltaRot;
@@ -290,10 +286,8 @@ void Init_Hook()
 
 }
 
-// Implementation of the hook
 void __fastcall hkSetDirtyRenderTargets(void* thisPtr)
 {
-	// For simplicity, just call the original function without modifications
 	g_SetDirtyRenderTargetsOriginal(thisPtr);
 }
 
@@ -307,7 +301,6 @@ void __fastcall hkSetCurrentRenderTarget(RenderTargetManager* manager, int aInde
 	return g_SetCurrentRenderTargetOriginal(manager, aIndex, aRenderTarget, aMode);
 }
 
-// Hook函数: SetCurrentCubeMapRenderTarget
 void __fastcall hkSetCurrentCubeMapRenderTarget(RenderTargetManager* manager, int aCubeMapRenderTarget, SetRenderTargetMode aMode, int aView)
 {
 	return g_SetCurrentCubeMapRenderTargetOriginal(manager, aCubeMapRenderTarget, aMode, aView);
@@ -551,7 +544,6 @@ void __fastcall hkBSDistantObjectInstanceRenderer_Render(uint64_t thisPtr)
 	D3DEventNode((*g_BSDistantObjectInstanceRenderer_RenderOriginal)(thisPtr), L"hkBSDistantObjectInstanceRenderer_Render");
 	
 }
-
 void __fastcall hkRenderTargetManager_ResummarizeHTileDepthStencilTarget(RenderTargetManager* thisPtr, int index)
 {
 	D3DEventNode((*g_ResummarizeHTileDepthStencilTarget_RenderOriginal)(thisPtr, index), L"hkRenderTargetManager_ResummarizeHTileDepthStencilTarget");
@@ -561,7 +553,6 @@ void __fastcall hkBSShaderAccumulator_ResetSunOcclusion(BSShaderAccumulator* thi
 {
 	D3DEventNode((*g_ResetSunOcclusionOriginal)(thisPtr), L"hkBSShaderAccumulator_ResetSunOcclusion");
 }
-
 void __fastcall hkDecompressDepthStencilTarget(RenderTargetManager* thisPtr, int index)
 {
 	D3DEventNode((*g_DecompressDepthStencilTargetOriginal)(thisPtr, index), L"hkBSShaderAccumulator_ResetSunOcclusion");
@@ -578,7 +569,6 @@ void __fastcall hkAdd1stPersonGeomToCuller(uint64_t thisPtr)
 void __fastcall hkBSShaderAccumulator_RenderBatches(
 	BSShaderAccumulator* thisPtr,int aiShader,bool abAlphaPass,int aeGroup)
 {
-	// Original function pointer
 	typedef void (*FnRenderBatches)(BSShaderAccumulator*, int, bool, int);
 	FnRenderBatches fn = (FnRenderBatches)BSShaderAccumulator_RenderBatches_Ori.address();	
 	(*fn)(thisPtr, aiShader, abAlphaPass, aeGroup);
@@ -625,9 +615,7 @@ void __fastcall hkRTManager_CreateRenderTarget(int aIndex, const RenderTargetPro
 
 void RenderForScope(uint64_t ptr_drawWorld)
 {
-	// Save original state
 	g_IsRenderingForScope = true;
-	// Call the render function
 	typedef void (*FnRender_PreUI)(uint64_t);
 	FnRender_PreUI fn = (FnRender_PreUI)DrawWorld_Render_PreUI_Ori.address();
 
@@ -688,14 +676,11 @@ void __fastcall hkOcclusionMapRender()
 	D3DEventNode((*fn)(), L"hkOcclusionMapRender");
 }
 
-// 对每个阶段的钩子函数进行类似的保护措施
 void __fastcall hkMainRenderSetup(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_MainRenderSetup_Ori.address();
 	D3DEventNode((*fn)(ptr_drawWorld), L"hkMainRenderSetup_Scope");
-
-
 }
 
 void __fastcall hkOpaqueWireframe(uint64_t ptr_drawWorld)
@@ -711,9 +696,8 @@ void __fastcall hkDeferredPrePass(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_DeferredPrePass_Ori.address();
-	D3DPERF_BeginEvent(0xffffffff, L"hkDeferredPrePass");
-	(*fn)(ptr_drawWorld);
-	D3DPERF_EndEvent();
+
+	D3DEventNode((*fn)(ptr_drawWorld), L"hkDeferredPrePass");
 }
 
 void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
@@ -797,7 +781,6 @@ DWORD WINAPI MainThread(HMODULE hModule)
 
 void InitializePlugin()
 {
-	//InitScopeRenderTargetDirect();
 	Init_Hook();
 	HANDLE hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)MainThread, (HMODULE)REX::W32::GetCurrentModule(), 0, NULL);
 }
@@ -879,13 +862,9 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 		} else if (msg->type == F4SE::MessagingInterface::kGameDataReady) {
 			InitializePlugin();
 		} else if (msg->type == F4SE::MessagingInterface::kPostLoadGame) {
-			//ResetScopeStatus();
 		} else if (msg->type == F4SE::MessagingInterface::kNewGame) {
-			//ResetScopeStatus();
 		} else if (msg->type == F4SE::MessagingInterface::kPostSaveGame) {
-			//reshadeImpl->SetRenderEffect(true);
 		} else if (msg->type == F4SE::MessagingInterface::kGameLoaded) {
-			//reshadeImpl->SetRenderEffect(false);
 		}
 	});
 
