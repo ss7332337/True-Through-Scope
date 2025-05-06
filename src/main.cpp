@@ -1,13 +1,11 @@
 #include <synchapi.h>
 #include <processthreadsapi.h>
 #include "Hook.h"
-
 #include "detours.h"
 #include <d3d9.h>
 #include <d3dcompiler.h>
 #include <Windows.h>
 #include <winternl.h>
-
 #include <MinHook.h>
 
 
@@ -37,32 +35,7 @@ RendererData* gRD;
 ID3D11Device* gDevice;
 NiTexture* g_ScopeNiTexture = nullptr;
 static ID3D11Texture2D* tempDepthTexture = nullptr;
-
-//NiPointer<NiTexture> g_ScopeNiTexture = nullptr;
 Texture* g_ScopeBSTexture = nullptr;
-
-bool g_ScopeRTCreated = false;
-std::unordered_map<int, int> g_OriginalToScopeRTMap;  // 原始RT索引到Scope RT索引的映射
-std::unordered_map<int, int> g_OriginalToScopeCubeRTMap;
-int g_ScopeRTIndex = 100;                             // 主Scope渲染目标索引
-int g_NextScopeRTIndex = 101;                         // 起始的自定义RT索引
-int g_NextScopeCubeRTIndex = 2;                       // 起始的自定义立方体RT索引
-int g_ScopeDepthRT = 12;                              // 用于Scope的深度缓冲区索引
-
-
-// Add this to your header section
-struct ScreenQuad
-{
-	float x, y;           // Position
-	float width, height;  // Size
-	float u, v;           // Texture coordinates
-	float opacity;        // Transparency
-};
-
-// Global variables for the screen quad
-ScreenQuad g_ScopeQuad = { 0.7f, 0.1f, 0.25f, 0.25f, 0, 0, 1.0f };  // Position in top-right corner
-bool g_ShowScopeOverlay = true;
-
 
 RenderTarget* g_ScopeRenderTarget = nullptr;
 #pragma region Func
@@ -116,7 +89,7 @@ REL::Relocation<uintptr_t**> ptr_DrawWorldShadowNode{ REL::ID(1327069) };
 REL::Relocation<NiAVObject**> ptr_DrawWorld1stPerson{ REL::ID(1491228) };
 REL::Relocation<BSShaderManagerState**> ptr_BSShaderManager_State{ REL::ID(1327069) };
 REL::Relocation<bool*> ptr_DrawWorld_b1stPersonEnable{ REL::ID(922366) };
-//REL::Relocation<bool*> ptr_DrawWorld_b1stPersonInWorld{ REL::ID(34473) };
+REL::Relocation<bool*> ptr_DrawWorld_b1stPersonInWorld{ REL::ID(34473) };
 REL::Relocation<BSShaderAccumulator**> ptr_Draw1stPersonAccum{ REL::ID(1430301) };
 REL::Relocation<BSShaderAccumulator**> ptr_DrawWorldAccum{ REL::ID(1211381) };
 REL::Relocation<BSCullingGroup**> ptr_k1stPersonCullingGroup{ REL::ID(731482) };
@@ -339,7 +312,6 @@ void __fastcall hkSetCurrentCubeMapRenderTarget(RenderTargetManager* manager, in
 {
 	return g_SetCurrentCubeMapRenderTargetOriginal(manager, aCubeMapRenderTarget, aMode, aView);
 }
-
 
 void ProcessCameraAdjustment()
 {
@@ -723,27 +695,6 @@ void __fastcall hkMainRenderSetup(uint64_t ptr_drawWorld)
 	Fn fn = (Fn)DrawWorld_MainRenderSetup_Ori.address();
 	D3DEventNode((*fn)(ptr_drawWorld), L"hkMainRenderSetup_Scope");
 
-	if (g_IsRenderingForScope && g_ScopeRTCreated) 
-	{
-		
-		// Get our render target manager
-		RenderTargetManager* rtm = &gRtMan;
-
-		// Set up render targets for scope rendering using our mapped indices
-		rtm->SetCurrentRenderTarget(0, g_OriginalToScopeRTMap[26], SetRenderTargetMode::SRTM_NO_CLEAR);
-		rtm->SetCurrentRenderTarget(1, g_OriginalToScopeRTMap[27], SetRenderTargetMode::SRTM_NO_CLEAR);
-		rtm->SetCurrentRenderTarget(2, g_OriginalToScopeRTMap[29], SetRenderTargetMode::SRTM_NO_CLEAR);
-		rtm->SetCurrentRenderTarget(3, g_OriginalToScopeRTMap[30], SetRenderTargetMode::SRTM_CLEAR);
-
-		if ((*ptr_BSShaderManager_State)->bDeferredRGBEmit && g_OriginalToScopeRTMap.count(31)) {
-			rtm->SetCurrentRenderTarget(4, g_OriginalToScopeRTMap[31], SetRenderTargetMode::SRTM_NO_CLEAR);
-		}
-
-		rtm->SetCurrentRenderTarget(5, g_OriginalToScopeRTMap[32], SetRenderTargetMode::SRTM_NO_CLEAR);
-		rtm->SetCurrentDepthStencilTarget(g_ScopeDepthRT, SetRenderTargetMode::SRTM_CLEAR, 0);
-		rtm->SetCurrentViewportDefault();
-		return;
-	}
 
 }
 
@@ -777,18 +728,6 @@ void __fastcall hkDeferredComposite(uint64_t ptr_drawWorld)
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_DeferredComposite_Ori.address();
 	D3DEventNode((*fn)(ptr_drawWorld), L"hkDeferredComposite");
-
-	if (g_IsRenderingForScope && g_ScopeRTCreated) {
-		// Get our render target manager
-		RenderTargetManager* rtm = &gRtMan;
-
-		// For the final composition, write to our main scope render target
-		rtm->SetCurrentRenderTarget(0, g_ScopeRTIndex, SetRenderTargetMode::SRTM_NO_CLEAR);
-		rtm->SetCurrentRenderTarget(1, -1, SetRenderTargetMode::SRTM_NO_CLEAR);
-		rtm->SetCurrentDepthStencilTarget(g_ScopeDepthRT, SetRenderTargetMode::SRTM_NO_CLEAR, 0);
-		rtm->SetCurrentViewportDefault();
-		return;
-	}
 }
 
 void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
