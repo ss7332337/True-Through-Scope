@@ -30,17 +30,39 @@ Hook* hook = nullptr;
 NiCamera* g_ScopeCamera = nullptr;
 NiCamera* g_OriCamera = nullptr;
 
-RenderTargetManager* gRtMan;
+RenderTargetManager gRtMan;
 Renderer gRenderer;
+RendererData* gRD;
+
 ID3D11Device* gDevice;
 NiTexture* g_ScopeNiTexture = nullptr;
 static ID3D11Texture2D* tempDepthTexture = nullptr;
 
 //NiPointer<NiTexture> g_ScopeNiTexture = nullptr;
 Texture* g_ScopeBSTexture = nullptr;
-bool g_ScopeRTInitialized = false;
-int g_ScopeRTIndex = 100;
-bool g_ModifyFirstPersonRender = false;
+
+bool g_ScopeRTCreated = false;
+std::unordered_map<int, int> g_OriginalToScopeRTMap;  // 原始RT索引到Scope RT索引的映射
+std::unordered_map<int, int> g_OriginalToScopeCubeRTMap;
+int g_ScopeRTIndex = 100;                             // 主Scope渲染目标索引
+int g_NextScopeRTIndex = 101;                         // 起始的自定义RT索引
+int g_NextScopeCubeRTIndex = 2;                       // 起始的自定义立方体RT索引
+int g_ScopeDepthRT = 12;                              // 用于Scope的深度缓冲区索引
+
+
+// Add this to your header section
+struct ScreenQuad
+{
+	float x, y;           // Position
+	float width, height;  // Size
+	float u, v;           // Texture coordinates
+	float opacity;        // Transparency
+};
+
+// Global variables for the screen quad
+ScreenQuad g_ScopeQuad = { 0.7f, 0.1f, 0.25f, 0.25f, 0, 0, 1.0f };  // Position in top-right corner
+bool g_ShowScopeOverlay = true;
+
 
 RenderTarget* g_ScopeRenderTarget = nullptr;
 #pragma region Func
@@ -82,12 +104,17 @@ REL::Relocation<uintptr_t> BSDistantObjectInstanceRenderer_Render_Ori{ REL::ID(1
 REL::Relocation<uintptr_t> BSShaderAccumulator_ResetSunOcclusion_Ori{ REL::ID(371166) };
 REL::Relocation<uintptr_t> RenderTargetManager_ResummarizeHTileDepthStencilTarget_Ori{ REL::ID(777723) };
 REL::Relocation<uintptr_t> RenderTargetManager_DecompressDepthStencilTarget_Ori{ REL::ID(338650) };
+
+REL::Relocation<uintptr_t> RenderTargetManager_SetCurrentRenderTarget_Ori{ REL::ID(1502425) };
+REL::Relocation<uintptr_t> RTM_SetCurrentDepthStencilTarget_Ori{ REL::ID(1502425) };
+REL::Relocation<uintptr_t> RTM_SetCurrentCubeMapRenderTarget_Ori{ REL::ID(1049522) };
+REL::Relocation<uintptr_t> BG_SetDirtyRenderTargets_Ori{ REL::ID(361475) };
 #pragma endregion
 
 #pragma region Pointer
 REL::Relocation<uintptr_t**> ptr_DrawWorldShadowNode{ REL::ID(1327069) };
 REL::Relocation<NiAVObject**> ptr_DrawWorld1stPerson{ REL::ID(1491228) };
-REL::Relocation<BSShaderManagerState*> ptr_BSShaderManager_State{ REL::ID(1327069) };
+REL::Relocation<BSShaderManagerState**> ptr_BSShaderManager_State{ REL::ID(1327069) };
 REL::Relocation<bool*> ptr_DrawWorld_b1stPersonEnable{ REL::ID(922366) };
 //REL::Relocation<bool*> ptr_DrawWorld_b1stPersonInWorld{ REL::ID(34473) };
 REL::Relocation<BSShaderAccumulator**> ptr_Draw1stPersonAccum{ REL::ID(1430301) };
@@ -115,14 +142,11 @@ static REL::Relocation<uint32_t*> AlphaTestZPrePassDrawDataCount{ REL::ID(106409
 static REL::Relocation<uint32_t*> AlphaTestMergeInstancedZPrePassDrawDataCount{ REL::ID(602241) };
 #pragma endregion
 
-
-
-REL::Relocation<uintptr_t> RenderTargetManager_SetCurrentRenderTarget_Ori{ REL::ID(1502425) };
-
 // Flag to ensure we initialize only once
 bool g_bInitialized = false;
 bool g_IsRenderingForScope = false;
 bool g_OverrideFirstPersonCulling = false;
+bool g_ScopeIsCubeMapRendering = false;  // 标记是否正在进行CubeMap渲染
 
 bool g_AdjustmentMode = false;
 float g_AdjustmentSpeed = 1.0f;
@@ -144,6 +168,7 @@ bool ori_b1stPerson;
 bool ori_bRenderDecals;
 etRenderMode ori_eRenderMode;
 
+
 #pragma region Hook declear
 void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld);
 void __fastcall hkBegin(uint64_t ptr_drawWorld);
@@ -153,6 +178,7 @@ RenderTarget* __fastcall hkRenderer_CreateRenderTarget(Renderer* renderer, int a
 void __fastcall hkRTManager_CreateRenderTarget(int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
 
 void __fastcall hkSetCurrentRenderTarget(RenderTargetManager* manager, int aIndex, int aRenderTarget, SetRenderTargetMode aMode);
+void __fastcall hkSetCurrentDepthStencilTarget(RenderTargetManager* manager, int aDepthStencilTarget, SetRenderTargetMode aMode, int aSlice);
 
 void __fastcall hkBSCullingGroup_Process(BSCullingGroup* thisPtr, bool someFlag);
 
@@ -171,6 +197,8 @@ void __fastcall hkRenderZPrePass(RendererShadowState* rshadowState, ZPrePassDraw
 void __fastcall hkRenderAlphaTestZPrePass(RendererShadowState* rshadowState, AlphaTestZPrePassDrawData* aZPreData,
 	unsigned __int64* aVertexDesc, unsigned __int16* aCullmode,
 	unsigned __int16* aDepthBiasMode, ID3D11SamplerState** aCurSamplerState);
+void __fastcall hkSetCurrentCubeMapRenderTarget(RenderTargetManager* manager, int aCubeMapRenderTarget, SetRenderTargetMode aMode, int aView);
+void __fastcall hkSetDirtyRenderTargets(void* thisPtr);
 
 //in Render_PreUI
 void __fastcall hkMainAccum(uint64_t ptr_drawWorld);
@@ -190,6 +218,11 @@ typedef void (*ResetSunOcclusionOriginalFuncType)(BSShaderAccumulator*);
 typedef void (*BSDistantObjectInstanceRenderer_Render_OriginalFuncType)(uint64_t);
 typedef void (*RenderTargetManager_ResummarizeHTileDepthStencilTarget_OriginalFuncType)(RenderTargetManager*, int);
 typedef void (*RenderTargetManager_DecompressDepthStencilTarget_OriginalFuncType)(RenderTargetManager*, int);
+typedef void (*RTM_SetCurrentRenderTarget_OriginalFuncType)(RenderTargetManager*, int, int, SetRenderTargetMode);
+typedef void (*RTM_SetCurrentDepthStencilTarget_OriginalFuncType)(RenderTargetManager*, int, SetRenderTargetMode, int);
+typedef void (*FnSetCurrentCubeMapRenderTarget)(RenderTargetManager*, int, SetRenderTargetMode, int);
+typedef void (*FnSetDirtyRenderTargets)(void*);
+
 // 存储原始函数的指针
 DoZPrePassOriginalFuncType g_pDoZPrePassOriginal = nullptr;
 RenderZPrePassOriginalFuncType g_RenderZPrePassOriginal = nullptr;
@@ -198,9 +231,11 @@ ResetSunOcclusionOriginalFuncType g_ResetSunOcclusionOriginal = nullptr;
 BSDistantObjectInstanceRenderer_Render_OriginalFuncType g_BSDistantObjectInstanceRenderer_RenderOriginal = nullptr;
 RenderTargetManager_ResummarizeHTileDepthStencilTarget_OriginalFuncType g_ResummarizeHTileDepthStencilTarget_RenderOriginal = nullptr;
 RenderTargetManager_DecompressDepthStencilTarget_OriginalFuncType g_DecompressDepthStencilTargetOriginal = nullptr;
+RTM_SetCurrentRenderTarget_OriginalFuncType g_SetCurrentRenderTargetOriginal = nullptr;
+RTM_SetCurrentDepthStencilTarget_OriginalFuncType g_SetCurrentDepthStencilTargetOriginal = nullptr;
+FnSetCurrentCubeMapRenderTarget g_SetCurrentCubeMapRenderTargetOriginal = nullptr;
+FnSetDirtyRenderTargets g_SetDirtyRenderTargetsOriginal = nullptr;
 #pragma endregion
-
-
 
 static bool CreateAndEnableHook(void* target, void* hook, void** original, const char* hookName)
 {
@@ -242,6 +277,17 @@ void Init_Hook()
 	CreateAndEnableHook((LPVOID)RenderTargetManager_DecompressDepthStencilTarget_Ori.address(), &hkDecompressDepthStencilTarget,
 		reinterpret_cast<LPVOID*>(&g_DecompressDepthStencilTargetOriginal), "DecompressDepthStencilTarget");
 
+	CreateAndEnableHook((LPVOID)RenderTargetManager_SetCurrentRenderTarget_Ori.address(), &hkSetCurrentRenderTarget,
+		reinterpret_cast<LPVOID*>(&g_SetCurrentRenderTargetOriginal), "SetCurrentRenderTarget");
+
+	CreateAndEnableHook((LPVOID)RTM_SetCurrentDepthStencilTarget_Ori.address(), &hkSetCurrentDepthStencilTarget,
+		reinterpret_cast<LPVOID*>(&g_SetCurrentDepthStencilTargetOriginal), "SetCurrentDepthStencilTarget");
+
+	CreateAndEnableHook((LPVOID)RTM_SetCurrentCubeMapRenderTarget_Ori.address(), &hkSetCurrentCubeMapRenderTarget,
+		reinterpret_cast<LPVOID*>(&g_SetCurrentCubeMapRenderTargetOriginal), "SetCurrentCubeMapRenderTarget");
+
+	CreateAndEnableHook((LPVOID)BG_SetDirtyRenderTargets_Ori.address(), &hkSetDirtyRenderTargets,
+		reinterpret_cast<LPVOID*>(&g_SetDirtyRenderTargetsOriginal), "SetDirtyRenderTargets");
 
 	std::cout << "MinHook success" << std::endl;
 
@@ -269,6 +315,29 @@ void Init_Hook()
 	DetourAttach(&(PVOID&)BSShaderAccumulator_RenderBlendedDecals_Ori, hkBSShaderAccumulator_RenderBlendedDecals);
 	DetourTransactionCommit();
 
+}
+
+// Implementation of the hook
+void __fastcall hkSetDirtyRenderTargets(void* thisPtr)
+{
+	// For simplicity, just call the original function without modifications
+	g_SetDirtyRenderTargetsOriginal(thisPtr);
+}
+
+void __fastcall hkSetCurrentDepthStencilTarget(RenderTargetManager* manager, int aDepthStencilTarget, SetRenderTargetMode aMode, int aSlice) 
+{
+	g_SetCurrentDepthStencilTargetOriginal(manager, aDepthStencilTarget, aMode, aSlice);
+}
+
+void __fastcall hkSetCurrentRenderTarget(RenderTargetManager* manager, int aIndex, int aRenderTarget, SetRenderTargetMode aMode)
+{
+	return g_SetCurrentRenderTargetOriginal(manager, aIndex, aRenderTarget, aMode);
+}
+
+// Hook函数: SetCurrentCubeMapRenderTarget
+void __fastcall hkSetCurrentCubeMapRenderTarget(RenderTargetManager* manager, int aCubeMapRenderTarget, SetRenderTargetMode aMode, int aView)
+{
+	return g_SetCurrentCubeMapRenderTargetOriginal(manager, aCubeMapRenderTarget, aMode, aView);
 }
 
 
@@ -593,7 +662,7 @@ void RenderForScope(uint64_t ptr_drawWorld)
 	(*fn)(ptr_drawWorld);
 
 	g_IsRenderingForScope = false;
-	
+
 }
 
 void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
@@ -601,7 +670,6 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	typedef void (*FnRender_PreUI)(uint64_t ptr_drawWorld);
 	FnRender_PreUI fn = (FnRender_PreUI)DrawWorld_Render_PreUI_Ori.address();
 	D3DPERF_BeginEvent(0xffffffff, L"First Render_PreUI");
-
 	(*fn)(ptr_drawWorld);
 	D3DPERF_EndEvent();
 
@@ -614,30 +682,24 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	auto originalCamera1stport = (*ptr_DrawWorld1stCamera)->port;
 	g_ScopeCamera->local.translate = originalCamera->local.translate;
 	g_ScopeCamera->local.rotate = originalCamera->local.rotate;
+
 	ProcessCameraAdjustment();
-
-	originalCamera1st->port.left = 0.50f;
-	originalCamera1st->port.right = 1.0f;
-	originalCamera1st->port.top = 1.0f;
-	originalCamera1st->port.bottom = 0.5f;
-
 
 	D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
 	DrawWorld::SetCamera(g_ScopeCamera);
 	DrawWorld::SetUpdateCameraFOV(true);
 	DrawWorld::SetAdjusted1stPersonFOV(g_targetFov);
 	DrawWorld::SetCameraFov(g_targetFov);
-	
-	//(*ptr_DrawWorld_b1stPersonEnable) = false;
 
 	RenderForScope(ptr_drawWorld);
 
-	(*ptr_DrawWorld1stCamera)->port = originalCamera1stport;
-	DrawWorld::SetCamera(originalCamera);
-	DrawWorld::SetUpdateCameraFOV(true);
-	DrawWorld::SetAdjusted1stPersonFOV(90);
-	DrawWorld::SetCameraFov(90);
 	D3DPERF_EndEvent();
+
+	 if (originalCamera) {
+		if (originalCamera->DecRefCount() == 0) {
+			originalCamera->DeleteThis();
+		}
+	}
 }
 
 void __fastcall hkMainAccum(uint64_t ptr_drawWorld)
@@ -654,12 +716,35 @@ void __fastcall hkOcclusionMapRender()
 	D3DEventNode((*fn)(), L"hkOcclusionMapRender");
 }
 
+// 对每个阶段的钩子函数进行类似的保护措施
 void __fastcall hkMainRenderSetup(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_MainRenderSetup_Ori.address();
+	D3DEventNode((*fn)(ptr_drawWorld), L"hkMainRenderSetup_Scope");
 
-	D3DEventNode((*fn)(ptr_drawWorld), L"hkMainRenderSetup");
+	if (g_IsRenderingForScope && g_ScopeRTCreated) 
+	{
+		
+		// Get our render target manager
+		RenderTargetManager* rtm = &gRtMan;
+
+		// Set up render targets for scope rendering using our mapped indices
+		rtm->SetCurrentRenderTarget(0, g_OriginalToScopeRTMap[26], SetRenderTargetMode::SRTM_NO_CLEAR);
+		rtm->SetCurrentRenderTarget(1, g_OriginalToScopeRTMap[27], SetRenderTargetMode::SRTM_NO_CLEAR);
+		rtm->SetCurrentRenderTarget(2, g_OriginalToScopeRTMap[29], SetRenderTargetMode::SRTM_NO_CLEAR);
+		rtm->SetCurrentRenderTarget(3, g_OriginalToScopeRTMap[30], SetRenderTargetMode::SRTM_CLEAR);
+
+		if ((*ptr_BSShaderManager_State)->bDeferredRGBEmit && g_OriginalToScopeRTMap.count(31)) {
+			rtm->SetCurrentRenderTarget(4, g_OriginalToScopeRTMap[31], SetRenderTargetMode::SRTM_NO_CLEAR);
+		}
+
+		rtm->SetCurrentRenderTarget(5, g_OriginalToScopeRTMap[32], SetRenderTargetMode::SRTM_NO_CLEAR);
+		rtm->SetCurrentDepthStencilTarget(g_ScopeDepthRT, SetRenderTargetMode::SRTM_CLEAR, 0);
+		rtm->SetCurrentViewportDefault();
+		return;
+	}
+
 }
 
 void __fastcall hkOpaqueWireframe(uint64_t ptr_drawWorld)
@@ -691,8 +776,19 @@ void __fastcall hkDeferredComposite(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_DeferredComposite_Ori.address();
-	
 	D3DEventNode((*fn)(ptr_drawWorld), L"hkDeferredComposite");
+
+	if (g_IsRenderingForScope && g_ScopeRTCreated) {
+		// Get our render target manager
+		RenderTargetManager* rtm = &gRtMan;
+
+		// For the final composition, write to our main scope render target
+		rtm->SetCurrentRenderTarget(0, g_ScopeRTIndex, SetRenderTargetMode::SRTM_NO_CLEAR);
+		rtm->SetCurrentRenderTarget(1, -1, SetRenderTargetMode::SRTM_NO_CLEAR);
+		rtm->SetCurrentDepthStencilTarget(g_ScopeDepthRT, SetRenderTargetMode::SRTM_NO_CLEAR, 0);
+		rtm->SetCurrentViewportDefault();
+		return;
+	}
 }
 
 void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
@@ -733,17 +829,6 @@ void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground)
 	D3DEventNode((*fn)(ptr_drawWorld, abBackground), L"hkMain_DrawWorldAndUI");
 }
 
-void __fastcall hkSetCurrentRenderTarget(
-	RenderTargetManager* manager,
-	int aIndex,
-	int aRenderTarget,
-	SetRenderTargetMode aMode)
-{
-	typedef void (*FnSetCurrentRenderTarget)(RenderTargetManager*, int, int, SetRenderTargetMode);
-	FnSetCurrentRenderTarget fn = (FnSetCurrentRenderTarget)RenderTargetManager_SetCurrentRenderTarget_Ori.address();
-	if (!fn) return;
-	(*fn)(manager, aIndex, aRenderTarget, aMode);
-}
 
 void hkMain_Swap()
 {
