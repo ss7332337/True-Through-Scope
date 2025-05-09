@@ -78,7 +78,7 @@ void __stdcall Hook::DrawIndexedHook(ID3D11DeviceContext* pContext, UINT IndexCo
 
 HRESULT __stdcall Hook::PresentHook(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
 {
-	if (GetAsyncKeyState(VK_F4) & 1) {
+	if (GetAsyncKeyState(VK_F3) & 1) {
 		logger::info("Frame capture requested");
 		if (rdoc_api)
 			rdoc_api->TriggerCapture();

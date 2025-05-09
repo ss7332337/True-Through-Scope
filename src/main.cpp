@@ -8,8 +8,6 @@
 #include <winternl.h>
 #include <MinHook.h>
 
-
-
 #pragma comment(lib, "d3d9.lib")
 
 #define D3DEventNode(x,y)\
@@ -36,6 +34,39 @@ NiTexture* g_ScopeNiTexture = nullptr;
 static ID3D11Texture2D* tempDepthTexture = nullptr;
 Texture* g_ScopeBSTexture = nullptr;
 
+// Add these variables at the top of your file where other globals are defined
+ID3D11Texture2D* g_FirstPassColorTexture = nullptr;
+ID3D11Texture2D* g_FirstPassDepthTexture = nullptr;
+ID3D11Texture2D* g_SecondPassColorTexture = nullptr;
+ID3D11Texture2D* g_SecondPassDepthTexture = nullptr;
+
+ID3D11VertexShader* g_ScreenQuadVS = nullptr;
+ID3D11PixelShader* g_ScreenQuadPS = nullptr;
+ID3D11InputLayout* g_ScreenQuadInputLayout = nullptr;
+ID3D11Buffer* g_ScreenQuadVertexBuffer = nullptr;
+ID3D11SamplerState* g_ScreenQuadSamplerState = nullptr;
+bool g_ScreenQuadInitialized = false;
+
+// 定义顶点结构
+struct ScreenVertex
+{
+	float x, y, z;  // 位置
+	float u, v;     // 纹理坐标
+};
+
+bool g_FirstPassComplete = false;
+bool g_SecondPassComplete = false;
+
+RenderTargetProperties g_ScopeRenderTargetProps;
+int g_ScopeRenderTargetID = 77;  
+int g_ScopeDepthStencilID = 10;  
+const int SCOPE_RT_BASE_ID = 77;
+const int SCOPE_DS_BASE_ID = 10;
+std::unordered_map<int, int> rtRemapTable;
+bool isFromMainRenderSetup = false;
+bool isFromDeferredComposite = false;
+bool isCreateScopeRenderTarget = false;
+
 RenderTarget* g_ScopeRenderTarget = nullptr;
 #pragma region Func
 #pragma region DrawWorld_MainRenderFn
@@ -55,6 +86,7 @@ RenderTarget* g_ScopeRenderTarget = nullptr;
 	REL::Relocation<uintptr_t> BSShaderAccumulator_RenderBatches_Ori{ REL::ID(1048494) };
 	REL::Relocation<uintptr_t> BSShaderAccumulator_RenderOpaqueDecals_Ori{ REL::ID(163409) };
 	REL::Relocation<uintptr_t> BSShaderAccumulator_RenderBlendedDecals_Ori{ REL::ID(761249) };
+	
 #pragma endregion
 
 #pragma endregion
@@ -65,8 +97,8 @@ RenderTarget* g_ScopeRenderTarget = nullptr;
 #pragma endregion
 
 REL::Relocation<uintptr_t> BSCullingGroup_Process_Ori{ REL::ID(1147875) };
-REL::Relocation<uintptr_t> Renderer_CreateaRenderTarget_Ori{ REL::ID(425575) };
-REL::Relocation<uintptr_t> RenderTargetManager_CreateaRenderTarget_Ori{ REL::ID(43433) };
+REL::Relocation<uintptr_t> Renderer_CreateRenderTarget_Ori{ REL::ID(425575) };
+REL::Relocation<uintptr_t> RTM_CreateRenderTarget_Ori{ REL::ID(43433) };
 
 REL::Relocation<uintptr_t> Renderer_DoZPrePass_Ori{ REL::ID(1491502) };
 REL::Relocation<uintptr_t> BSGraphics_RenderZPrePass_Ori{ REL::ID(901559) };
@@ -81,6 +113,7 @@ REL::Relocation<uintptr_t> RenderTargetManager_SetCurrentRenderTarget_Ori{ REL::
 REL::Relocation<uintptr_t> RTM_SetCurrentDepthStencilTarget_Ori{ REL::ID(1502425) };
 REL::Relocation<uintptr_t> RTM_SetCurrentCubeMapRenderTarget_Ori{ REL::ID(1049522) };
 REL::Relocation<uintptr_t> BG_SetDirtyRenderTargets_Ori{ REL::ID(361475) };
+REL::Relocation<uintptr_t> BG_SetRenderTarget_Ori{ REL::ID(1104516) };
 REL::Relocation<uintptr_t> BSRT_Create_Ori{ REL::ID(1118299) };
 #pragma endregion
 
@@ -126,7 +159,7 @@ NiPoint3 deltaPos = { 0, 0, 0 };
 NiPoint3 cacheDeltaPos = { 0, 0, 0 };
 NiMatrix3 deltaRot;
 NiMatrix3 cacheDeltaRot;
-int g_targetFov = 90;
+float g_targetFov = 90;
 enum AdjustmentTarget
 {
 	POSITION,
@@ -145,7 +178,7 @@ void __fastcall hkBegin(uint64_t ptr_drawWorld);
 void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground);
 void __fastcall hkMain_Swap();
 RenderTarget* __fastcall hkRenderer_CreateRenderTarget(Renderer* renderer, int aId, const wchar_t* apName, const RenderTargetProperties* aProperties);
-void __fastcall hkRTManager_CreateRenderTarget(int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
+void __fastcall hkRTManager_CreateRenderTarget(RenderTargetManager ,int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
 
 void __fastcall hkSetCurrentRenderTarget(RenderTargetManager* manager, int aIndex, int aRenderTarget, SetRenderTargetMode aMode);
 void __fastcall hkSetCurrentDepthStencilTarget(RenderTargetManager* manager, int aDepthStencilTarget, SetRenderTargetMode aMode, int aSlice);
@@ -170,11 +203,12 @@ void __fastcall hkRenderAlphaTestZPrePass(RendererShadowState* rshadowState, Alp
 void __fastcall hkSetCurrentCubeMapRenderTarget(RenderTargetManager* manager, int aCubeMapRenderTarget, SetRenderTargetMode aMode, int aView);
 void __fastcall hkSetDirtyRenderTargets(void* thisPtr);
 void __fastcall hkBSShaderRenderTargetsCreate(void* thisPtr);
+void __fastcall hkBGSetRenderTarget(RendererShadowState* arShadowState, unsigned int auiIndex, int aiTarget, SetRenderTargetMode aeMode);
 
 //in Render_PreUI
 void __fastcall hkMainAccum(uint64_t ptr_drawWorld);
 void __fastcall hkOcclusionMapRender();
-void __fastcall hkMainRenderSetup(uint64_t ptr_drawWorld);
+void __fastcall hkMainRenderSetup(uint64_t pstr_drawWorld);
 void __fastcall hkOpaqueWireframe(uint64_t ptr_drawWorld);
 void __fastcall hkDeferredPrePass(uint64_t ptr_drawWorld);
 void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld);
@@ -194,6 +228,7 @@ typedef void (*RTM_SetCurrentDepthStencilTarget_OriginalFuncType)(RenderTargetMa
 typedef void (*FnSetCurrentCubeMapRenderTarget)(RenderTargetManager*, int, SetRenderTargetMode, int);
 typedef void (*FnSetDirtyRenderTargets)(void*);
 typedef void (*FnBSShaderRenderTargetsCreate)(void*);
+typedef void (*FnBGSetRenderTarget)(RendererShadowState* arShadowState, unsigned int auiIndex, int aiTarget, SetRenderTargetMode aeMode);
 
 // 存储原始函数的指针
 DoZPrePassOriginalFuncType g_pDoZPrePassOriginal = nullptr;
@@ -208,6 +243,7 @@ RTM_SetCurrentDepthStencilTarget_OriginalFuncType g_SetCurrentDepthStencilTarget
 FnSetCurrentCubeMapRenderTarget g_SetCurrentCubeMapRenderTargetOriginal = nullptr;
 FnSetDirtyRenderTargets g_SetDirtyRenderTargetsOriginal = nullptr;
 FnBSShaderRenderTargetsCreate g_BSShaderRenderTargetsCreateOriginal = nullptr;
+FnBGSetRenderTarget g_BGSetRenderTargetOriginal = nullptr;
 #pragma endregion
 
 static bool CreateAndEnableHook(void* target, void* hook, void** original, const char* hookName)
@@ -221,6 +257,434 @@ static bool CreateAndEnableHook(void* target, void* hook, void** original, const
 		return false;
 	}
 	return true;
+}
+
+bool InitializeScreenQuad()
+{
+	// 获取设备
+	auto rendererData = BSGraphics::RendererData::GetSingleton();
+	ID3D11Device* device = (ID3D11Device*)rendererData->device;
+
+	if (!device) {
+		logger::error("Failed to get D3D11 device for screen quad");
+		return false;
+	}
+
+	// 创建顶点着色器
+	const char* vsCode = R"(
+        struct VS_INPUT {
+            float3 Position : POSITION;
+            float2 TexCoord : TEXCOORD0;
+        };
+        
+        struct VS_OUTPUT {
+            float4 Position : SV_POSITION;
+            float2 TexCoord : TEXCOORD0;
+        };
+        
+        VS_OUTPUT main(VS_INPUT input) {
+            VS_OUTPUT output;
+            output.Position = float4(input.Position, 1.0f);
+            output.TexCoord = input.TexCoord;
+            return output;
+        }
+    )";
+
+	// 创建像素着色器
+	const char* psCode = R"(
+		Texture2D scopeTexture : register(t0);
+		SamplerState scopeSampler : register(s0);
+    
+		struct PS_INPUT {
+			float4 Position : SV_POSITION;
+			float2 TexCoord : TEXCOORD0;
+		};
+    
+		float4 main(PS_INPUT input) : SV_TARGET {
+			// 直接采样纹理并返回颜色
+			float4 color = scopeTexture.Sample(scopeSampler, input.TexCoord);
+        
+			// 确保alpha值为1.0（完全不透明）
+			color.a = 1.0;
+        
+			return color;
+		}
+	)";
+
+	// 编译着色器
+	ID3DBlob* vsBlob = nullptr;
+	ID3DBlob* psBlob = nullptr;
+	ID3DBlob* errorBlob = nullptr;
+
+	HRESULT hr = D3DCompile(vsCode, strlen(vsCode), "ScreenQuadVS", nullptr, nullptr, "main", "vs_5_0", 0, 0, &vsBlob, &errorBlob);
+	if (FAILED(hr)) {
+		if (errorBlob) {
+			logger::error("Vertex shader compilation failed: {}", (char*)errorBlob->GetBufferPointer());
+			errorBlob->Release();
+		}
+		return false;
+	}
+
+	hr = D3DCompile(psCode, strlen(psCode), "ScreenQuadPS", nullptr, nullptr, "main", "ps_5_0", 0, 0, &psBlob, &errorBlob);
+	if (FAILED(hr)) {
+		if (errorBlob) {
+			logger::error("Pixel shader compilation failed: {}", (char*)errorBlob->GetBufferPointer());
+			errorBlob->Release();
+		}
+		if (vsBlob)
+			vsBlob->Release();
+		return false;
+	}
+
+	// 创建着色器对象
+	hr = device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &g_ScreenQuadVS);
+	if (FAILED(hr)) {
+		logger::error("Failed to create vertex shader. HRESULT: 0x{:X}", hr);
+		vsBlob->Release();
+		psBlob->Release();
+		return false;
+	}
+
+	hr = device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &g_ScreenQuadPS);
+	if (FAILED(hr)) {
+		logger::error("Failed to create pixel shader. HRESULT: 0x{:X}", hr);
+		vsBlob->Release();
+		psBlob->Release();
+		g_ScreenQuadVS->Release();
+		return false;
+	}
+
+	// 创建输入布局
+	D3D11_INPUT_ELEMENT_DESC layout[] = {
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	};
+
+	hr = device->CreateInputLayout(layout, 2, vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), &g_ScreenQuadInputLayout);
+	if (FAILED(hr)) {
+		logger::error("Failed to create input layout. HRESULT: 0x{:X}", hr);
+		vsBlob->Release();
+		psBlob->Release();
+		g_ScreenQuadVS->Release();
+		g_ScreenQuadPS->Release();
+		return false;
+	}
+
+	// 释放着色器blob
+	vsBlob->Release();
+	psBlob->Release();
+
+	// 创建顶点缓冲区
+	ScreenVertex vertices[] = {
+		{ -1.0f, -1.0f, 0.0f, 0.0f, 1.0f },  // 左下
+		{ -1.0f, 1.0f, 0.0f, 0.0f, 0.0f },   // 左上
+		{ 1.0f, -1.0f, 0.0f, 1.0f, 1.0f },   // 右下
+		{ 1.0f, 1.0f, 0.0f, 1.0f, 0.0f }     // 右上
+	};
+
+	D3D11_BUFFER_DESC bufferDesc = {};
+	bufferDesc.Usage = D3D11_USAGE_DEFAULT;
+	bufferDesc.ByteWidth = sizeof(vertices);
+	bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+	D3D11_SUBRESOURCE_DATA initData = {};
+	initData.pSysMem = vertices;
+
+	hr = device->CreateBuffer(&bufferDesc, &initData, &g_ScreenQuadVertexBuffer);
+	if (FAILED(hr)) {
+		logger::error("Failed to create vertex buffer. HRESULT: 0x{:X}", hr);
+		g_ScreenQuadVS->Release();
+		g_ScreenQuadPS->Release();
+		g_ScreenQuadInputLayout->Release();
+		return false;
+	}
+
+	// 创建采样器状态
+	D3D11_SAMPLER_DESC samplerDesc = {};
+	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+	samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+	samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+	samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+	samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+	samplerDesc.MinLOD = 0;
+	samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+
+	hr = device->CreateSamplerState(&samplerDesc, &g_ScreenQuadSamplerState);
+	if (FAILED(hr)) {
+		logger::error("Failed to create sampler state. HRESULT: 0x{:X}", hr);
+		g_ScreenQuadVS->Release();
+		g_ScreenQuadPS->Release();
+		g_ScreenQuadInputLayout->Release();
+		g_ScreenQuadVertexBuffer->Release();
+		return false;
+	}
+
+	logger::info("Screen quad initialized successfully");
+	return true;
+}
+
+void RenderScreenQuad(ID3D11ShaderResourceView* textureView, float x, float y, float width, float height)
+{
+	if (!g_ScreenQuadInitialized || !textureView) {
+		logger::error("Screen quad not initialized or texture view is null");
+		return;
+	}
+
+	auto rendererData = BSGraphics::RendererData::GetSingleton();
+	ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
+	ID3D11Device* device = (ID3D11Device*)rendererData->device;
+
+	// 保存当前所有渲染状态
+	D3DPERF_BeginEvent(0xffffffff, L"RenderScreenQuad");
+
+	// 获取当前渲染目标
+	ID3D11RenderTargetView* currentRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = { nullptr };
+	ID3D11DepthStencilView* currentDSV = nullptr;
+	context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, currentRTVs, &currentDSV);
+
+	// 保存着色器状态
+	ID3D11VertexShader* oldVS = nullptr;
+	ID3D11PixelShader* oldPS = nullptr;
+	ID3D11GeometryShader* oldGS = nullptr;
+	ID3D11HullShader* oldHS = nullptr;
+	ID3D11DomainShader* oldDS = nullptr;
+	ID3D11ComputeShader* oldCS = nullptr;
+
+	context->VSGetShader(&oldVS, nullptr, nullptr);
+	context->PSGetShader(&oldPS, nullptr, nullptr);
+	context->GSGetShader(&oldGS, nullptr, nullptr);
+	context->HSGetShader(&oldHS, nullptr, nullptr);
+	context->DSGetShader(&oldDS, nullptr, nullptr);
+	context->CSGetShader(&oldCS, nullptr, nullptr);
+
+	// 保存输入汇编器状态
+	ID3D11InputLayout* oldInputLayout = nullptr;
+	D3D11_PRIMITIVE_TOPOLOGY oldTopology;
+	ID3D11Buffer* oldVB[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = { nullptr };
+	UINT oldStrides[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = { 0 };
+	UINT oldOffsets[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = { 0 };
+	ID3D11Buffer* oldIB = nullptr;
+	DXGI_FORMAT oldIBFormat = DXGI_FORMAT_UNKNOWN;
+	UINT oldIBOffset = 0;
+
+	context->IAGetInputLayout(&oldInputLayout);
+	context->IAGetPrimitiveTopology(&oldTopology);
+	context->IAGetVertexBuffers(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT, oldVB, oldStrides, oldOffsets);
+	context->IAGetIndexBuffer(&oldIB, &oldIBFormat, &oldIBOffset);
+
+	// 保存资源和采样器状态
+	ID3D11ShaderResourceView* oldSRVs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = { nullptr };
+	ID3D11SamplerState* oldSamplers[D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT] = { nullptr };
+
+	context->PSGetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, oldSRVs);
+	context->PSGetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, oldSamplers);
+
+	// 保存混合状态、深度状态、光栅化状态
+	ID3D11BlendState* oldBlendState = nullptr;
+	FLOAT oldBlendFactor[4] = { 0 };
+	UINT oldSampleMask = 0;
+	ID3D11DepthStencilState* oldDepthStencilState = nullptr;
+	UINT oldStencilRef = 0;
+	ID3D11RasterizerState* oldRasterizerState = nullptr;
+
+	context->OMGetBlendState(&oldBlendState, oldBlendFactor, &oldSampleMask);
+	context->OMGetDepthStencilState(&oldDepthStencilState, &oldStencilRef);
+	context->RSGetState(&oldRasterizerState);
+
+	// 保存视口
+	UINT numViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+	D3D11_VIEWPORT oldViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+	context->RSGetViewports(&numViewports, oldViewports);
+
+	// 设置新的渲染状态
+
+	// 1. 创建并设置混合状态 - 启用Alpha混合
+	D3D11_BLEND_DESC blendDesc = {};
+	blendDesc.AlphaToCoverageEnable = FALSE;
+	blendDesc.IndependentBlendEnable = FALSE;
+	blendDesc.RenderTarget[0].BlendEnable = TRUE;
+	blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+	blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+	blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+	blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+	blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+	blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+	ID3D11BlendState* blendState = nullptr;
+	HRESULT hr = device->CreateBlendState(&blendDesc, &blendState);
+	if (SUCCEEDED(hr)) {
+		FLOAT blendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		context->OMSetBlendState(blendState, blendFactor, 0xffffffff);
+	} else {
+		logger::error("Failed to create blend state. HRESULT: 0x{:X}", hr);
+	}
+
+	// 2. 创建并设置深度状态 - 禁用深度测试
+	D3D11_DEPTH_STENCIL_DESC depthStencilDesc = {};
+	depthStencilDesc.DepthEnable = FALSE;
+	depthStencilDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+	depthStencilDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+	depthStencilDesc.StencilEnable = FALSE;
+
+	ID3D11DepthStencilState* depthStencilState = nullptr;
+	hr = device->CreateDepthStencilState(&depthStencilDesc, &depthStencilState);
+	if (SUCCEEDED(hr)) {
+		context->OMSetDepthStencilState(depthStencilState, 0);
+	} else {
+		logger::error("Failed to create depth stencil state. HRESULT: 0x{:X}", hr);
+	}
+
+	// 3. 创建并设置光栅化状态 - 禁用面剔除
+	D3D11_RASTERIZER_DESC rasterizerDesc = {};
+	rasterizerDesc.FillMode = D3D11_FILL_SOLID;
+	rasterizerDesc.CullMode = D3D11_CULL_NONE;
+	rasterizerDesc.FrontCounterClockwise = FALSE;
+	rasterizerDesc.DepthBias = 0;
+	rasterizerDesc.DepthBiasClamp = 0.0f;
+	rasterizerDesc.SlopeScaledDepthBias = 0.0f;
+	rasterizerDesc.DepthClipEnable = TRUE;
+	rasterizerDesc.ScissorEnable = FALSE;
+	rasterizerDesc.MultisampleEnable = FALSE;
+	rasterizerDesc.AntialiasedLineEnable = FALSE;
+
+	ID3D11RasterizerState* rasterizerState = nullptr;
+	hr = device->CreateRasterizerState(&rasterizerDesc, &rasterizerState);
+	if (SUCCEEDED(hr)) {
+		context->RSSetState(rasterizerState);
+	} else {
+		logger::error("Failed to create rasterizer state. HRESULT: 0x{:X}", hr);
+	}
+
+	// 4. 设置视口 - 调整为指定区域
+	D3D11_VIEWPORT viewport = {};
+	viewport.TopLeftX = x * oldViewports[0].Width;
+	viewport.TopLeftY = y * oldViewports[0].Height;
+	viewport.Width = width * oldViewports[0].Width;
+	viewport.Height = height * oldViewports[0].Height;
+	viewport.MinDepth = 0.0f;
+	viewport.MaxDepth = 1.0f;
+
+	context->RSSetViewports(1, &viewport);
+
+	// 5. 设置输入汇编器状态
+	context->IASetInputLayout(g_ScreenQuadInputLayout);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+
+	UINT stride = sizeof(ScreenVertex);
+	UINT offset = 0;
+	context->IASetVertexBuffers(0, 1, &g_ScreenQuadVertexBuffer, &stride, &offset);
+
+	// 6. 设置着色器和资源
+	context->VSSetShader(g_ScreenQuadVS, nullptr, 0);
+	context->PSSetShader(g_ScreenQuadPS, nullptr, 0);
+	context->GSSetShader(nullptr, nullptr, 0);
+	context->HSSetShader(nullptr, nullptr, 0);
+	context->DSSetShader(nullptr, nullptr, 0);
+
+	context->PSSetShaderResources(0, 1, &textureView);
+	context->PSSetSamplers(0, 1, &g_ScreenQuadSamplerState);
+
+	// 确保我们有一个渲染目标
+	if (currentRTVs[0]) {
+		// 7. 设置渲染目标
+		context->OMSetRenderTargets(1, &currentRTVs[0], nullptr);
+
+		// 8. 绘制四边形
+		context->Draw(4, 0);
+
+		logger::info("Drew screen quad with texture");
+	} else {
+		logger::error("No render target available for drawing screen quad");
+	}
+
+	// 恢复所有渲染状态
+
+	// 恢复混合状态
+	if (blendState)
+		blendState->Release();
+	context->OMSetBlendState(oldBlendState, oldBlendFactor, oldSampleMask);
+	if (oldBlendState)
+		oldBlendState->Release();
+
+	// 恢复深度状态
+	if (depthStencilState)
+		depthStencilState->Release();
+	context->OMSetDepthStencilState(oldDepthStencilState, oldStencilRef);
+	if (oldDepthStencilState)
+		oldDepthStencilState->Release();
+
+	// 恢复光栅化状态
+	if (rasterizerState)
+		rasterizerState->Release();
+	context->RSSetState(oldRasterizerState);
+	if (oldRasterizerState)
+		oldRasterizerState->Release();
+
+	// 恢复视口
+	context->RSSetViewports(numViewports, oldViewports);
+
+	// 恢复渲染目标
+	context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, currentRTVs, currentDSV);
+
+	// 恢复着色器
+	context->VSSetShader(oldVS, nullptr, 0);
+	context->PSSetShader(oldPS, nullptr, 0);
+	context->GSSetShader(oldGS, nullptr, 0);
+	context->HSSetShader(oldHS, nullptr, 0);
+	context->DSSetShader(oldDS, nullptr, 0);
+	context->CSSetShader(oldCS, nullptr, 0);
+
+	// 恢复输入汇编器状态
+	context->IASetInputLayout(oldInputLayout);
+	context->IASetPrimitiveTopology(oldTopology);
+	context->IASetVertexBuffers(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT, oldVB, oldStrides, oldOffsets);
+	context->IASetIndexBuffer(oldIB, oldIBFormat, oldIBOffset);
+
+	// 恢复资源和采样器
+	context->PSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, oldSRVs);
+	context->PSSetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, oldSamplers);
+
+	// 释放引用
+	if (currentDSV)
+		currentDSV->Release();
+	for (int i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++) {
+		if (currentRTVs[i])
+			currentRTVs[i]->Release();
+	}
+
+	if (oldVS)
+		oldVS->Release();
+	if (oldPS)
+		oldPS->Release();
+	if (oldGS)
+		oldGS->Release();
+	if (oldHS)
+		oldHS->Release();
+	if (oldDS)
+		oldDS->Release();
+	if (oldCS)
+		oldCS->Release();
+
+	if (oldInputLayout)
+		oldInputLayout->Release();
+	for (int i = 0; i < D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT; i++) {
+		if (oldVB[i])
+			oldVB[i]->Release();
+	}
+	if (oldIB)
+		oldIB->Release();
+
+	for (int i = 0; i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; i++) {
+		if (oldSRVs[i])
+			oldSRVs[i]->Release();
+	}
+	for (int i = 0; i < D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT; i++) {
+		if (oldSamplers[i])
+			oldSamplers[i]->Release();
+	}
+
+	D3DPERF_EndEvent();
 }
 
 void Init_Hook()
@@ -261,9 +725,12 @@ void Init_Hook()
 
 	CreateAndEnableHook((LPVOID)BG_SetDirtyRenderTargets_Ori.address(), &hkSetDirtyRenderTargets,
 		reinterpret_cast<LPVOID*>(&g_SetDirtyRenderTargetsOriginal), "SetDirtyRenderTargets");
-
+	
 	CreateAndEnableHook((LPVOID)BSRT_Create_Ori.address(), &hkBSShaderRenderTargetsCreate,
 		reinterpret_cast<LPVOID*>(&g_BSShaderRenderTargetsCreateOriginal), "BSShaderRenderTargetsCreate");
+
+	CreateAndEnableHook((LPVOID)BG_SetRenderTarget_Ori.address(), &hkBGSetRenderTarget,
+		reinterpret_cast<LPVOID*>(&g_BGSetRenderTargetOriginal), "BGSetRenderTarget");
 
 	std::cout << "MinHook success" << std::endl;
 
@@ -289,8 +756,116 @@ void Init_Hook()
 	DetourAttach(&(PVOID&)BSShaderAccumulator_RenderBatches_Ori, hkBSShaderAccumulator_RenderBatches);
 	DetourAttach(&(PVOID&)BSShaderAccumulator_RenderOpaqueDecals_Ori, hkBSShaderAccumulator_RenderOpaqueDecals);
 	DetourAttach(&(PVOID&)BSShaderAccumulator_RenderBlendedDecals_Ori, hkBSShaderAccumulator_RenderBlendedDecals);
+	DetourAttach(&(PVOID&)RTM_CreateRenderTarget_Ori, hkRTManager_CreateRenderTarget);
 	DetourTransactionCommit();
 
+}
+
+extern RendererShadowState* __fastcall BSGraphics::GetRendererShadowState()
+{
+	_TEB* teb = NtCurrentTeb();
+	BSGraphics::Context* v0; 
+	v0 = *(BSGraphics::Context**)(*((uint64_t*)teb->Reserved1[11] + (unsigned int)(*ptr_tls_index)) + 2848i64);
+	if (!v0) v0 = *pDefaultContext;
+	return &v0->shadowState;
+}
+
+void CreateTemporaryTextures()
+{
+	// Get D3D11 device from renderer data
+	auto rendererData = BSGraphics::RendererData::GetSingleton();
+	ID3D11Device* device = (ID3D11Device*)rendererData->device;
+
+	// Get screen dimensions
+	unsigned int width = rendererData->renderWindow[0].windowWidth;
+	unsigned int height = rendererData->renderWindow[0].windowHeight;
+
+	logger::info("Creating temporary textures with size {}x{}", width, height);
+
+	// Clean up any existing resources
+	if (g_FirstPassColorTexture) {
+		g_FirstPassColorTexture->Release();
+		g_FirstPassColorTexture = nullptr;
+	}
+	if (g_FirstPassDepthTexture) {
+		g_FirstPassDepthTexture->Release();
+		g_FirstPassDepthTexture = nullptr;
+	}
+	if (g_SecondPassColorTexture) {
+		g_SecondPassColorTexture->Release();
+		g_SecondPassColorTexture = nullptr;
+	}
+
+	if (g_SecondPassDepthTexture) {
+		g_SecondPassDepthTexture->Release();
+		g_SecondPassDepthTexture = nullptr;
+	}
+
+	// Create color textures for passes
+	D3D11_TEXTURE2D_DESC colorDesc;
+	ZeroMemory(&colorDesc, sizeof(colorDesc));
+	colorDesc.Width = width;
+	colorDesc.Height = height;
+	colorDesc.MipLevels = 1;
+	colorDesc.ArraySize = 1;
+	colorDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;  // Match render target format
+	colorDesc.SampleDesc.Count = 1;
+	colorDesc.SampleDesc.Quality = 0;
+	colorDesc.Usage = D3D11_USAGE_DEFAULT;
+	colorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+	colorDesc.CPUAccessFlags = 0;
+	colorDesc.MiscFlags = 0;
+
+	HRESULT hr = device->CreateTexture2D(&colorDesc, nullptr, &g_FirstPassColorTexture);
+	if (FAILED(hr)) {
+		logger::error("Failed to create first pass color texture. HRESULT: 0x{:X}", hr);
+		return;
+	}
+
+	hr = device->CreateTexture2D(&colorDesc, nullptr, &g_SecondPassColorTexture);
+	if (FAILED(hr)) {
+		logger::error("Failed to create second pass color texture. HRESULT: 0x{:X}", hr);
+		return;
+	}
+
+	// Create depth texture
+	D3D11_TEXTURE2D_DESC depthDesc;
+	ZeroMemory(&depthDesc, sizeof(depthDesc));
+	depthDesc.Width = width;
+	depthDesc.Height = height;
+	depthDesc.MipLevels = 1;
+	depthDesc.ArraySize = 1;
+	depthDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+	depthDesc.SampleDesc.Count = 1;
+	depthDesc.SampleDesc.Quality = 0;
+	depthDesc.Usage = D3D11_USAGE_DEFAULT;
+	depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+	depthDesc.CPUAccessFlags = 0;
+	depthDesc.MiscFlags = 0;
+
+	hr = device->CreateTexture2D(&depthDesc, nullptr, &g_FirstPassDepthTexture);
+	if (FAILED(hr)) {
+		logger::error("Failed to create first pass depth texture. HRESULT: 0x{:X}", hr);
+		return;
+	}
+
+	hr = device->CreateTexture2D(&depthDesc, nullptr, &g_SecondPassDepthTexture);
+	if (FAILED(hr)) {
+		logger::error("Failed to create Second pass depth texture. HRESULT: 0x{:X}", hr);
+		return;
+	}
+
+	logger::info("Temporary textures created successfully");
+}
+
+void __fastcall hkBGSetRenderTarget(RendererShadowState* arShadowState, unsigned int auiIndex, int aiTarget, SetRenderTargetMode aeMode)
+{
+	g_BGSetRenderTargetOriginal(arShadowState, auiIndex, aiTarget, aeMode);
+}
+
+void __fastcall hkBSShaderRenderTargetsCreate(void* thisPtr)
+{
+	g_BSShaderRenderTargetsCreateOriginal(thisPtr);
 }
 
 void __fastcall hkSetDirtyRenderTargets(void* thisPtr)
@@ -298,16 +873,15 @@ void __fastcall hkSetDirtyRenderTargets(void* thisPtr)
 	g_SetDirtyRenderTargetsOriginal(thisPtr);
 }
 
-void __fastcall hkSetCurrentDepthStencilTarget(RenderTargetManager* manager, int aDepthStencilTarget, SetRenderTargetMode aMode, int aSlice) 
+void __fastcall hkSetCurrentDepthStencilTarget(RenderTargetManager* manager, int aDepthStencilTarget, SetRenderTargetMode aMode, int aSlice)
 {
 	g_SetCurrentDepthStencilTargetOriginal(manager, aDepthStencilTarget, aMode, aSlice);
 }
 
 void __fastcall hkSetCurrentRenderTarget(RenderTargetManager* manager, int aIndex, int aRenderTarget, SetRenderTargetMode aMode)
 {
-	return g_SetCurrentRenderTargetOriginal(manager, aIndex, aRenderTarget, aMode);
+	g_SetCurrentRenderTargetOriginal(manager, aIndex, aRenderTarget, aMode);
 }
-
 void __fastcall hkSetCurrentCubeMapRenderTarget(RenderTargetManager* manager, int aCubeMapRenderTarget, SetRenderTargetMode aMode, int aView)
 {
 	return g_SetCurrentCubeMapRenderTargetOriginal(manager, aCubeMapRenderTarget, aMode, aView);
@@ -335,6 +909,7 @@ void ProcessCameraAdjustment()
 	SHORT keyPageDown = GetAsyncKeyState(VK_NEXT);
 	SHORT keyPage9 = GetAsyncKeyState(VK_NUMPAD9);
 	SHORT keyPage3 = GetAsyncKeyState(VK_NUMPAD3);
+	SHORT keyPage7 = GetAsyncKeyState(VK_NUMPAD7);
 
 	// Toggle between position and rotation adjustment (F4 key)
 	if (GetAsyncKeyState(VK_DIVIDE) & 0x1) {
@@ -361,11 +936,16 @@ void ProcessCameraAdjustment()
 		logger::warn("Adjustment speed: {}", g_AdjustmentSpeed);
 	}
 
+	if (keyPage7 & 0x1)
+	{
+	}
+
 
 	if (keyPage9 & 0x8000)
-		g_targetFov += 1;
+		g_targetFov += 0.25f;
 	if (keyPage3 & 0x8000)
-		g_targetFov -= 1;
+		g_targetFov -= 0.25f;
+
 
 
 	 // Apply adjustments based on target (position or rotation)
@@ -541,10 +1121,8 @@ void __fastcall hkRenderer_DoZPrePass(uint64_t thisPtr, NiCamera* apFirstPersonC
 	if (g_IsRenderingForScope) {
 		*FPZPrePassDrawDataCount = 0;
 		*FPAlphaTestZPrePassDrawDataCount = 0;
-		D3DEventNode(g_pDoZPrePassOriginal(thisPtr, apFirstPersonCamera, apWorldCamera, afFPNear, afFPFar, afNear, afFar), L"hkRenderer_DoZPrePass");
-		return;
 	}
-	g_pDoZPrePassOriginal(thisPtr, apFirstPersonCamera, apWorldCamera, afFPNear, afFPFar, afNear, afFar);
+	D3DEventNode(g_pDoZPrePassOriginal(thisPtr, apFirstPersonCamera, apWorldCamera, afFPNear, afFPFar, afNear, afFar), L"hkRenderer_DoZPrePass");
 }
 void __fastcall hkBSDistantObjectInstanceRenderer_Render(uint64_t thisPtr)
 {
@@ -564,7 +1142,6 @@ void __fastcall hkDecompressDepthStencilTarget(RenderTargetManager* thisPtr, int
 {
 	D3DEventNode((*g_DecompressDepthStencilTargetOriginal)(thisPtr, index), L"hkBSShaderAccumulator_ResetSunOcclusion");
 }
-
 void __fastcall hkAdd1stPersonGeomToCuller(uint64_t thisPtr)
 {
 	typedef void (*FnhkAdd1stPersonGeomToCuller)(uint64_t);
@@ -572,76 +1149,80 @@ void __fastcall hkAdd1stPersonGeomToCuller(uint64_t thisPtr)
 	if (g_IsRenderingForScope) return;
 	(*fn)(thisPtr);
 }
-
 void __fastcall hkBSShaderAccumulator_RenderBatches(
-	BSShaderAccumulator* thisPtr,int aiShader,bool abAlphaPass,int aeGroup)
+BSShaderAccumulator* thisPtr,int aiShader,bool abAlphaPass,int aeGroup)
 {
 	typedef void (*FnRenderBatches)(BSShaderAccumulator*, int, bool, int);
 	FnRenderBatches fn = (FnRenderBatches)BSShaderAccumulator_RenderBatches_Ori.address();	
 	(*fn)(thisPtr, aiShader, abAlphaPass, aeGroup);
 }
-
-
 void __fastcall hkBSShaderAccumulator_RenderBlendedDecals(BSShaderAccumulator* thisPtr)
 {
 	typedef void (*Fn)(BSShaderAccumulator*);
 	Fn fn = (Fn)BSShaderAccumulator_RenderBlendedDecals_Ori.address();
 	(*fn)(thisPtr);
 }
-
 void __fastcall hkBSShaderAccumulator_RenderOpaqueDecals(BSShaderAccumulator* thisPtr)
 {
 	typedef void (*Fn)(BSShaderAccumulator*);
 	Fn fn = (Fn)BSShaderAccumulator_RenderOpaqueDecals_Ori.address();
 	(*fn)(thisPtr);
 }
-
 void __fastcall hkBSCullingGroup_Process(BSCullingGroup* thisPtr, bool someFlag)
 {
 	typedef void (*FnBSCullingGroup_Process)(BSCullingGroup*, bool);
 	FnBSCullingGroup_Process fn = (FnBSCullingGroup_Process)BSCullingGroup_Process_Ori.address();
 	(*fn)(thisPtr, someFlag);
 }
-
 RenderTarget* __fastcall hkRenderer_CreateRenderTarget(Renderer* renderer, int aId, const wchar_t* apName, const RenderTargetProperties* aProperties)
 {
 	typedef RenderTarget* (*hkRenderer_CreateRenderTarget)(Renderer* renderer, int aId, const wchar_t* apName, const RenderTargetProperties* aProperties);
-	hkRenderer_CreateRenderTarget fn = (hkRenderer_CreateRenderTarget)Renderer_CreateaRenderTarget_Ori.address();
-	if (!fn)
-		return nullptr;
+	hkRenderer_CreateRenderTarget fn = (hkRenderer_CreateRenderTarget)Renderer_CreateRenderTarget_Ori.address();
+
+	
 	return (*fn)(renderer, aId, apName, aProperties);
 }
-
-void __fastcall hkRTManager_CreateRenderTarget(int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent)
+void __fastcall hkRTManager_CreateRenderTarget(RenderTargetManager rtm, int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent)
 {
-	typedef void (*hkRTManager_CreateaRenderTarget)(int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
-	hkRTManager_CreateaRenderTarget fn = (hkRTManager_CreateaRenderTarget)RenderTargetManager_CreateaRenderTarget_Ori.address();
-	if (!fn) return;
-	(*fn)(aIndex, arProperties, aPersistent);
-}
+	typedef void (*hkRTManager_CreateaRenderTarget)(RenderTargetManager rtm,int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
+	hkRTManager_CreateaRenderTarget fn = (hkRTManager_CreateaRenderTarget)RTM_CreateRenderTarget_Ori.address();
 
-void RenderForScope(uint64_t ptr_drawWorld)
-{
-	g_IsRenderingForScope = true;
-	typedef void (*FnRender_PreUI)(uint64_t);
-	FnRender_PreUI fn = (FnRender_PreUI)DrawWorld_Render_PreUI_Ori.address();
-
-	(*fn)(ptr_drawWorld);
-
-	g_IsRenderingForScope = false;
-
+	//if (aIndex == 76 && isCreateScopeRenderTarget) {
+	//	logger::warn("76 Has been Modified");
+	//	return;
+	//}
+	(*fn)(rtm, aIndex, arProperties, aPersistent);
 }
 
 void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 {
 	typedef void (*FnRender_PreUI)(uint64_t ptr_drawWorld);
 	FnRender_PreUI fn = (FnRender_PreUI)DrawWorld_Render_PreUI_Ori.address();
-	D3DPERF_BeginEvent(0xffffffff, L"First Render_PreUI");
-	(*fn)(ptr_drawWorld);
-	D3DPERF_EndEvent();
+
+	D3DEventNode((*fn)(ptr_drawWorld), L"First Render_PreUI");
+
+	 // Make sure our temporary textures are created
+	if (!g_FirstPassColorTexture || !g_SecondPassColorTexture || !g_FirstPassDepthTexture ||!g_SecondPassDepthTexture) {
+		CreateTemporaryTextures();
+	}
 
 	if (!g_ScopeCamera || !g_ScopeCamera->parent)
 		return;
+
+	auto rendererData = BSGraphics::RendererData::GetSingleton();
+	ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
+
+	 // Find the main render target and depth stencil target
+	ID3D11RenderTargetView* mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
+	ID3D11DepthStencilView* mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
+	ID3D11Texture2D* mainRTTexture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
+	ID3D11Texture2D* mainDSTexture = (ID3D11Texture2D*)rendererData->depthStencilTargets[2].texture;
+
+	// Save the result of the first pass
+	if (!mainRTTexture || !mainDSTexture) return;
+	context->CopyResource(g_FirstPassColorTexture, mainRTTexture);
+	context->CopyResource(g_FirstPassDepthTexture, mainDSTexture);
+	g_FirstPassComplete = true;
 
 	NiCloningProcess tempP{};
 	NiCamera* originalCamera = (NiCamera*)((*ptr_DrawWorldCamera)->CreateClone(tempP));
@@ -649,6 +1230,11 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	auto originalCamera1stport = (*ptr_DrawWorld1stCamera)->port;
 	g_ScopeCamera->local.translate = originalCamera->local.translate;
 	g_ScopeCamera->local.rotate = originalCamera->local.rotate;
+
+	// Clear the main render target and depth stencil for second pass
+    float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+	context->ClearRenderTargetView(mainRTV, clearColor);
+	context->ClearDepthStencilView(mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
 	ProcessCameraAdjustment();
 
@@ -658,9 +1244,59 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	DrawWorld::SetAdjusted1stPersonFOV(g_targetFov);
 	DrawWorld::SetCameraFov(g_targetFov);
 
-	RenderForScope(ptr_drawWorld);
+	g_IsRenderingForScope = true;
+	(*fn)(ptr_drawWorld);  // Render using scope camera
+	g_IsRenderingForScope = false;
 
 	D3DPERF_EndEvent();
+
+	context->CopyResource(g_SecondPassColorTexture, mainRTTexture);
+	g_SecondPassComplete = true;
+	// Restore the original render target content for normal display
+	context->CopyResource(mainRTTexture, g_FirstPassColorTexture);
+	context->CopyResource(mainDSTexture, g_FirstPassDepthTexture);
+
+	 // Restore original camera
+	DrawWorld::SetCamera(originalCamera);
+	DrawWorld::SetUpdateCameraFOV(true);
+
+	 ID3D11ShaderResourceView* scopeSRV = nullptr;
+	if (g_SecondPassComplete) {
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+		ZeroMemory(&srvDesc, sizeof(srvDesc));
+		srvDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;  // 使用相同的格式
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MostDetailedMip = 0;
+		srvDesc.Texture2D.MipLevels = 1;
+
+		HRESULT hr = ((ID3D11Device*)rendererData->device)->CreateShaderResourceView(g_SecondPassColorTexture, &srvDesc, &scopeSRV);
+
+		if (SUCCEEDED(hr)) {
+			// 为瞄准镜纹理更新BSGraphics::Texture
+			if (g_ScopeNiTexture && g_ScopeBSTexture) {
+				// 释放旧的SRV
+				ID3D11ShaderResourceView* oldSRV = (ID3D11ShaderResourceView*)g_ScopeBSTexture->pSRView;
+				if (oldSRV) {
+					oldSRV->Release();
+				}
+
+				// 设置新的SRV
+				g_ScopeBSTexture->pSRView = scopeSRV;
+			}
+		} else {
+			logger::error("Failed to create shader resource view for scope texture. HRESULT: 0x{:X}", hr);
+		}
+	}
+
+	// 如果我们需要直接在屏幕上显示瞄准镜视图（用于测试），可以这样做
+	// 这将在屏幕的一个小区域内显示瞄准镜视图
+	if (scopeSRV) {
+		// 渲染瞄准镜视图到屏幕右上角的小窗口
+		// 参数：纹理视图，x坐标，y坐标，宽度，高度
+		RenderScreenQuad(scopeSRV, 0.7f, 0.0f, 0.3f, 0.3f);
+		scopeSRV->Release();  // 释放我们为直接显示创建的SRV
+	}
+
 
 	 if (originalCamera) {
 		if (originalCamera->DecRefCount() == 0) {
@@ -673,7 +1309,7 @@ void __fastcall hkMainAccum(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_MainAccum_Ori.address();
-	(*fn)(ptr_drawWorld);
+	D3DEventNode((*fn)(ptr_drawWorld),L"hkMainAccum");
 }
 
 void __fastcall hkOcclusionMapRender()
@@ -687,23 +1323,20 @@ void __fastcall hkMainRenderSetup(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_MainRenderSetup_Ori.address();
-	D3DEventNode((*fn)(ptr_drawWorld), L"hkMainRenderSetup_Scope");
+	D3DEventNode((*fn)(ptr_drawWorld), L"hkMainRenderSetup");
 }
 
 void __fastcall hkOpaqueWireframe(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_OpaqueWireframe_Ori.address();
-
 	D3DEventNode((*fn)(ptr_drawWorld), L"hkOpaqueWireframe");
 }
-
 
 void __fastcall hkDeferredPrePass(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_DeferredPrePass_Ori.address();
-
 	D3DEventNode((*fn)(ptr_drawWorld), L"hkDeferredPrePass");
 }
 
@@ -718,15 +1351,15 @@ void __fastcall hkDeferredComposite(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_DeferredComposite_Ori.address();
-	D3DEventNode((*fn)(ptr_drawWorld), L"hkDeferredComposite");
+	D3DEventNode(fn(ptr_drawWorld), L"hkDeferredComposite");
 }
 
 void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_Forward_Ori.address();
-	if (g_IsRenderingForScope && PlayerCharacter::GetSingleton()->Get3D(true))
-		return;
+	//if (g_IsRenderingForScope && PlayerCharacter::GetSingleton()->Get3D(true))
+	//	return;
 
 	D3DEventNode((*fn)(ptr_drawWorld), L"hkDrawWorld_Forward");
 }
@@ -744,7 +1377,6 @@ void __fastcall hkBegin(uint64_t ptr_drawWorld)
 {
 	typedef void (*hkBegin)(uint64_t ptr_drawWorld);
 	hkBegin fn = (hkBegin)DrawWorld_Begin_Ori.address();
-	if (!fn) return;
 	(*fn)(ptr_drawWorld);
 }
 
@@ -753,9 +1385,6 @@ void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground)
 {
 	typedef void (*FnMain_DrawWorldAndUI)(uint64_t, bool);
 	FnMain_DrawWorldAndUI fn = (FnMain_DrawWorldAndUI)Main_DrawWorldAndUI_Ori.address();
-	if (!fn)
-		return;
-
 	D3DEventNode((*fn)(ptr_drawWorld, abBackground), L"hkMain_DrawWorldAndUI");
 }
 
@@ -764,7 +1393,6 @@ void hkMain_Swap()
 {
 	typedef void (*hkMain_Swap)();
 	hkMain_Swap fn = (hkMain_Swap)Main_Swap_Ori.address();
-	if (!fn) return;
 	(*fn)();
 	
 }
@@ -778,17 +1406,19 @@ DWORD WINAPI MainThread(HMODULE hModule)
 		|| !RE::Main::WorldRootCamera()
 		) 
 	{
-		Sleep(10);
+		Sleep(1000);
 	}
 	hook->HookDX11_Init();
 	CreateScopeCamera();
-
+	CreateTemporaryTextures();
+	g_ScreenQuadInitialized  = InitializeScreenQuad();
 	return 0;
 }
 
 void InitializePlugin()
 {
 	Init_Hook();
+	
 	HANDLE hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)MainThread, (HMODULE)REX::W32::GetCurrentModule(), 0, NULL);
 }
 
