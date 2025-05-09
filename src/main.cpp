@@ -81,6 +81,7 @@ REL::Relocation<uintptr_t> RenderTargetManager_SetCurrentRenderTarget_Ori{ REL::
 REL::Relocation<uintptr_t> RTM_SetCurrentDepthStencilTarget_Ori{ REL::ID(1502425) };
 REL::Relocation<uintptr_t> RTM_SetCurrentCubeMapRenderTarget_Ori{ REL::ID(1049522) };
 REL::Relocation<uintptr_t> BG_SetDirtyRenderTargets_Ori{ REL::ID(361475) };
+REL::Relocation<uintptr_t> BSRT_Create_Ori{ REL::ID(1118299) };
 #pragma endregion
 
 #pragma region Pointer
@@ -168,6 +169,7 @@ void __fastcall hkRenderAlphaTestZPrePass(RendererShadowState* rshadowState, Alp
 	unsigned __int16* aDepthBiasMode, ID3D11SamplerState** aCurSamplerState);
 void __fastcall hkSetCurrentCubeMapRenderTarget(RenderTargetManager* manager, int aCubeMapRenderTarget, SetRenderTargetMode aMode, int aView);
 void __fastcall hkSetDirtyRenderTargets(void* thisPtr);
+void __fastcall hkBSShaderRenderTargetsCreate(void* thisPtr);
 
 //in Render_PreUI
 void __fastcall hkMainAccum(uint64_t ptr_drawWorld);
@@ -191,6 +193,7 @@ typedef void (*RTM_SetCurrentRenderTarget_OriginalFuncType)(RenderTargetManager*
 typedef void (*RTM_SetCurrentDepthStencilTarget_OriginalFuncType)(RenderTargetManager*, int, SetRenderTargetMode, int);
 typedef void (*FnSetCurrentCubeMapRenderTarget)(RenderTargetManager*, int, SetRenderTargetMode, int);
 typedef void (*FnSetDirtyRenderTargets)(void*);
+typedef void (*FnBSShaderRenderTargetsCreate)(void*);
 
 // 存储原始函数的指针
 DoZPrePassOriginalFuncType g_pDoZPrePassOriginal = nullptr;
@@ -204,6 +207,7 @@ RTM_SetCurrentRenderTarget_OriginalFuncType g_SetCurrentRenderTargetOriginal = n
 RTM_SetCurrentDepthStencilTarget_OriginalFuncType g_SetCurrentDepthStencilTargetOriginal = nullptr;
 FnSetCurrentCubeMapRenderTarget g_SetCurrentCubeMapRenderTargetOriginal = nullptr;
 FnSetDirtyRenderTargets g_SetDirtyRenderTargetsOriginal = nullptr;
+FnBSShaderRenderTargetsCreate g_BSShaderRenderTargetsCreateOriginal = nullptr;
 #pragma endregion
 
 static bool CreateAndEnableHook(void* target, void* hook, void** original, const char* hookName)
@@ -257,6 +261,9 @@ void Init_Hook()
 
 	CreateAndEnableHook((LPVOID)BG_SetDirtyRenderTargets_Ori.address(), &hkSetDirtyRenderTargets,
 		reinterpret_cast<LPVOID*>(&g_SetDirtyRenderTargetsOriginal), "SetDirtyRenderTargets");
+
+	CreateAndEnableHook((LPVOID)BSRT_Create_Ori.address(), &hkBSShaderRenderTargetsCreate,
+		reinterpret_cast<LPVOID*>(&g_BSShaderRenderTargetsCreateOriginal), "BSShaderRenderTargetsCreate");
 
 	std::cout << "MinHook success" << std::endl;
 
