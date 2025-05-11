@@ -122,6 +122,8 @@ FnSetDirtyRenderTargets g_SetDirtyRenderTargetsOriginal = nullptr;
 FnBSShaderRenderTargetsCreate g_BSShaderRenderTargetsCreateOriginal = nullptr;
 FnBGSetRenderTarget g_BGSetRenderTargetOriginal = nullptr;
 
+
+bool isSetupScope = false;
 	    // Helper to get renderer shadow state
 static RendererShadowState* GetRendererShadowState()
 {
@@ -217,34 +219,42 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	DrawWorld::SetUpdateCameraFOV(true);
 
 	ID3D11ShaderResourceView* scopeSRV = nullptr;
+
 	if (RenderUtilities::IsSecondPassComplete()) {
+		// If we haven't created the scope texture yet, create it
+		if (!RenderUtilities::GetScopeBSTexture() || !RenderUtilities::GetScopeNiTexture()) {
+			RenderUtilities::CreateScopeTexture();
+		}
+
+		// Update the texture for this frame
+		auto rendererData = BSGraphics::RendererData::GetSingleton();
+		ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
+
+		// Get the existing SRV
+		ID3D11ShaderResourceView* oldSRV = (ID3D11ShaderResourceView*)RenderUtilities::GetScopeBSTexture()->pSRView;
+
+		// Create a new SRV for this frame
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
 		ZeroMemory(&srvDesc, sizeof(srvDesc));
-		srvDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;  // 使用相同的格式
+		srvDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Texture2D.MostDetailedMip = 0;
 		srvDesc.Texture2D.MipLevels = 1;
 
+		ID3D11ShaderResourceView* newSRV = nullptr;
 		HRESULT hr = ((ID3D11Device*)rendererData->device)->CreateShaderResourceView(RenderUtilities::GetSecondPassColorTexture(), &srvDesc, &scopeSRV);
+		HRESULT hr1 = ((ID3D11Device*)rendererData->device)->CreateShaderResourceView(RenderUtilities::GetSecondPassColorTexture(), &srvDesc, &newSRV);
 
 		if (SUCCEEDED(hr)) {
-			auto scopeBSTexture = RenderUtilities::GetScopeBSTexture();
-			auto scopeNiTexture = RenderUtilities::GetScopeNiTexture();
-
-			if (scopeBSTexture && scopeNiTexture) {
-				// 释放旧的SRV
-				ID3D11ShaderResourceView* oldSRV = (ID3D11ShaderResourceView*)scopeBSTexture->pSRView;
-				if (oldSRV) {
-					oldSRV->Release();
-				}
-
-				// 设置新的SRV
-				scopeBSTexture->pSRView = scopeSRV;
+			// Release the old SRV
+			if (oldSRV) {
+				oldSRV->Release();
 			}
-		} else {
-			logger::error("Failed to create shader resource view for scope texture. HRESULT: 0x{:X}", hr);
+
+			RenderUtilities::GetScopeBSTexture()->pSRView = newSRV;
 		}
 	}
+
 	if (scopeSRV) {
 		RenderUtilities::RenderScreenQuad(scopeSRV, 0.7f, 0.0f, 0.3f, 0.3f);
 		scopeSRV->Release();  // 释放我们为直接显示创建的SRV
@@ -417,6 +427,9 @@ void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground)
 {
 	typedef void (*FnMain_DrawWorldAndUI)(uint64_t, bool);
 	FnMain_DrawWorldAndUI fn = (FnMain_DrawWorldAndUI)Main_DrawWorldAndUI_Ori.address();
+	if (!isSetupScope)
+		isSetupScope = RenderUtilities::SetupWeaponScopeShape();
+
 	D3DEventNode((*fn)(ptr_drawWorld, abBackground), L"hkMain_DrawWorldAndUI");
 }
 
@@ -424,6 +437,7 @@ void hkMain_Swap()
 {
 	typedef void (*hkMain_Swap)();
 	hkMain_Swap fn = (hkMain_Swap)Main_Swap_Ori.address();
+
 	(*fn)();
 }
 
@@ -509,7 +523,7 @@ void RegisterHooks()
 	DetourAttach(&(PVOID&)DrawWorld_Render_PreUI_Ori, hkRender_PreUI);
 	DetourAttach(&(PVOID&)DrawWorld_Begin_Ori, hkBegin);
 	DetourAttach(&(PVOID&)Main_DrawWorldAndUI_Ori, hkMain_DrawWorldAndUI);
-	//DetourAttach(&(PVOID&)Main_Swap_Ori, hkMain_Swap);
+	DetourAttach(&(PVOID&)Main_Swap_Ori, hkMain_Swap);
 	DetourAttach(&(PVOID&)BSCullingGroup_Process_Ori, hkBSCullingGroup_Process);
 
 	DetourAttach(&(PVOID&)DrawWorld_MainAccum_Ori, hkMainAccum);

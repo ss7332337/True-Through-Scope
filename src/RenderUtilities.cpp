@@ -40,6 +40,205 @@ namespace ThroughScope
         return true;
     }
 
+	bool RenderUtilities::CreateScopeTexture()
+	{
+		// 获取渲染器数据
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		ID3D11Device* device = (ID3D11Device*)static_cast<void*>(rendererData->device);
+
+		if (!device) {
+			logger::error("Failed to get D3D11 device for scope texture");
+			return false;
+		}
+
+		// 为纹理名称创建BSFixedString
+		RE::BSFixedString textureName("ScopeTexture");
+
+		// 创建空的NiTexture
+		s_ScopeNiTexture = RE::NiTexture::CreateEmpty(&textureName, true, false);
+		if (!s_ScopeNiTexture) {
+			logger::error("Failed to create scope NiTexture");
+			return false;
+		}
+
+		 // 获取屏幕尺寸来创建纹理
+		unsigned int width = rendererData->renderWindow[0].windowWidth;
+		unsigned int height = rendererData->renderWindow[0].windowHeight;
+
+		// 创建BSGraphics::TextureHeader
+		RE::BSGraphics::TextureHeader header;
+		header.width = width;
+		header.height = height;
+		header.mipCount = 1;
+		header.format = static_cast<uint8_t>(RE::BSGraphics::Format::FORMAT_R11G11B10_FLOAT);
+
+		 // 创建BSGraphics::Texture
+		s_ScopeBSTexture = RE::BSGraphics::CreateTexture(&header, false);
+		if (!s_ScopeBSTexture) {
+			logger::error("Failed to create BSGraphics::Texture for scope");
+			return false;
+		}
+
+		// 为第二次渲染结果创建SRV
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+		ZeroMemory(&srvDesc, sizeof(srvDesc));
+		srvDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MostDetailedMip = 0;
+		srvDesc.Texture2D.MipLevels = 1;
+
+		ID3D11ShaderResourceView* scopeSRV = nullptr;
+		HRESULT hr = device->CreateShaderResourceView(s_SecondPassColorTexture, &srvDesc, &scopeSRV);
+		if (FAILED(hr)) {
+			logger::error("Failed to create scope texture SRV. HRESULT: 0x{:X}", hr);
+			return false;
+		}
+
+		// 替换BSGraphics::Texture中的SRV
+		if (s_ScopeBSTexture->pSRView) {
+			// 如果已创建默认SRV则释放
+			ID3D11ShaderResourceView* oldSRV = (ID3D11ShaderResourceView*)s_ScopeBSTexture->pSRView;
+			oldSRV->Release();
+		}
+		s_ScopeBSTexture->pSRView = scopeSRV;
+
+		// 注册D3D纹理(可选，如果需要的话)
+		RE::BSGraphics::RegisterD3DTexture((REX::W32::ID3D11Texture2D*)s_SecondPassColorTexture);
+
+		logger::info("Scope texture created successfully");
+		return true;
+	}
+
+	bool RenderUtilities::SetupWeaponScopeShape()
+	{
+		// 获取玩家角色
+		auto playerCharacter = RE::PlayerCharacter::GetSingleton();
+		if (!playerCharacter || !playerCharacter->Get3D()) {
+			logger::error("Player character or 3D model not available");
+			return false;
+		}
+
+		// 找到武器节点
+		auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
+		if (!weaponNode) {
+			logger::error("Weapon node not found");
+			return false;
+		}
+
+		// 转换为NiNode
+		auto weaponNiNode = weaponNode->IsNode() ? static_cast<RE::NiNode*>(weaponNode) : nullptr;
+		
+		if (!weaponNiNode) {
+			logger::error("Weapon node is not a NiNode");
+			return false;
+		}
+
+		//auto triShape = new RE::BSTriShape();
+
+		RE::NiNode* ScopeShapeNode = new RE::NiNode(0);
+		RE::BSFixedString scopeNodeName("ScopeNode");
+		ScopeShapeNode->name = scopeNodeName;
+		ScopeShapeNode->local.translate = RE::NiPoint3(0, 0, 0);
+		ScopeShapeNode->local.rotate.MakeIdentity();
+		weaponNiNode->AttachChild(ScopeShapeNode, false);
+
+
+		RE::BSGeometryConstructor* geomConstructor = RE::BSGeometryConstructor::Create(ScopeShapeNode);
+		RE::NiColorA color(1.0f, 1.0f, 1.0f, 1.0f);       // 红色，完全不透明
+
+		logger::info("Adding quad with explicit vertices");
+
+		RE::NiPoint3 vertices[4];
+		float size = 4.0f;
+		vertices[0] = RE::NiPoint3(-size - 5.0f, 10.0f, size + 5.0f);  // 左上
+		vertices[1] = RE::NiPoint3(-size - 5.0f, 10.0f, -size + 5.0f);  // 左下
+		vertices[2] = RE::NiPoint3(size - 5.0f, 10.0f, -size + 5.0f);   // 右下
+		vertices[3] = RE::NiPoint3(size - 5.0f, 10.0f, size + 5.0f);    // 右上
+		geomConstructor->AddQuad(vertices, &color);
+
+		logger::info("Flushing geometry constructor");
+		geomConstructor->Flush();
+
+		RE::NiUpdateData updateData;
+		updateData.time = 0.0f;
+		memset(&updateData.camera, 0, 20);  // 清零其他字段
+		logger::info("Updating weapon node");
+		ScopeShapeNode->Update(updateData);
+		bool found = false;
+
+		auto child = weaponNiNode->children[0].get();
+		RE::BSFixedString scopeQuadName("ScopeQuad");
+		child->name = scopeQuadName;
+		child->Update(updateData);
+
+
+		if (ScopeShapeNode && ScopeShapeNode->IsGeometry()) {
+			auto geomObject = static_cast<RE::BSGeometry*>(child);
+
+			// 创建BSLightingShaderProperty
+			auto lightingShaderProperty = RE::BSLightingShaderProperty::CreateObject();
+
+			if (lightingShaderProperty) {
+				// 设置基本参数
+				lightingShaderProperty->SetMaterialAlpha(1.0f);
+
+				if (s_ScopeNiTexture) {
+					// 设置diffuse纹理（主要的范围纹理）
+					lightingShaderProperty->SetDiffuseTexture(s_ScopeNiTexture);
+					logger::info("Diffuse texture set to scope texture: {}", s_ScopeNiTexture->GetName());
+				} else {
+					logger::error("Scope texture is null!");
+				}
+
+				// 设置贴图寻址模式（包裹或钳制）
+				lightingShaderProperty->SetClampNI(RE::BSGraphics::TextureAddressMode::TEXTURE_ADDRESS_MODE_WRAP_S_WRAP_T);
+
+				// 设置发光颜色和强度（如果需要让scope发光）
+				RE::NiColor emitColor(1.0f, 1.0f, 1.0f);
+				lightingShaderProperty->SetEmitColor(&emitColor);
+				lightingShaderProperty->SetEmitColorScale(1.0f);
+
+				// 设置高光相关参数
+				lightingShaderProperty->SetSpecularColorScale(1.0f);
+				lightingShaderProperty->SetSmoothness(1.0f);
+
+				// 设置材质名称
+				RE::BSFixedString rootName("ScopeQuadMaterial");
+				lightingShaderProperty->SetRootName(&rootName);
+
+				// 将shader property附加到几何体
+				((RE::BSGeometry*)geomObject)->AttachPropertyA(lightingShaderProperty);
+
+				// 创建NiAlphaProperty处理透明度
+				auto alphaProp = new RE::NiAlphaProperty();
+				if (alphaProp) {
+
+					RE::NiTFlags<std::uint16_t, RE::NiProperty> f;
+					f.flags = 0x4A01;
+					alphaProp->flags = f;
+					geomObject->AttachProperty(alphaProp);
+					logger::info("Alpha property attached");
+				}
+
+				// 设置shader标志，启用Z缓冲写入和测试等
+				lightingShaderProperty->flags.set(RE::BSShaderProperty::EShaderPropertyFlags::kZBufferTest);
+				lightingShaderProperty->flags.set(RE::BSShaderProperty::EShaderPropertyFlags::kZBufferWrite);
+				lightingShaderProperty->flags.set(RE::BSShaderProperty::EShaderPropertyFlags::kTwoSided);
+
+				// 调用setupGeometry确保材质正确应用
+				lightingShaderProperty->SetupGeometry(geomObject);
+
+				logger::info("Setup geometry with lighting shader property");
+			} else {
+				logger::error("Failed to create BSLightingShaderProperty");
+			}
+
+			// 更新几何体
+			child->Update(updateData);
+		}
+		return true;
+	}
+
     void RenderUtilities::Shutdown()
     {
         ReleaseTemporaryTextures();

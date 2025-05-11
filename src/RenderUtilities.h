@@ -28,6 +28,8 @@ namespace ThroughScope
         // Screen quad rendering
         static bool InitializeScreenQuad();
         static void RenderScreenQuad(ID3D11ShaderResourceView* textureView, float x, float y, float width, float height);
+		static bool SetupWeaponScopeShape();
+		static bool CreateScopeTexture();
         
         // Texture getters
         static ID3D11Texture2D* GetFirstPassColorTexture() { return s_FirstPassColorTexture; }
