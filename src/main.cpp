@@ -60,6 +60,7 @@ REL::Relocation<uintptr_t> RTM_SetCurrentCubeMapRenderTarget_Ori{ REL::ID(104952
 REL::Relocation<uintptr_t> BG_SetDirtyRenderTargets_Ori{ REL::ID(361475) };
 REL::Relocation<uintptr_t> BG_SetRenderTarget_Ori{ REL::ID(1104516) };
 REL::Relocation<uintptr_t> BSRT_Create_Ori{ REL::ID(1118299) };
+REL::Relocation<uintptr_t> BSP_GetRenderPasses_Ori{ REL::ID(1289086) };
 #pragma endregion
 
 #pragma region Pointer
@@ -106,6 +107,8 @@ typedef void (*FnSetCurrentCubeMapRenderTarget)(RenderTargetManager*, int, SetRe
 typedef void (*FnSetDirtyRenderTargets)(void*);
 typedef void (*FnBSShaderRenderTargetsCreate)(void*);
 typedef void (*FnBGSetRenderTarget)(RendererShadowState* arShadowState, unsigned int auiIndex, int aiTarget, SetRenderTargetMode aeMode);
+typedef void (*BSEffectShaderProperty_GetRenderPasses_Original)(BSEffectShaderProperty* thisPtr,BSGeometry* geom,uint32_t renderMode,BSShaderAccumulator* accumulator);
+
 
 // 存储原始函数的指针
 DoZPrePassOriginalFuncType g_pDoZPrePassOriginal = nullptr;
@@ -121,9 +124,12 @@ FnSetCurrentCubeMapRenderTarget g_SetCurrentCubeMapRenderTargetOriginal = nullpt
 FnSetDirtyRenderTargets g_SetDirtyRenderTargetsOriginal = nullptr;
 FnBSShaderRenderTargetsCreate g_BSShaderRenderTargetsCreateOriginal = nullptr;
 FnBGSetRenderTarget g_BGSetRenderTargetOriginal = nullptr;
-
+BSEffectShaderProperty_GetRenderPasses_Original g_BSEffectShaderGetRenderPassesOriginal = nullptr;
 
 bool isSetupScope = false;
+bool isFirstCopy = false;
+bool isRenderReady = false;
+bool isScopCamReady = false;
 	    // Helper to get renderer shadow state
 static RendererShadowState* GetRendererShadowState()
 {
@@ -150,7 +156,12 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	typedef void (*FnRender_PreUI)(uint64_t ptr_drawWorld);
 	FnRender_PreUI fn = (FnRender_PreUI)DrawWorld_Render_PreUI_Ori.address();
 
+	//先正常渲染主场景
 	D3DEventNode((*fn)(ptr_drawWorld), L"First Render_PreUI");
+	ScopeCamera::ProcessCameraAdjustment();
+
+	if (!isScopCamReady || !isRenderReady)
+		return;
 
 	auto playerCamera = *ptr_DrawWorldCamera;
 	auto scopeCamera = ScopeCamera::GetScopeCamera();
@@ -166,106 +177,98 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	if (!scopeCamera || !scopeCamera->parent)
 		return;
 
-	auto rendererData = BSGraphics::RendererData::GetSingleton();
+	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+	if (!rendererData || !rendererData->context) {
+		logger::error("Renderer data or context is null");
+		return;
+	}
+
 	ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
 
-	// Find the main render target and depth stencil target
-	ID3D11RenderTargetView* mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
-	ID3D11DepthStencilView* mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
-	ID3D11Texture2D* mainRTTexture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
-	ID3D11Texture2D* mainDSTexture = (ID3D11Texture2D*)rendererData->depthStencilTargets[2].texture;
+	if (!isSetupScope) {
+		isSetupScope = RenderUtilities::SetupWeaponScopeShape();
+	}
 
-	// Save the result of the first pass
-	if (!mainRTTexture || !mainDSTexture)
-		return;
-	context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), mainRTTexture);
-	context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), mainDSTexture);
-	RenderUtilities::SetFirstPassComplete(true);
+	if (isSetupScope)
+	{
+		ID3D11RenderTargetView* mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
+		ID3D11DepthStencilView* mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
+		ID3D11Texture2D* mainRTTexture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
+		ID3D11Texture2D* mainDSTexture = (ID3D11Texture2D*)rendererData->depthStencilTargets[2].texture;
 
-	NiCloningProcess tempP{};
-	NiCamera* originalCamera = (NiCamera*)((*ptr_DrawWorldCamera)->CreateClone(tempP));
-	auto originalCamera1st = *ptr_DrawWorldCamera;
-	auto originalCamera1stport = (*ptr_DrawWorld1stCamera)->port;
-	scopeCamera->local.translate = originalCamera->local.translate;
-	scopeCamera->local.rotate = originalCamera->local.rotate;
 
-	// Clear the main render target and depth stencil for second pass
-	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-	context->ClearRenderTargetView(mainRTV, clearColor);
-	context->ClearDepthStencilView(mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
-
-	ScopeCamera::ProcessCameraAdjustment();
-
-	D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
-	DrawWorld::SetCamera(scopeCamera);
-	DrawWorld::SetUpdateCameraFOV(true);
-	DrawWorld::SetAdjusted1stPersonFOV(ScopeCamera::GetTargetFOV());
-	DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
-
-	ScopeCamera::SetRenderingForScope(true);
-	(*fn)(ptr_drawWorld);  // Render using scope camera
-	ScopeCamera::SetRenderingForScope(false);
-
-	D3DPERF_EndEvent();
-
-	context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), mainRTTexture);
-	RenderUtilities::SetSecondPassComplete(true);
-	// Restore the original render target content for normal display
-	context->CopyResource(mainRTTexture, RenderUtilities::GetFirstPassColorTexture());
-	context->CopyResource(mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
-
-	// Restore original camera
-	DrawWorld::SetCamera(originalCamera);
-	DrawWorld::SetUpdateCameraFOV(true);
-
-	ID3D11ShaderResourceView* scopeSRV = nullptr;
-
-	if (RenderUtilities::IsSecondPassComplete()) {
-		// If we haven't created the scope texture yet, create it
-		if (!RenderUtilities::GetScopeBSTexture() || !RenderUtilities::GetScopeNiTexture()) {
-			RenderUtilities::CreateScopeTexture();
+		if (mainRTTexture) {
+			// Copy the render target to our texture
+			context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), mainRTTexture);
+			context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), mainDSTexture);
+			RenderUtilities::SetFirstPassComplete(true);
+		} else {
+			logger::error("Failed to find a valid render target texture");
 		}
 
-		// Update the texture for this frame
-		auto rendererData = BSGraphics::RendererData::GetSingleton();
-		ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
+		//更新瞄具镜头
+		NiCloningProcess tempP{};
+		NiCamera* originalCamera = (NiCamera*)((*ptr_DrawWorldCamera)->CreateClone(tempP));
+		auto originalCamera1st = *ptr_DrawWorldCamera;
+		auto originalCamera1stport = (*ptr_DrawWorld1stCamera)->port;
+		scopeCamera->local.translate = originalCamera->local.translate;
+		scopeCamera->local.rotate = originalCamera->local.rotate;
 
-		// Get the existing SRV
-		ID3D11ShaderResourceView* oldSRV = (ID3D11ShaderResourceView*)RenderUtilities::GetScopeBSTexture()->pSRView;
+		//清理主输出，准备第二次渲染
+		float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+		context->ClearRenderTargetView(mainRTV, clearColor);
+		context->ClearDepthStencilView(mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-		// Create a new SRV for this frame
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-		ZeroMemory(&srvDesc, sizeof(srvDesc));
-		srvDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
-		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-		srvDesc.Texture2D.MostDetailedMip = 0;
-		srvDesc.Texture2D.MipLevels = 1;
+		
+		D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
+		DrawWorld::SetCamera(scopeCamera);
+		DrawWorld::SetUpdateCameraFOV(true);
+		DrawWorld::SetAdjusted1stPersonFOV(ScopeCamera::GetTargetFOV());
+		DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
 
-		ID3D11ShaderResourceView* newSRV = nullptr;
-		HRESULT hr = ((ID3D11Device*)rendererData->device)->CreateShaderResourceView(RenderUtilities::GetSecondPassColorTexture(), &srvDesc, &scopeSRV);
-		HRESULT hr1 = ((ID3D11Device*)rendererData->device)->CreateShaderResourceView(RenderUtilities::GetSecondPassColorTexture(), &srvDesc, &newSRV);
+		ScopeCamera::SetRenderingForScope(true);
+		(*fn)(ptr_drawWorld);  //第二次渲染
+		ScopeCamera::SetRenderingForScope(false);
+		D3DPERF_EndEvent();
 
-		if (SUCCEEDED(hr)) {
-			// Release the old SRV
-			if (oldSRV) {
-				oldSRV->Release();
+		context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), mainRTTexture);
+		RenderUtilities::SetSecondPassComplete(true);
+		ID3D11ShaderResourceView* scopeSRV = nullptr;
+
+		// 现在更新scope模型的纹理
+		if (RenderUtilities::IsSecondPassComplete()) 
+		{
+			// Restore the original render target content for normal display
+			context->CopyResource(mainRTTexture, RenderUtilities::GetFirstPassColorTexture());
+			context->CopyResource(mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
+
+			// 为调试目的，在屏幕的一角显示第二次渲染的结果
+			ID3D11ShaderResourceView* debugSRV = nullptr;
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+			ZeroMemory(&srvDesc, sizeof(srvDesc));
+			srvDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+			srvDesc.Texture2D.MipLevels = 1;
+
+			HRESULT hr = ((ID3D11Device*)rendererData->device)->CreateShaderResourceView(RenderUtilities::GetSecondPassColorTexture(), &srvDesc, &debugSRV);
+
+			if (SUCCEEDED(hr)) {
+				RenderUtilities::RenderScreenQuad(debugSRV, 0.7f, 0.0f, 0.3f, 0.3f);
+				debugSRV->Release();
 			}
-
-			RenderUtilities::GetScopeBSTexture()->pSRView = newSRV;
 		}
-	}
-
-	if (scopeSRV) {
-		RenderUtilities::RenderScreenQuad(scopeSRV, 0.7f, 0.0f, 0.3f, 0.3f);
-		scopeSRV->Release();  // 释放我们为直接显示创建的SRV
-	}
-
-	if (originalCamera) {
-		if (originalCamera->DecRefCount() == 0) {
-			originalCamera->DeleteThis();
+		DrawWorld::SetCamera(originalCamera);
+		DrawWorld::SetUpdateCameraFOV(true);
+		
+		if (originalCamera) {
+			if (originalCamera->DecRefCount() == 0) {
+				originalCamera->DeleteThis();
+			}
 		}
 	}
 }
+
 
 void __fastcall hkRenderZPrePass(BSGraphics::RendererShadowState* rshadowState, BSGraphics::ZPrePassDrawData* aZPreData,
 	unsigned __int64* aVertexDesc, unsigned __int16* aCullmode, unsigned __int16* aDepthBiasMode)
@@ -406,6 +409,7 @@ void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_Forward_Ori.address();
+
 	D3DEventNode((*fn)(ptr_drawWorld), L"hkDrawWorld_Forward");
 }
 
@@ -427,8 +431,8 @@ void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground)
 {
 	typedef void (*FnMain_DrawWorldAndUI)(uint64_t, bool);
 	FnMain_DrawWorldAndUI fn = (FnMain_DrawWorldAndUI)Main_DrawWorldAndUI_Ori.address();
-	if (!isSetupScope)
-		isSetupScope = RenderUtilities::SetupWeaponScopeShape();
+	//if (!isSetupScope && isFirstCopy)
+	//	isSetupScope = RenderUtilities::SetupWeaponScopeShape();
 
 	D3DEventNode((*fn)(ptr_drawWorld, abBackground), L"hkMain_DrawWorldAndUI");
 }
@@ -553,8 +557,8 @@ DWORD WINAPI InitThread(HMODULE hModule)
     logger::info("Game world loaded, initializing ThroughScope...");
     
     // Initialize systems
-    ThroughScope::ScopeCamera::Initialize();
-    ThroughScope::RenderUtilities::Initialize();
+    isScopCamReady = ThroughScope::ScopeCamera::Initialize();
+	isRenderReady = ThroughScope::RenderUtilities::Initialize();
     
     logger::info("ThroughScope initialization completed");
     return 0;
@@ -617,7 +621,7 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_f4se, F4
 
     logger::info("TrueThroughScope Query successful!");
     
-    F4SE::AllocTrampoline(16 * 8);
+    F4SE::AllocTrampoline(32 * 8);
     return true;
 }
 

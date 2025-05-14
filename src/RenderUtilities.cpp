@@ -4,6 +4,9 @@
 namespace ThroughScope
 {
     // Initialize static members
+	ID3D11Texture2D* RenderUtilities::s_DirectX11Texture = nullptr;
+	ID3D11ShaderResourceView* RenderUtilities::s_DirectX11SRV = nullptr;
+
     ID3D11Texture2D* RenderUtilities::s_FirstPassColorTexture = nullptr;
     ID3D11Texture2D* RenderUtilities::s_FirstPassDepthTexture = nullptr;
     ID3D11Texture2D* RenderUtilities::s_SecondPassColorTexture = nullptr;
@@ -21,6 +24,62 @@ namespace ThroughScope
     bool RenderUtilities::s_ScreenQuadInitialized = false;
     bool RenderUtilities::s_FirstPassComplete = false;
     bool RenderUtilities::s_SecondPassComplete = false;
+	bool RenderUtilities::s_CreatedMaterial = false;
+
+	ThroughScope::RenderUtilities::SavedD3DState RenderUtilities::s_SavedState{};
+
+	static bool firstRun = true;
+	static RE::NiPointer<RE::NiTexture> dynamicTexture = nullptr;
+
+	// 顶点着色器
+	const char* g_VertexShaderCode = R"(
+struct VS_INPUT {
+    float3 Position : POSITION;
+    float2 TexCoord : TEXCOORD0;
+};
+
+struct VS_OUTPUT {
+    float4 Position : SV_POSITION;
+    float2 TexCoord : TEXCOORD0;
+};
+
+VS_OUTPUT main(VS_INPUT input) {
+    VS_OUTPUT output;
+    output.Position = float4(input.Position, 1.0f);
+    output.TexCoord = input.TexCoord;
+    return output;
+}
+)";
+
+	// 像素着色器
+	const char* g_PixelShaderCode = R"(
+Texture2D scopeTexture : register(t0);
+SamplerState scopeSampler : register(s0);
+
+struct PS_INPUT {
+    float4 Position : SV_POSITION;
+    float2 TexCoord : TEXCOORD0;
+};
+
+float4 main(PS_INPUT input) : SV_TARGET {
+    // 基本采样
+    float4 color = scopeTexture.Sample(scopeSampler, input.TexCoord);
+    
+    // 可选：添加边缘效果和色调调整
+    float vignetteStrength = 0.8;
+    float2 center = float2(0.5, 0.5);
+    float dist = length(input.TexCoord - center) * 2.0;
+    float vignette = 1.0 - smoothstep(0.5, 1.0, dist) * vignetteStrength;
+    
+    // 应用渐晕效果
+    color.rgb *= vignette;
+    
+    // 确保 alpha 值正确
+    color.a = 1.0;
+    
+    return color;
+}
+)";
 
     bool RenderUtilities::Initialize()
     {
@@ -40,75 +99,6 @@ namespace ThroughScope
         return true;
     }
 
-	bool RenderUtilities::CreateScopeTexture()
-	{
-		// 获取渲染器数据
-		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-		ID3D11Device* device = (ID3D11Device*)static_cast<void*>(rendererData->device);
-
-		if (!device) {
-			logger::error("Failed to get D3D11 device for scope texture");
-			return false;
-		}
-
-		// 为纹理名称创建BSFixedString
-		RE::BSFixedString textureName("ScopeTexture");
-
-		// 创建空的NiTexture
-		s_ScopeNiTexture = RE::NiTexture::CreateEmpty(&textureName, true, false);
-		if (!s_ScopeNiTexture) {
-			logger::error("Failed to create scope NiTexture");
-			return false;
-		}
-
-		 // 获取屏幕尺寸来创建纹理
-		unsigned int width = rendererData->renderWindow[0].windowWidth;
-		unsigned int height = rendererData->renderWindow[0].windowHeight;
-
-		// 创建BSGraphics::TextureHeader
-		RE::BSGraphics::TextureHeader header;
-		header.width = width;
-		header.height = height;
-		header.mipCount = 1;
-		header.format = static_cast<uint8_t>(RE::BSGraphics::Format::FORMAT_R11G11B10_FLOAT);
-
-		 // 创建BSGraphics::Texture
-		s_ScopeBSTexture = RE::BSGraphics::CreateTexture(&header, false);
-		if (!s_ScopeBSTexture) {
-			logger::error("Failed to create BSGraphics::Texture for scope");
-			return false;
-		}
-
-		// 为第二次渲染结果创建SRV
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-		ZeroMemory(&srvDesc, sizeof(srvDesc));
-		srvDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
-		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-		srvDesc.Texture2D.MostDetailedMip = 0;
-		srvDesc.Texture2D.MipLevels = 1;
-
-		ID3D11ShaderResourceView* scopeSRV = nullptr;
-		HRESULT hr = device->CreateShaderResourceView(s_SecondPassColorTexture, &srvDesc, &scopeSRV);
-		if (FAILED(hr)) {
-			logger::error("Failed to create scope texture SRV. HRESULT: 0x{:X}", hr);
-			return false;
-		}
-
-		// 替换BSGraphics::Texture中的SRV
-		if (s_ScopeBSTexture->pSRView) {
-			// 如果已创建默认SRV则释放
-			ID3D11ShaderResourceView* oldSRV = (ID3D11ShaderResourceView*)s_ScopeBSTexture->pSRView;
-			oldSRV->Release();
-		}
-		s_ScopeBSTexture->pSRView = scopeSRV;
-
-		// 注册D3D纹理(可选，如果需要的话)
-		RE::BSGraphics::RegisterD3DTexture((REX::W32::ID3D11Texture2D*)s_SecondPassColorTexture);
-
-		logger::info("Scope texture created successfully");
-		return true;
-	}
-
 	bool RenderUtilities::SetupWeaponScopeShape()
 	{
 		// 获取玩家角色
@@ -118,125 +108,471 @@ namespace ThroughScope
 			return false;
 		}
 
-		// 找到武器节点
+		// 查找武器节点
 		auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
 		if (!weaponNode) {
 			logger::error("Weapon node not found");
 			return false;
 		}
 
-		// 转换为NiNode
+		// 转换为 NiNode
 		auto weaponNiNode = weaponNode->IsNode() ? static_cast<RE::NiNode*>(weaponNode) : nullptr;
-		
 		if (!weaponNiNode) {
 			logger::error("Weapon node is not a NiNode");
 			return false;
 		}
 
-		//auto triShape = new RE::BSTriShape();
+		// 检查是否存在 scope node 以避免重复
+		RE::NiAVObject* existingNode = weaponNiNode->GetObjectByName("ScopeNode");
+		if (existingNode) {
+			logger::info("ScopeNode already exists, skipping creation");
+			return true;
+		}
 
-		RE::NiNode* ScopeShapeNode = new RE::NiNode(0);
-		RE::BSFixedString scopeNodeName("ScopeNode");
-		ScopeShapeNode->name = scopeNodeName;
-		ScopeShapeNode->local.translate = RE::NiPoint3(0, 0, 0);
-		ScopeShapeNode->local.rotate.MakeIdentity();
-		weaponNiNode->AttachChild(ScopeShapeNode, false);
-
-
-		RE::BSGeometryConstructor* geomConstructor = RE::BSGeometryConstructor::Create(ScopeShapeNode);
-		RE::NiColorA color(1.0f, 1.0f, 1.0f, 1.0f);       // 红色，完全不透明
-
-		logger::info("Adding quad with explicit vertices");
-
-		RE::NiPoint3 vertices[4];
-		float size = 4.0f;
-		vertices[0] = RE::NiPoint3(-size - 5.0f, 10.0f, size + 5.0f);  // 左上
-		vertices[1] = RE::NiPoint3(-size - 5.0f, 10.0f, -size + 5.0f);  // 左下
-		vertices[2] = RE::NiPoint3(size - 5.0f, 10.0f, -size + 5.0f);   // 右下
-		vertices[3] = RE::NiPoint3(size - 5.0f, 10.0f, size + 5.0f);    // 右上
-		geomConstructor->AddQuad(vertices, &color);
-
-		logger::info("Flushing geometry constructor");
-		geomConstructor->Flush();
-
-		RE::NiUpdateData updateData;
-		updateData.time = 0.0f;
-		memset(&updateData.camera, 0, 20);  // 清零其他字段
-		logger::info("Updating weapon node");
-		ScopeShapeNode->Update(updateData);
-		bool found = false;
-
-		auto child = weaponNiNode->children[0].get();
-		RE::BSFixedString scopeQuadName("ScopeQuad");
-		child->name = scopeQuadName;
-		child->Update(updateData);
-
-
-		if (ScopeShapeNode && ScopeShapeNode->IsGeometry()) {
-			auto geomObject = static_cast<RE::BSGeometry*>(child);
-
-			// 创建BSLightingShaderProperty
-			auto lightingShaderProperty = RE::BSLightingShaderProperty::CreateObject();
-
-			if (lightingShaderProperty) {
-				// 设置基本参数
-				lightingShaderProperty->SetMaterialAlpha(1.0f);
-
-				if (s_ScopeNiTexture) {
-					// 设置diffuse纹理（主要的范围纹理）
-					lightingShaderProperty->SetDiffuseTexture(s_ScopeNiTexture);
-					logger::info("Diffuse texture set to scope texture: {}", s_ScopeNiTexture->GetName());
-				} else {
-					logger::error("Scope texture is null!");
-				}
-
-				// 设置贴图寻址模式（包裹或钳制）
-				lightingShaderProperty->SetClampNI(RE::BSGraphics::TextureAddressMode::TEXTURE_ADDRESS_MODE_WRAP_S_WRAP_T);
-
-				// 设置发光颜色和强度（如果需要让scope发光）
-				RE::NiColor emitColor(1.0f, 1.0f, 1.0f);
-				lightingShaderProperty->SetEmitColor(&emitColor);
-				lightingShaderProperty->SetEmitColorScale(1.0f);
-
-				// 设置高光相关参数
-				lightingShaderProperty->SetSpecularColorScale(1.0f);
-				lightingShaderProperty->SetSmoothness(1.0f);
-
-				// 设置材质名称
-				RE::BSFixedString rootName("ScopeQuadMaterial");
-				lightingShaderProperty->SetRootName(&rootName);
-
-				// 将shader property附加到几何体
-				((RE::BSGeometry*)geomObject)->AttachPropertyA(lightingShaderProperty);
-
-				// 创建NiAlphaProperty处理透明度
-				auto alphaProp = new RE::NiAlphaProperty();
-				if (alphaProp) {
-
-					RE::NiTFlags<std::uint16_t, RE::NiProperty> f;
-					f.flags = 0x4A01;
-					alphaProp->flags = f;
-					geomObject->AttachProperty(alphaProp);
-					logger::info("Alpha property attached");
-				}
-
-				// 设置shader标志，启用Z缓冲写入和测试等
-				lightingShaderProperty->flags.set(RE::BSShaderProperty::EShaderPropertyFlags::kZBufferTest);
-				lightingShaderProperty->flags.set(RE::BSShaderProperty::EShaderPropertyFlags::kZBufferWrite);
-				lightingShaderProperty->flags.set(RE::BSShaderProperty::EShaderPropertyFlags::kTwoSided);
-
-				// 调用setupGeometry确保材质正确应用
-				lightingShaderProperty->SetupGeometry(geomObject);
-
-				logger::info("Setup geometry with lighting shader property");
-			} else {
-				logger::error("Failed to create BSLightingShaderProperty");
+		try {
+			// 创建 scope node
+			RE::NiNode* scopeShapeNode = new RE::NiNode(0);
+			if (!scopeShapeNode) {
+				logger::error("Failed to create scope node");
+				return false;
 			}
 
-			// 更新几何体
-			child->Update(updateData);
+			RE::BSFixedString scopeNodeName("ScopeNode");
+			scopeShapeNode->name = scopeNodeName;
+			scopeShapeNode->local.translate = RE::NiPoint3(0, 0, 0);
+			scopeShapeNode->local.rotate.MakeIdentity();
+
+			// 附加到武器节点
+			weaponNiNode->AttachChild(scopeShapeNode, false);
+
+			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+			auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+
+			// 创建 BSEffectShaderProperty
+			RE::BSEffectShaderProperty* effectProperty = RE::BSEffectShaderProperty::Create();
+			if (!effectProperty) {
+				logger::error("Failed to create effect shader property");
+				return false;
+			}
+
+			// 创建 BSEffectShaderMaterial
+			auto effectMaterial = RE::BSEffectShaderMaterial::CreateObject();
+			if (!effectMaterial) {
+				logger::error("Failed to create effect shader material");
+				return false;
+			}
+
+			// 重要修改：预先创建一个空白纹理以确保UV坐标正确映射
+			RE::BSFixedString textureName("ScopeRenderTexture");
+			RE::NiPointer<RE::NiTexture> defaultTexture = RE::NiPointer<RE::NiTexture>(RE::NiTexture::CreateEmpty(&textureName, true, false));
+			effectMaterial->SetBaseTexture(defaultTexture.get());
+
+			// 设置基本材质属性
+			effectMaterial->baseColor = RE::NiColor(1.0f, 1.0f, 1.0f);  // 白色，便于显示纹理
+			effectMaterial->baseColorScale = 1.0f;
+			// 明确启用纹理使用
+			effectMaterial->uTextureClampMode = static_cast<uint8_t>(RE::BSGraphics::TextureAddressMode::TEXTURE_ADDRESS_MODE_WRAP_S_WRAP_T);
+			// 这些设置可以调整以获得更好的视觉效果
+			effectMaterial->falloffStartAngle = 1.0f;
+			effectMaterial->falloffStopAngle = 0.0f;
+			effectMaterial->falloffStartOpacity = 1.0f;
+			effectMaterial->falloffStopOpacity = 1.0f;
+			effectMaterial->softDepth = 0.0f;  // 不使用深度软化
+
+			// 设置材质到属性
+			effectProperty->SetMaterial(effectMaterial, true);
+
+			// 重要修改：启用一些关键的着色器标志
+			effectProperty->flags.set(RE::BSShaderProperty::EShaderPropertyFlags::kModelSpaceNormals);
+			effectProperty->flags.set(RE::BSShaderProperty::EShaderPropertyFlags::kSpecular);
+			effectProperty->flags.set(RE::BSShaderProperty::EShaderPropertyFlags::kTwoSided);
+			effectProperty->flags.set(RE::BSShaderProperty::EShaderPropertyFlags::kVertexColors);
+			effectProperty->flags.set(RE::BSShaderProperty::EShaderPropertyFlags::kMultipleTextures);
+
+
+
+			// 创建几何体
+			RE::BSGeometryConstructor* geomConstructor = RE::BSGeometryConstructor::Create(scopeShapeNode);
+
+			RE::NiColorA color(1.0f, 0.0f, 0.0f, 1.0f);
+			logger::info("Adding quad with explicit vertices");
+
+			RE::NiPoint3 vertices[4];
+			float size = 8.0f;
+			vertices[0] = RE::NiPoint3(-size, 10.0f, size);   // Left top
+			vertices[1] = RE::NiPoint3(-size, 10.0f, -size);  // Left bottom
+			vertices[2] = RE::NiPoint3(size, 10.0f, -size);   // Right bottom
+			vertices[3] = RE::NiPoint3(size, 10.0f, size);    // Right top
+
+			// Add quad to geometry constructor
+			geomConstructor->AddQuad(vertices, &color);
+
+			logger::info("Flushing geometry constructor");
+			geomConstructor->Flush();
+
+			// Check if we have a valid child object
+			if (scopeShapeNode->children.size() == 0) {
+				logger::error("No children created in scope node");
+				return false;
+			}
+
+			// Name the quad object
+			auto scopeQuad = scopeShapeNode->children[0].get();
+			if (!scopeQuad) {
+				logger::error("Null child in scope node");
+				return false;
+			}
+
+			RE::BSFixedString scopeQuadName("ScopeQuad");
+			scopeQuad->name = scopeQuadName;
+
+			// Check if it's a triShape
+			auto triShape = scopeQuad->IsTriShape();
+			if (!triShape) {
+				logger::error("Child is not a BSTriShape");
+				return false;
+			}
+
+			auto geometry = static_cast<RE::BSGeometry*>(triShape);
+
+
+			geometry->properties[0] = RE::NiPointer<RE::BSEffectShaderProperty>(effectProperty);
+			auto alphaProperty = new RE::NiAlphaProperty();
+			if (alphaProperty) {
+				// 设置透明度属性为启用混合
+				alphaProperty->SetAlphaBlending(true);
+				alphaProperty->SetAlphaTesting(false);
+				alphaProperty->SetSrcBlendMode(RE::NiAlphaProperty::AlphaFunction::kInvSrcAlpha);
+				geometry->AttachProperty(alphaProperty);
+				logger::info("Applied alpha property for blending");
+			}
+
+			// Update the node hierarchy
+			RE::NiUpdateData updateData;
+			updateData.time = 0.0f;
+			updateData.flags = 0;
+			updateData.camera = nullptr;
+			scopeShapeNode->Update(updateData);
+			geometry->Update(updateData);
+
+			logger::info("Created scope quad with texture");
+			s_CreatedMaterial = true;
+
+			return true;
+
+		} catch (const std::exception& e) {
+			logger::error("Exception in SetupWeaponScopeShape: {}", e.what());
+			return false;
 		}
-		return true;
+	}
+
+	void RenderUtilities::UpdateScopeModelTexture()
+	{
+		// Skip if not complete or no texture
+		if (!s_SecondPassComplete || !s_SecondPassColorTexture || !s_CreatedMaterial) {
+			return;
+		}
+
+		try {
+			// Find the scope quad
+			auto playerCharacter = RE::PlayerCharacter::GetSingleton();
+			if (!playerCharacter || !playerCharacter->Get3D()) return;
+
+			auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
+			if (!weaponNode) return;
+
+			auto weaponNiNode = weaponNode->IsNode() ? reinterpret_cast<RE::NiNode*>(weaponNode) : nullptr;
+			if (!weaponNiNode) return;
+
+			// Find ScopeNode
+			RE::NiAVObject* scopeNode = weaponNiNode->GetObjectByName("ScopeNode");
+			if (!scopeNode || !scopeNode->IsNode()) return;
+
+			// Find ScopeQuad
+			auto scopeNodeAsNode = reinterpret_cast<RE::NiNode*>(scopeNode);
+			RE::NiAVObject* scopeQuad = nullptr;
+
+			for (uint32_t i = 0; i < scopeNodeAsNode->children.size(); i++) {
+				auto child = scopeNodeAsNode->children[i].get();
+				if (child && child->name == "ScopeQuad") {
+					scopeQuad = child;
+					break;
+				}
+			}
+
+			if (!scopeQuad) return;
+
+			// Get BSTriShape and cast to BSGeometry
+			auto triShape = scopeQuad->IsTriShape();
+			if (!triShape) return;
+
+			auto geometry = reinterpret_cast<RE::BSGeometry*>(triShape);
+
+			 // 获取 lighting 属性使用直接属性访问
+			auto property = geometry->properties[1].get();
+			if (!property) {
+				logger::error("No shader property at index 1");
+				// 尝试另一个索引
+				property = geometry->properties[0].get();
+				if (!property) {
+					logger::error("No shader property at index 0 either");
+					return;
+				}
+			}
+
+			auto effectProp = netimmerse_cast<RE::BSEffectShaderProperty*>(property);
+			if (!effectProp) {
+				logger::error("Failed to cast to BSEffectShaderProperty");
+				return;
+			}
+
+			auto effectMat = (RE::BSEffectShaderMaterial*)effectProp->material;
+			if (!effectMat) {
+				logger::error("No Effect material found on shader property");
+				return;
+			}
+
+
+			// Get renderer data for texture operations
+			auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+			ID3D11Device* device = (ID3D11Device*)rendererData->device;
+			ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
+
+			// 方法二：创建新纹理
+			static RE::NiPointer<RE::NiTexture> dynamicTexture = nullptr;
+
+			// 创建或重用纹理
+			if (!dynamicTexture) {
+				// 创建一个新纹理
+				RE::BSFixedString textureName("ScopeRenderTarget");
+				dynamicTexture = RE::NiPointer<RE::NiTexture>(RE::NiTexture::CreateEmpty(&textureName, true, false));
+
+				if (!dynamicTexture) {
+					logger::error("Failed to create dynamic texture");
+
+					// 如果创建纹理失败，就更新颜色
+					static float r = 1.0f;
+					static float g = 0.0f;
+					static float b = 0.0f;
+
+					float temp = r;
+					r = g;
+					g = b;
+					b = temp;
+
+					effectMat->baseColor = RE::NiColor(r, g, b);
+					effectMat->baseColorScale = 1.5f;
+
+					logger::info("Updated scope color to [{}, {}, {}]", r, g, b);
+					return;
+				}
+
+				logger::info("Created new dynamic texture for scope");
+			}
+
+			// 获取纹理描述
+			D3D11_TEXTURE2D_DESC texDesc;
+			s_SecondPassColorTexture->GetDesc(&texDesc);
+
+			// 创建与第二个通道匹配的新D3D纹理
+			ID3D11Texture2D* newTexture = nullptr;
+			D3D11_TEXTURE2D_DESC newTexDesc = texDesc;
+			newTexDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;  // 使用更兼容的格式
+			newTexDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+			HRESULT hr = device->CreateTexture2D(&newTexDesc, nullptr, &newTexture);
+			if (FAILED(hr)) {
+				logger::error("Failed to create new D3D texture, hr=0x{:X}", hr);
+				return;
+			}
+
+			// 复制内容
+			context->CopyResource(newTexture, s_SecondPassColorTexture);
+
+			// 创建着色器资源视图
+			ID3D11ShaderResourceView* newSRV = nullptr;
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+			ZeroMemory(&srvDesc, sizeof(srvDesc));
+			srvDesc.Format = newTexDesc.Format;
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+			srvDesc.Texture2D.MipLevels = 1;
+
+			hr = device->CreateShaderResourceView(newTexture, &srvDesc, &newSRV);
+			if (FAILED(hr)) {
+				logger::error("Failed to create SRV, hr=0x{:X}", hr);
+				newTexture->Release();
+				return;
+			}
+
+			// 创建 BSGraphics::Texture 对象
+			RE::BSGraphics::Texture* bsTexture = new RE::BSGraphics::Texture();
+			if (!bsTexture) {
+				logger::error("Failed to create BSGraphics::Texture");
+				newSRV->Release();
+				newTexture->Release();
+				return;
+			}
+
+			// 设置 BSGraphics::Texture 属性
+			bsTexture->pTexture2D = newTexture;
+			bsTexture->pSRView = newSRV;
+			bsTexture->Header.width = newTexDesc.Width;
+			bsTexture->Header.height = newTexDesc.Height;
+			bsTexture->Header.mipCount = 1;
+			bsTexture->Header.format = static_cast<uint8_t>(RE::BSGraphics::Format::FORMAT_R11G11B10_FLOAT);
+			bsTexture->uiRefCount = 1;
+
+			// 注册纹理 - 这是重要的一步，确保游戏引擎知道这个纹理
+			RE::BSGraphics::RegisterD3DTexture((REX::W32::ID3D11Texture2D*)newTexture);
+
+			// 设置渲染器纹理
+			dynamicTexture->SetRendererTexture(bsTexture);
+
+			// 更新 BSEffectShaderMaterial 中的纹理
+			effectMat->SetBaseTexture(dynamicTexture.get());
+
+			// 设置白色基础颜色，以便纹理可见
+			effectMat->baseColor = RE::NiColor(1.0f, 1.0f, 1.0f);
+			effectMat->baseColorScale = 1.0f;
+
+			logger::info("Updated scope texture with new D3D texture");
+
+			/*
+			// Try to create a texture from our captured screen
+			static bool firstRun = true;
+			static RE::NiPointer<RE::NiTexture> dynamicTexture = nullptr;
+
+			if (firstRun || !dynamicTexture) {
+				// Create a new texture for the first time
+				RE::BSFixedString textureName("ScopeRenderTarget");
+				dynamicTexture = RE::NiPointer<RE::NiTexture>(RE::NiTexture::CreateEmpty(&textureName, true, false));
+
+				if (dynamicTexture) {
+					logger::info("Created new dynamic texture for scope");
+					firstRun = false;
+				} else {
+					logger::error("Failed to create dynamic texture");
+
+					// Fall back to color cycling
+					static float r = 1.0f;
+					static float g = 0.0f;
+					static float b = 0.0f;
+
+					float temp = r;
+					r = g;
+					g = b;
+					b = temp;
+
+					effectMat->baseColor = RE::NiColor(r, g, b);
+					effectMat->baseColorScale= 1.5f;
+
+					logger::info("Updated scope color to [{}, {}, {}]", r, g, b);
+					return;
+				}
+			}
+
+			// Try to update the texture with our captured screen
+			// First approach: Create a new BSGraphics::Texture
+
+			// Create a shader resource view for our captured texture
+			ID3D11ShaderResourceView* capturedSRV = nullptr;
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+			ZeroMemory(&srvDesc, sizeof(srvDesc));
+			srvDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;  // Try a well-supported format
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+			srvDesc.Texture2D.MipLevels = 1;
+
+			HRESULT hr = device->CreateShaderResourceView(s_SecondPassColorTexture, &srvDesc, &capturedSRV);
+
+			if (SUCCEEDED(hr) && capturedSRV) {
+				// Create a new BSGraphics::Texture
+				auto capturedBSTexture = new RE::BSGraphics::Texture();
+
+				// Set up the texture structure manually
+				if (capturedBSTexture) {
+					capturedBSTexture->pSRView = capturedSRV;
+					capturedBSTexture->pTexture2D = s_SecondPassColorTexture;
+					capturedBSTexture->pUAView = nullptr;
+					capturedBSTexture->pStreamData = nullptr;
+					capturedBSTexture->pRequestEventToWait = nullptr;
+
+					// Set header info
+					capturedBSTexture->Header.width = rendererData->renderWindow[0].windowWidth;
+					capturedBSTexture->Header.height = rendererData->renderWindow[0].windowHeight;
+					capturedBSTexture->Header.mipCount = 1;
+					capturedBSTexture->Header.format = static_cast<uint8_t>(RE::BSGraphics::Format::FORMAT_R11G11B10_FLOAT);
+
+					// Set other fields
+					capturedBSTexture->PendingRequests.load_unchecked();
+					capturedBSTexture->uiRefCount = 1;
+					capturedBSTexture->uiCreationFrame = 0;
+					capturedBSTexture->uiMinLOD = 0;
+					capturedBSTexture->uiDegradeLevel = 0;
+					capturedBSTexture->usDesiredDegradeLevel = 0;
+					capturedBSTexture->usFlags = 0;
+
+					// Set the BSGraphics::Texture to the NiTexture
+					dynamicTexture->SetRendererTexture(capturedBSTexture);
+					effectMat->SetBaseTexture(dynamicTexture.get());
+
+					effectMat->baseColor = RE::NiColor(1, 1, 1);
+					effectMat->baseColorScale = 1.0f;
+					effectMat->falloffStartAngle = 1.0f;
+					effectMat->falloffStopAngle = 0.990600f;
+
+					//logger::info("Updated scope texture with captured screen");
+				} else {
+					// Clean up
+					capturedSRV->Release();
+
+					// Fall back to color cycling
+					static float r = 1.0f;
+					static float g = 0.0f;
+					static float b = 0.0f;
+
+					float temp = r;
+					r = g;
+					g = b;
+					b = temp;
+
+					effectMat->baseColor = RE::NiColor(r, g, b);
+					effectMat->baseColorScale = 1.5f;
+
+					logger::info("Updated scope color to [{}, {}, {}]", r, g, b);
+				}
+			} else {
+				logger::error("Failed to create shader resource view for captured texture, hr=0x{:X}", hr);
+
+				// Fall back to color cycling
+				static float r = 1.0f;
+				static float g = 0.0f;
+				static float b = 0.0f;
+
+				float temp = r;
+				r = g;
+				g = b;
+				b = temp;
+
+				effectMat->baseColor = RE::NiColor(r, g, b);
+				effectMat->baseColorScale = 1.5f;
+
+				logger::info("Updated scope color to [{}, {}, {}]", r, g, b);
+			}
+			*/
+			
+			
+			// Update the node hierarchy
+			RE::NiUpdateData updateData;
+			updateData.time = 0.0f;
+			updateData.flags = 0;
+			updateData.camera = nullptr;
+			scopeQuad->Update(updateData);
+
+		} catch (const std::exception& e) {
+			logger::error("Exception in UpdateScopeModelTexture: {}", e.what());
+		}
 	}
 
     void RenderUtilities::Shutdown()
@@ -264,6 +600,16 @@ namespace ThroughScope
             s_ScreenQuadSamplerState->Release();
             s_ScreenQuadSamplerState = nullptr;
         }
+
+		if (s_DirectX11SRV) {
+			s_DirectX11SRV->Release();
+			s_DirectX11SRV = nullptr;
+		}
+
+		if (s_DirectX11Texture) {
+			s_DirectX11Texture->Release();
+			s_DirectX11Texture = nullptr;
+		}
 
         s_ScreenQuadInitialized = false;
     }
