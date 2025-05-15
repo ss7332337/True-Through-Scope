@@ -1,37 +1,44 @@
 #pragma once
 
 #include <d3d11.h>
+#include <DirectXMath.h>
 #include <dxgi.h>
 #include "RenderUtilities.h"
 
 namespace ThroughScope {
-    class D3DHooks {
-
+	using namespace DirectX;
+    class D3DHooks 
+	{
 	private:
-		const char* pixelShaderCode = R"(
-            Texture2D scopeTexture : register(t0);
-            SamplerState scopeSampler : register(s0);
-            
-            struct PS_INPUT {
-                float4 position : SV_POSITION;
-                float4 normal : NORMAL;
-                float4 color : COLOR0;
-                float4 fogColor : COLOR1;
-            };
-            
-            float4 main(PS_INPUT input) : SV_TARGET {
-                // 采样纹理 - 使用屏幕空间坐标
-                float2 texCoord = input.position.xy / float2(1920, 1080); // 使用屏幕分辨率来归一化
-                
-                // 对纹理进行采样
-                float4 texColor = scopeTexture.Sample(scopeSampler, texCoord);
-                texColor.a = 1;
-                return texColor;
-            }
-        )";
+		 // 常量缓冲区数据结构
+		struct ScopeConstantBuffer
+		{
+			float screenWidth;
+			float screenHeight;
+			float padding1[2];  // 16字节对齐
+
+			float cameraPosition[3];
+			float padding2;  // 16字节对齐
+
+			float scopePosition[3];
+			float padding3;  // 16字节对齐
+
+			float lastCameraPosition[3];
+			float padding4;  // 16字节对齐
+
+			float lastScopePosition[3];
+			float padding5;  // 16字节对齐
+
+			float parallax_relativeFogRadius;
+			float parallax_scopeSwayAmount;
+			float parallax_maxTravel;
+			float parallax_Radius;
+
+			XMFLOAT4X4 CameraRotation = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+		};
+
     public:
         static bool Initialize();
-        static void Shutdown();
 
         // D3D11 function hooks
         static void WINAPI hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
@@ -62,8 +69,6 @@ namespace ThroughScope {
     private:
         // Helper methods for texture replacement
         static void SetScopeTexture(ID3D11DeviceContext* pContext);
-        static void SaveD3DState(ID3D11DeviceContext* pContext, RenderUtilities::SavedD3DState& state);
-        static void RestoreD3DState(ID3D11DeviceContext* pContext, const RenderUtilities::SavedD3DState& state);
 		static bool IsTargetDrawCall(const BufferInfo& vertexInfo, const BufferInfo& indexInfo, UINT indexCount);
 		static UINT GetVertexBuffersInfo(ID3D11DeviceContext* pContext, std::vector<BufferInfo>& outInfos, UINT maxSlotsToCheck = D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT);
 		static bool GetIndexBufferInfo(ID3D11DeviceContext* pContext, BufferInfo& outInfo);

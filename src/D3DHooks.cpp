@@ -2,6 +2,7 @@
 #include "Utilities.h"
 #include <detours.h>
 #include <wrl/client.h>
+#include <ScopeCamera.h>
 
 namespace ThroughScope {
     
@@ -17,6 +18,102 @@ namespace ThroughScope {
 	static constexpr UINT TARGET_STRIDE = 12;
 	static constexpr UINT TARGET_INDEX_COUNT = 6;
 	static constexpr UINT TARGET_BUFFER_SIZE = 0x0000000008000000;
+
+
+	const char* pixelShaderCode = R"(
+            Texture2D scopeTexture : register(t0);
+            SamplerState scopeSampler : register(s0);
+            
+            // 常量缓冲区包含屏幕分辨率、摄像头位置和瞄准镜位置
+            cbuffer ScopeConstants : register(b0)
+            {
+                float screenWidth;
+				float screenHeight;
+				float2 padding1;  // 16字节对齐
+
+				float3 cameraPosition;
+				float padding2;  // 16字节对齐
+
+				float3 scopePosition;
+				float padding3;  // 16字节对齐
+
+				float3 lastCameraPosition;
+				float padding4;  // 16字节对齐
+
+				float3 lastScopePosition;
+				float padding5;  // 16字节对齐
+
+				float parallax_relativeFogRadius;
+				float parallax_scopeSwayAmount;
+				float parallax_maxTravel;
+				float parallax_Radius;
+
+				float4x4 CameraRotation; 
+            }
+            
+            struct PS_INPUT {
+				float4 position : SV_POSITION;
+				float4 texCoord : TEXCOORD;
+				float4 color0 : COLOR0;
+				float4 fogColor : COLOR1;
+            };
+
+			float2 clampMagnitude(float2 v, float l)
+			{
+				return normalize(v) * min(length(v), l);
+			}
+
+			float getparallax(float d, float2 ds, float dfov)
+			{
+				return clamp(1 - pow(abs(rcp(parallax_Radius * ds.y) * (parallax_relativeFogRadius * d * ds.y)), parallax_scopeSwayAmount), 0, parallax_maxTravel);
+			}
+            float2 aspect_ratio_correction(float2 tc)
+			{
+				tc.x -= 0.5f;
+				tc.x *= screenWidth * rcp(screenHeight);
+				tc.x += 0.5f;
+				return tc;
+			}
+
+
+            float4 main(PS_INPUT input) : SV_TARGET {
+                float2 texCoord = input.position.xy / float2(screenWidth, screenHeight);
+				float2 aspectCorrectTex = aspect_ratio_correction(texCoord);
+
+				float3 virDir = scopePosition - cameraPosition;
+				float3 lastVirDir = lastScopePosition - lastCameraPosition;
+				float3 eyeDirectionLerp = virDir - lastVirDir;
+				float4 abseyeDirectionLerp = mul(float4((eyeDirectionLerp), 1), CameraRotation);
+
+				if (abseyeDirectionLerp.y < 0 && abseyeDirectionLerp.y >= -0.001)
+					abseyeDirectionLerp.y = -0.001;
+				else if (abseyeDirectionLerp.y >= 0 && abseyeDirectionLerp.y <= 0.001)
+					abseyeDirectionLerp.y = 0.001;
+
+				// Get original texture
+				float4 color = scopeTexture.Sample(scopeSampler, texCoord);
+
+				float2 eye_velocity = clampMagnitude(abseyeDirectionLerp.xy , 1.5f);
+
+				float2 parallax_offset = float2(0.5 + eye_velocity.x  , 0.5 - eye_velocity.y);
+				float distToParallax = distance(aspectCorrectTex, parallax_offset);
+				float2 scope_center = float2(0.5,0.5);
+				float distToCenter = distance(aspectCorrectTex, scope_center);
+
+				if (distToCenter > 2) {
+					return float4(0, 1, 0, 1);  // Red indicates pixels where step() would return 0
+				}
+    
+				float parallaxValue = (step(distToCenter, 2) * getparallax(distToParallax,float2(1,1),1));
+				if (parallaxValue <= 0.01) {
+					return float4(0, 0, 1, 1);  // Green indicates pixels where getparallax() returns near 0
+				}
+    
+				// Apply final effect
+				color.rgb *= parallaxValue;
+				return color;
+            }
+        )";
 
 	struct SavedState
 	{
@@ -85,22 +182,6 @@ namespace ThroughScope {
         originalDrawIndexed = drawIndexedFunc;
         logger::info("D3D11 hooks initialized successfully");
         return true;
-    }
-    
-    void D3DHooks::Shutdown() {
-        logger::info("Shutting down D3D11 hooks...");
-        
-        if (originalDrawIndexed) {
-            DetourTransactionBegin();
-            DetourUpdateThread(GetCurrentThread());
-            DetourDetach(&originalDrawIndexed, hkDrawIndexed);
-            DetourTransactionCommit();
-        }
-        
-        if (s_ScopeTextureView) {
-            s_ScopeTextureView->Release();
-            s_ScopeTextureView = nullptr;
-        }
     }
     
     void WINAPI D3DHooks::hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) {
@@ -245,12 +326,44 @@ namespace ThroughScope {
 			return;
 		}
 
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		UINT screenWidth = rendererData->renderWindow[0].windowWidth;
+		UINT screenHeight = rendererData->renderWindow[0].windowHeight;
+
+		// 获取玩家摄像头位置
+		auto playerCamera = RE::PlayerCharacter::GetSingleton()->Get3D(true)->GetObjectByName("Camera");
+		RE::NiPoint3 cameraPos(0, 0, 0);
+		RE::NiPoint3 lastCameraPos(0, 0, 0);
+
+		if (playerCamera) {
+			cameraPos = playerCamera->world.translate;
+			lastCameraPos = playerCamera->previousWorld.translate;
+		}
+
+		// 获取ScopeNode位置
+		RE::NiPoint3 scopePos(0, 0, 0);
+		RE::NiPoint3 lastScopePos(0, 0, 0);
+		auto playerCharacter = RE::PlayerCharacter::GetSingleton();
+		if (playerCharacter && playerCharacter->Get3D()) {
+			auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
+			if (weaponNode && weaponNode->IsNode()) {
+				auto weaponNiNode = static_cast<RE::NiNode*>(weaponNode);
+				auto scopeNode = weaponNiNode->GetObjectByName("ScopeNode");
+
+				if (scopeNode) {
+					scopePos = scopeNode->world.translate;
+					lastScopePos = scopeNode->previousWorld.translate;
+				}
+			}
+		}
+
 		// 为瞄准镜创建和管理资源的静态变量
 		static ID3D11Texture2D* stagingTexture = nullptr;
 		static ID3D11ShaderResourceView* stagingSRV = nullptr;
 		static ID3D11PixelShader* scopePixelShader = nullptr;
 		static ID3D11SamplerState* samplerState = nullptr;
 		static ID3D11BlendState* blendState = nullptr;
+		static ID3D11Buffer* constantBuffer = nullptr;
 
 		// 获取纹理描述
 		D3D11_TEXTURE2D_DESC srcTexDesc;
@@ -290,9 +403,26 @@ namespace ThroughScope {
 				return;
 			}
 
-			// 编译并创建瞄准镜像素着色器
-			// 注意：更新了输入结构以匹配顶点着色器输出
-			
+			 // 创建常量缓冲区
+			D3D11_BUFFER_DESC cbDesc;
+			ZeroMemory(&cbDesc, sizeof(cbDesc));
+			cbDesc.ByteWidth = sizeof(ScopeConstantBuffer);
+			cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+			cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+			cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+			cbDesc.MiscFlags = 0;
+			cbDesc.StructureByteStride = 0;
+
+			hr = device->CreateBuffer(&cbDesc, nullptr, &constantBuffer);
+			if (FAILED(hr)) {
+				logger::error("Failed to create constant buffer: 0x{:X}", hr);
+				stagingSRV->Release();
+				stagingTexture->Release();
+				stagingTexture = nullptr;
+				stagingSRV = nullptr;
+				device->Release();
+				return;
+			}
 
 			ID3DBlob* psBlob = nullptr;
 			ID3DBlob* errorBlob = nullptr;
@@ -360,15 +490,67 @@ namespace ThroughScope {
 			pContext->CopyResource(stagingTexture, RenderUtilities::GetSecondPassColorTexture());
 		}
 
-		// 保存当前的像素着色器状态
-		ID3D11PixelShader* originalPS = nullptr;
-		pContext->PSGetShader(&originalPS, nullptr, nullptr);
+		 // 更新常量缓冲区数据
+		D3D11_MAPPED_SUBRESOURCE mappedResource;
+		HRESULT hr = pContext->Map(constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
+		if (SUCCEEDED(hr)) {
+			ScopeConstantBuffer* cbData = (ScopeConstantBuffer*)mappedResource.pData;
 
-		// 保存当前的着色器资源和采样器状态
-		ID3D11ShaderResourceView* originalSRVs[1] = { nullptr };
-		ID3D11SamplerState* originalSamplers[1] = { nullptr };
-		pContext->PSGetShaderResources(0, 1, originalSRVs);
-		pContext->PSGetSamplers(0, 1, originalSamplers);
+			// 填充常量缓冲区数据
+			cbData->screenWidth = static_cast<float>(screenWidth);
+			cbData->screenHeight = static_cast<float>(screenHeight);
+
+			cbData->cameraPosition[0] = cameraPos.x;
+			cbData->cameraPosition[1] = cameraPos.y;
+			cbData->cameraPosition[2] = cameraPos.z;
+
+			cbData->scopePosition[0] = scopePos.x;
+			cbData->scopePosition[1] = scopePos.y;
+			cbData->scopePosition[2] = scopePos.z;
+
+			cbData->lastCameraPosition[0] = lastCameraPos.x;
+			cbData->lastCameraPosition[1] = lastCameraPos.y;
+			cbData->lastCameraPosition[2] = lastCameraPos.z;
+
+			cbData->lastScopePosition[0] = lastScopePos.x;
+			cbData->lastScopePosition[1] = lastScopePos.y;
+			cbData->lastScopePosition[2] = lastScopePos.z;
+
+			 DirectX::XMFLOAT4X4 rotationMatrix = {
+				1, 0, 0, 0,
+				0, 1, 0, 0,
+				0, 0, 1, 0,
+				0, 0, 0, 1
+			};
+
+			 rotationMatrix._11 = playerCamera->world.rotate.entry[0].x;
+			 rotationMatrix._12 = playerCamera->world.rotate.entry[0].y;
+			 rotationMatrix._13 = playerCamera->world.rotate.entry[0].z;
+			 rotationMatrix._14 = playerCamera->world.rotate.entry[0].w;
+
+			 rotationMatrix._21 = playerCamera->world.rotate.entry[1].x;
+			 rotationMatrix._22 = playerCamera->world.rotate.entry[1].y;
+			 rotationMatrix._23 = playerCamera->world.rotate.entry[1].z;
+			 rotationMatrix._24 = playerCamera->world.rotate.entry[1].w;
+
+			 rotationMatrix._31 = playerCamera->world.rotate.entry[2].x;
+			 rotationMatrix._32 = playerCamera->world.rotate.entry[2].y;
+			 rotationMatrix._33 = playerCamera->world.rotate.entry[2].z;
+			 rotationMatrix._34 = playerCamera->world.rotate.entry[2].w;
+
+			// 效果强度参数 - 可以通过配置文件或UI调整
+			cbData->parallax_Radius = 2.0f;              // 折射强度
+			cbData->parallax_relativeFogRadius = 8.0f;  // 视差强度
+			cbData->parallax_scopeSwayAmount = 2.0f;     // 暗角强度
+			cbData->parallax_maxTravel = 16.0f;           // 折射强度
+
+			//auto camMat = playerCamera->local.rotate.entry[0];
+			auto camMat = RE::PlayerCamera::GetSingleton() -> cameraRoot->local.rotate.entry[0];
+			memcpy_s(&cbData->CameraRotation, sizeof(cbData->CameraRotation), &rotationMatrix, sizeof(rotationMatrix));
+			pContext->Unmap(constantBuffer, 0);
+		}
+
+		pContext->PSSetConstantBuffers(0, 1, &constantBuffer);
 
 		// 设置我们的像素着色器
 		pContext->PSSetShader(scopePixelShader, nullptr, 0);
@@ -378,120 +560,5 @@ namespace ThroughScope {
 		pContext->PSSetSamplers(0, 1, &samplerState);
 
 		device->Release();
-
-		// 释放保存的原始状态引用
-		if (originalPS)
-			originalPS->Release();
-		if (originalSRVs[0])
-			originalSRVs[0]->Release();
-		if (originalSamplers[0])
-			originalSamplers[0]->Release();
 	}
-    
-    void D3DHooks::SaveD3DState(ID3D11DeviceContext* pContext, RenderUtilities::SavedD3DState& state) {
-        // Save shader resources
-        pContext->PSGetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, state.psShaderResources);
-        pContext->VSGetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, state.vsShaderResources);
-        
-        // Save samplers
-        pContext->PSGetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, state.psSamplers);
-        pContext->VSGetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, state.vsSamplers);
-        
-        // Save blend state
-        pContext->OMGetBlendState(&state.blendState, state.blendFactor, &state.sampleMask);
-        
-        // Save depth-stencil state
-        pContext->OMGetDepthStencilState(&state.depthStencilState, &state.stencilRef);
-        
-        // Save rasterizer state
-        pContext->RSGetState(&state.rasterizerState);
-        
-        // Save current shaders
-        pContext->VSGetShader(&state.vertexShader, state.vsClassInstances, &state.vsNumClassInstances);
-        pContext->PSGetShader(&state.pixelShader, nullptr, nullptr);
-        pContext->GSGetShader(&state.geometryShader, nullptr, nullptr);
-        pContext->HSGetShader(&state.hullShader, nullptr, nullptr);
-        pContext->DSGetShader(&state.domainShader, nullptr, nullptr);
-        
-        // Save input layout and other input assembler state
-        pContext->IAGetInputLayout(&state.inputLayout);
-        pContext->IAGetPrimitiveTopology(&state.primitiveTopology);
-        
-        // Save constant buffers
-        pContext->VSGetConstantBuffers(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, state.vsConstantBuffers);
-        pContext->PSGetConstantBuffers(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, state.psConstantBuffers);
-    }
-    
-    void D3DHooks::RestoreD3DState(ID3D11DeviceContext* pContext, const RenderUtilities::SavedD3DState& state) {
-        // Restore shader resources
-        pContext->PSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, state.psShaderResources);
-        pContext->VSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, state.vsShaderResources);
-        
-        // Restore samplers
-        pContext->PSSetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, state.psSamplers);
-        pContext->VSSetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, state.vsSamplers);
-        
-        // Restore blend state
-        pContext->OMSetBlendState(state.blendState, state.blendFactor, state.sampleMask);
-        
-        // Restore depth-stencil state
-        pContext->OMSetDepthStencilState(state.depthStencilState, state.stencilRef);
-        
-        // Restore rasterizer state
-        pContext->RSSetState(state.rasterizerState);
-        
-        // Restore shaders
-        pContext->VSSetShader(state.vertexShader, state.vsClassInstances, state.vsNumClassInstances);
-        pContext->PSSetShader(state.pixelShader, nullptr, 0);
-        pContext->GSSetShader(state.geometryShader, nullptr, 0);
-        pContext->HSSetShader(state.hullShader, nullptr, 0);
-        pContext->DSSetShader(state.domainShader, nullptr, 0);
-        
-        // Restore input layout and topology
-        pContext->IASetInputLayout(state.inputLayout);
-        pContext->IASetPrimitiveTopology(state.primitiveTopology);
-        
-        // Restore constant buffers
-        pContext->VSSetConstantBuffers(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, state.vsConstantBuffers);
-        pContext->PSSetConstantBuffers(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, state.psConstantBuffers);
-        
-        // Release references
-        // Shader resources
-        for (int i = 0; i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; i++) {
-            if (state.psShaderResources[i]) state.psShaderResources[i]->Release();
-            if (state.vsShaderResources[i]) state.vsShaderResources[i]->Release();
-        }
-        
-        // Samplers
-        for (int i = 0; i < D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT; i++) {
-            if (state.psSamplers[i]) state.psSamplers[i]->Release();
-            if (state.vsSamplers[i]) state.vsSamplers[i]->Release();
-        }
-        
-        // States
-        if (state.blendState) state.blendState->Release();
-        if (state.depthStencilState) state.depthStencilState->Release();
-        if (state.rasterizerState) state.rasterizerState->Release();
-        
-        // Shaders
-        if (state.vertexShader) state.vertexShader->Release();
-        if (state.pixelShader) state.pixelShader->Release();
-        if (state.geometryShader) state.geometryShader->Release();
-        if (state.hullShader) state.hullShader->Release();
-        if (state.domainShader) state.domainShader->Release();
-        
-        // Input layout
-        if (state.inputLayout) state.inputLayout->Release();
-        
-        // Constant buffers
-        for (int i = 0; i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT; i++) {
-            if (state.vsConstantBuffers[i]) state.vsConstantBuffers[i]->Release();
-            if (state.psConstantBuffers[i]) state.psConstantBuffers[i]->Release();
-        }
-        
-        // Class instances
-        for (UINT i = 0; i < state.vsNumClassInstances; i++) {
-            if (state.vsClassInstances[i]) state.vsClassInstances[i]->Release();
-        }
-    }
 }

@@ -241,22 +241,6 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 			// Restore the original render target content for normal display
 			context->CopyResource(mainRTTexture, RenderUtilities::GetFirstPassColorTexture());
 			context->CopyResource(mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
-
-			// 为调试目的，在屏幕的一角显示第二次渲染的结果
-			ID3D11ShaderResourceView* debugSRV = nullptr;
-			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-			ZeroMemory(&srvDesc, sizeof(srvDesc));
-			srvDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
-			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-			srvDesc.Texture2D.MostDetailedMip = 0;
-			srvDesc.Texture2D.MipLevels = 1;
-
-			HRESULT hr = ((ID3D11Device*)rendererData->device)->CreateShaderResourceView(RenderUtilities::GetSecondPassColorTexture(), &srvDesc, &debugSRV);
-
-			if (SUCCEEDED(hr)) {
-				RenderUtilities::RenderScreenQuad(debugSRV, 0.7f, 0.0f, 0.3f, 0.3f);
-				debugSRV->Release();
-			}
 		}
 		DrawWorld::SetCamera(originalCamera);
 		DrawWorld::SetUpdateCameraFOV(true);

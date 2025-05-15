@@ -53,7 +53,7 @@ namespace ThroughScope
                 playerCamera->cameraRoot.get()->AttachChild(s_ScopeCamera, true);
                 s_ScopeCamera->viewFrustum = ((RE::NiCamera*)playerCamera->cameraRoot.get())->viewFrustum;
                 s_ScopeCamera->port = ((RE::NiCamera*)playerCamera->cameraRoot.get())->port;
-                
+				s_TargetFOV = playerCamera->firstPersonFOV - 10; 
                 logger::info("Created scope camera successfully");
             } else {
                 logger::error("Failed to get camera root node");
