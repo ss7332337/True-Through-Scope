@@ -168,7 +168,7 @@ float4 main(PS_INPUT input) : SV_TARGET {
 			effectMaterial->SetBaseTexture(defaultTexture.get());
 
 			// 设置基本材质属性
-			effectMaterial->baseColor = RE::NiColor(1.0f, 1.0f, 1.0f);  // 白色，便于显示纹理
+			effectMaterial->baseColor = RE::NiColor(0.9999f, 0.0001f, 0.4999f);  // 白色，便于显示纹理
 			effectMaterial->baseColorScale = 1.0f;
 			// 明确启用纹理使用
 			effectMaterial->uTextureClampMode = static_cast<uint8_t>(RE::BSGraphics::TextureAddressMode::TEXTURE_ADDRESS_MODE_WRAP_S_WRAP_T);
@@ -199,10 +199,10 @@ float4 main(PS_INPUT input) : SV_TARGET {
 
 			RE::NiPoint3 vertices[4];
 			float size = 8.0f;
-			vertices[0] = RE::NiPoint3(-size, 10.0f, size);   // Left top
-			vertices[1] = RE::NiPoint3(-size, 10.0f, -size);  // Left bottom
-			vertices[2] = RE::NiPoint3(size, 10.0f, -size);   // Right bottom
-			vertices[3] = RE::NiPoint3(size, 10.0f, size);    // Right top
+			vertices[0] = RE::NiPoint3(-size, 10.0f, size + 10);   // Left top
+			vertices[1] = RE::NiPoint3(-size, 10.0f, -size + 10);  // Left bottom
+			vertices[2] = RE::NiPoint3(size, 10.0f, -size + 10);   // Right bottom
+			vertices[3] = RE::NiPoint3(size, 10.0f, size + 10);    // Right top
 
 			// Add quad to geometry constructor
 			geomConstructor->AddQuad(vertices, &color);
@@ -246,14 +246,6 @@ float4 main(PS_INPUT input) : SV_TARGET {
 				geometry->AttachProperty(alphaProperty);
 				logger::info("Applied alpha property for blending");
 			}
-
-			// Update the node hierarchy
-			RE::NiUpdateData updateData;
-			updateData.time = 0.0f;
-			updateData.flags = 0;
-			updateData.camera = nullptr;
-			scopeShapeNode->Update(updateData);
-			geometry->Update(updateData);
 
 			logger::info("Created scope quad with texture");
 			s_CreatedMaterial = true;
@@ -437,131 +429,6 @@ float4 main(PS_INPUT input) : SV_TARGET {
 			effectMat->baseColorScale = 1.0f;
 
 			logger::info("Updated scope texture with new D3D texture");
-
-			/*
-			// Try to create a texture from our captured screen
-			static bool firstRun = true;
-			static RE::NiPointer<RE::NiTexture> dynamicTexture = nullptr;
-
-			if (firstRun || !dynamicTexture) {
-				// Create a new texture for the first time
-				RE::BSFixedString textureName("ScopeRenderTarget");
-				dynamicTexture = RE::NiPointer<RE::NiTexture>(RE::NiTexture::CreateEmpty(&textureName, true, false));
-
-				if (dynamicTexture) {
-					logger::info("Created new dynamic texture for scope");
-					firstRun = false;
-				} else {
-					logger::error("Failed to create dynamic texture");
-
-					// Fall back to color cycling
-					static float r = 1.0f;
-					static float g = 0.0f;
-					static float b = 0.0f;
-
-					float temp = r;
-					r = g;
-					g = b;
-					b = temp;
-
-					effectMat->baseColor = RE::NiColor(r, g, b);
-					effectMat->baseColorScale= 1.5f;
-
-					logger::info("Updated scope color to [{}, {}, {}]", r, g, b);
-					return;
-				}
-			}
-
-			// Try to update the texture with our captured screen
-			// First approach: Create a new BSGraphics::Texture
-
-			// Create a shader resource view for our captured texture
-			ID3D11ShaderResourceView* capturedSRV = nullptr;
-			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-			ZeroMemory(&srvDesc, sizeof(srvDesc));
-			srvDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;  // Try a well-supported format
-			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-			srvDesc.Texture2D.MostDetailedMip = 0;
-			srvDesc.Texture2D.MipLevels = 1;
-
-			HRESULT hr = device->CreateShaderResourceView(s_SecondPassColorTexture, &srvDesc, &capturedSRV);
-
-			if (SUCCEEDED(hr) && capturedSRV) {
-				// Create a new BSGraphics::Texture
-				auto capturedBSTexture = new RE::BSGraphics::Texture();
-
-				// Set up the texture structure manually
-				if (capturedBSTexture) {
-					capturedBSTexture->pSRView = capturedSRV;
-					capturedBSTexture->pTexture2D = s_SecondPassColorTexture;
-					capturedBSTexture->pUAView = nullptr;
-					capturedBSTexture->pStreamData = nullptr;
-					capturedBSTexture->pRequestEventToWait = nullptr;
-
-					// Set header info
-					capturedBSTexture->Header.width = rendererData->renderWindow[0].windowWidth;
-					capturedBSTexture->Header.height = rendererData->renderWindow[0].windowHeight;
-					capturedBSTexture->Header.mipCount = 1;
-					capturedBSTexture->Header.format = static_cast<uint8_t>(RE::BSGraphics::Format::FORMAT_R11G11B10_FLOAT);
-
-					// Set other fields
-					capturedBSTexture->PendingRequests.load_unchecked();
-					capturedBSTexture->uiRefCount = 1;
-					capturedBSTexture->uiCreationFrame = 0;
-					capturedBSTexture->uiMinLOD = 0;
-					capturedBSTexture->uiDegradeLevel = 0;
-					capturedBSTexture->usDesiredDegradeLevel = 0;
-					capturedBSTexture->usFlags = 0;
-
-					// Set the BSGraphics::Texture to the NiTexture
-					dynamicTexture->SetRendererTexture(capturedBSTexture);
-					effectMat->SetBaseTexture(dynamicTexture.get());
-
-					effectMat->baseColor = RE::NiColor(1, 1, 1);
-					effectMat->baseColorScale = 1.0f;
-					effectMat->falloffStartAngle = 1.0f;
-					effectMat->falloffStopAngle = 0.990600f;
-
-					//logger::info("Updated scope texture with captured screen");
-				} else {
-					// Clean up
-					capturedSRV->Release();
-
-					// Fall back to color cycling
-					static float r = 1.0f;
-					static float g = 0.0f;
-					static float b = 0.0f;
-
-					float temp = r;
-					r = g;
-					g = b;
-					b = temp;
-
-					effectMat->baseColor = RE::NiColor(r, g, b);
-					effectMat->baseColorScale = 1.5f;
-
-					logger::info("Updated scope color to [{}, {}, {}]", r, g, b);
-				}
-			} else {
-				logger::error("Failed to create shader resource view for captured texture, hr=0x{:X}", hr);
-
-				// Fall back to color cycling
-				static float r = 1.0f;
-				static float g = 0.0f;
-				static float b = 0.0f;
-
-				float temp = r;
-				r = g;
-				g = b;
-				b = temp;
-
-				effectMat->baseColor = RE::NiColor(r, g, b);
-				effectMat->baseColorScale = 1.5f;
-
-				logger::info("Updated scope color to [{}, {}, {}]", r, g, b);
-			}
-			*/
-			
 			
 			// Update the node hierarchy
 			RE::NiUpdateData updateData;

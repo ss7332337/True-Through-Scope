@@ -5,8 +5,8 @@
 #include "Constants.h"
 #include "ScopeCamera.h"
 #include "RenderUtilities.h"
-
 #include "Utilities.h"
+#include "D3DHooks.h"
 #include <detours.h>
 #include <winternl.h>
 
@@ -409,8 +409,9 @@ void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
 {
 	typedef void (*Fn)(uint64_t);
 	Fn fn = (Fn)DrawWorld_Forward_Ori.address();
-
+	D3DHooks::SetForwardStage(true);
 	D3DEventNode((*fn)(ptr_drawWorld), L"hkDrawWorld_Forward");
+	D3DHooks::SetForwardStage(false);
 }
 
 void __fastcall hkDrawWorld_Refraction(uint64_t this_ptr)
@@ -568,7 +569,7 @@ DWORD WINAPI InitThread(HMODULE hModule)
 void InitializePlugin()
 {
 	RegisterHooks();
-    
+	ThroughScope::D3DHooks::Initialize();
     // Start initialization thread for components that need the game world
     HANDLE hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)InitThread, (HMODULE)REX::W32::GetCurrentModule(), 0, NULL);
 }
