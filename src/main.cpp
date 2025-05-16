@@ -156,6 +156,10 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	typedef void (*FnRender_PreUI)(uint64_t ptr_drawWorld);
 	FnRender_PreUI fn = (FnRender_PreUI)DrawWorld_Render_PreUI_Ori.address();
 
+	if (!isSetupScope) {
+		isSetupScope = RenderUtilities::SetupWeaponScopeShape();
+	}
+
 	//先正常渲染主场景
 	D3DEventNode((*fn)(ptr_drawWorld), L"First Render_PreUI");
 	ScopeCamera::ProcessCameraAdjustment();
@@ -184,10 +188,6 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	}
 
 	ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
-
-	if (!isSetupScope) {
-		isSetupScope = RenderUtilities::SetupWeaponScopeShape();
-	}
 
 	if (isSetupScope)
 	{
@@ -520,7 +520,7 @@ void RegisterHooks()
 	DetourAttach(&(PVOID&)DrawWorld_MainRenderSetup_Ori, hkMainRenderSetup);
 	DetourAttach(&(PVOID&)DrawWorld_OpaqueWireframe_Ori, hkOpaqueWireframe);
 	DetourAttach(&(PVOID&)DrawWorld_DeferredPrePass_Ori, hkDeferredPrePass);
-	DetourAttach(&(PVOID&)DrawWorld_DeferredLightsImpl_Ori, hkDeferredLightsImpl);
+	//DetourAttach(&(PVOID&)DrawWorld_DeferredLightsImpl_Ori, hkDeferredLightsImpl);
 	DetourAttach(&(PVOID&)DrawWorld_DeferredComposite_Ori, hkDeferredComposite);
 	DetourAttach(&(PVOID&)DrawWorld_Forward_Ori, hkDrawWorld_Forward);
 	DetourAttach(&(PVOID&)DrawWorld_Refraction_Ori, hkDrawWorld_Refraction);
