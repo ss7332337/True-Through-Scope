@@ -51,7 +51,8 @@ namespace ThroughScope {
         
         // Store texture resource view for the scope
         static ID3D11ShaderResourceView* s_ScopeTextureView;
-		
+
+		static HRESULT CreateShaderFromFile(const WCHAR* csoFileNameInOut, const WCHAR* hlslFileName, LPCSTR entryPoint, LPCSTR shaderModel, ID3DBlob** ppBlobOut);
 
 	private:
 		struct BufferInfo

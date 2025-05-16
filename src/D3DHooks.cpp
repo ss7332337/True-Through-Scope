@@ -20,101 +20,6 @@ namespace ThroughScope {
 	static constexpr UINT TARGET_BUFFER_SIZE = 0x0000000008000000;
 
 
-	const char* pixelShaderCode = R"(
-            Texture2D scopeTexture : register(t0);
-            SamplerState scopeSampler : register(s0);
-            
-            // 常量缓冲区包含屏幕分辨率、摄像头位置和瞄准镜位置
-            cbuffer ScopeConstants : register(b0)
-            {
-                float screenWidth;
-				float screenHeight;
-				float2 padding1;  // 16字节对齐
-
-				float3 cameraPosition;
-				float padding2;  // 16字节对齐
-
-				float3 scopePosition;
-				float padding3;  // 16字节对齐
-
-				float3 lastCameraPosition;
-				float padding4;  // 16字节对齐
-
-				float3 lastScopePosition;
-				float padding5;  // 16字节对齐
-
-				float parallax_relativeFogRadius;
-				float parallax_scopeSwayAmount;
-				float parallax_maxTravel;
-				float parallax_Radius;
-
-				float4x4 CameraRotation; 
-            }
-            
-            struct PS_INPUT {
-				float4 position : SV_POSITION;
-				float4 texCoord : TEXCOORD;
-				float4 color0 : COLOR0;
-				float4 fogColor : COLOR1;
-            };
-
-			float2 clampMagnitude(float2 v, float l)
-			{
-				return normalize(v) * min(length(v), l);
-			}
-
-			float getparallax(float d, float2 ds, float dfov)
-			{
-				return clamp(1 - pow(abs(rcp(parallax_Radius * ds.y) * (parallax_relativeFogRadius * d * ds.y)), parallax_scopeSwayAmount), 0, parallax_maxTravel);
-			}
-            float2 aspect_ratio_correction(float2 tc)
-			{
-				tc.x -= 0.5f;
-				tc.x *= screenWidth * rcp(screenHeight);
-				tc.x += 0.5f;
-				return tc;
-			}
-
-
-            float4 main(PS_INPUT input) : SV_TARGET {
-                float2 texCoord = input.position.xy / float2(screenWidth, screenHeight);
-				float2 aspectCorrectTex = aspect_ratio_correction(texCoord);
-
-				float3 virDir = scopePosition - cameraPosition;
-				float3 lastVirDir = lastScopePosition - lastCameraPosition;
-				float3 eyeDirectionLerp = virDir - lastVirDir;
-				float4 abseyeDirectionLerp = mul(float4((eyeDirectionLerp), 1), CameraRotation);
-
-				if (abseyeDirectionLerp.y < 0 && abseyeDirectionLerp.y >= -0.001)
-					abseyeDirectionLerp.y = -0.001;
-				else if (abseyeDirectionLerp.y >= 0 && abseyeDirectionLerp.y <= 0.001)
-					abseyeDirectionLerp.y = 0.001;
-
-				// Get original texture
-				float4 color = scopeTexture.Sample(scopeSampler, texCoord);
-
-				float2 eye_velocity = clampMagnitude(abseyeDirectionLerp.xy , 1.5f);
-
-				float2 parallax_offset = float2(0.5 + eye_velocity.x  , 0.5 - eye_velocity.y);
-				float distToParallax = distance(aspectCorrectTex, parallax_offset);
-				float2 scope_center = float2(0.5,0.5);
-				float distToCenter = distance(aspectCorrectTex, scope_center);
-
-				if (distToCenter > 2) {
-					return float4(0, 1, 0, 1);  // Red indicates pixels where step() would return 0
-				}
-    
-				float parallaxValue = (step(distToCenter, 2) * getparallax(distToParallax,float2(1,1),1));
-				if (parallaxValue <= 0.01) {
-					return float4(0, 0, 1, 1);  // Green indicates pixels where getparallax() returns near 0
-				}
-    
-				// Apply final effect
-				color.rgb *= parallaxValue;
-				return color;
-            }
-        )";
-
 	struct SavedState
 	{
 		// IA Stage
@@ -153,6 +58,39 @@ namespace ThroughScope {
 		ID3D11DepthStencilState* pDepthStencilState;
 		UINT StencilRef;
 	};
+
+	HRESULT D3DHooks::CreateShaderFromFile(const WCHAR* csoFileNameInOut, const WCHAR* hlslFileName, LPCSTR entryPoint, LPCSTR shaderModel, ID3DBlob** ppBlobOut)
+	{
+		HRESULT hr = S_OK;
+
+		if (csoFileNameInOut && D3DReadFileToBlob(csoFileNameInOut, ppBlobOut) == S_OK) {
+			return hr;
+		} else {
+			DWORD dwShaderFlags = D3DCOMPILE_ENABLE_STRICTNESS;
+#ifdef _DEBUG
+
+			dwShaderFlags |= D3DCOMPILE_DEBUG;
+
+			dwShaderFlags |= D3DCOMPILE_SKIP_OPTIMIZATION;
+#endif
+			ID3DBlob* errorBlob = nullptr;
+			hr = D3DCompileFromFile(hlslFileName, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entryPoint, shaderModel,
+				dwShaderFlags, 0, ppBlobOut, &errorBlob);
+			if (FAILED(hr)) {
+				if (errorBlob != nullptr) {
+					OutputDebugStringA(reinterpret_cast<const char*>(errorBlob->GetBufferPointer()));
+				}
+				SAFE_RELEASE(errorBlob);
+				return hr;
+			}
+
+			if (csoFileNameInOut) {
+				return D3DWriteBlobToFile(*ppBlobOut, csoFileNameInOut, FALSE);
+			}
+		}
+
+		return hr;
+	}
     
     bool D3DHooks::Initialize() {
         logger::info("Initializing D3D11 hooks...");
@@ -425,22 +363,8 @@ namespace ThroughScope {
 			}
 
 			ID3DBlob* psBlob = nullptr;
-			ID3DBlob* errorBlob = nullptr;
 
-			hr = D3DCompile(
-				pixelShaderCode, strlen(pixelShaderCode),
-				"ScopePixelShader", nullptr, nullptr,
-				"main", "ps_5_0",
-				0, 0, &psBlob, &errorBlob);
-
-			if (FAILED(hr)) {
-				if (errorBlob) {
-					logger::error("Pixel shader compilation failed: {}", (char*)errorBlob->GetBufferPointer());
-					errorBlob->Release();
-				}
-				device->Release();
-				return;
-			}
+			hr = CreateShaderFromFile(L"Data\\Shaders\\XiFeiLi\\TrueScopeShader.cso", L"HLSL\\TrueScopeShader.hlsl", "main", "ps_5_0", &psBlob);
 
 			// 创建像素着色器
 			hr = device->CreatePixelShader(

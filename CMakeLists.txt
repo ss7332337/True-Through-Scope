@@ -104,8 +104,7 @@ macro(set_hlsl_properties HLSL_FILE SHADER_TYPE)
   VS_SHADER_TYPE ${SHADER_TYPE} VS_SHADER_MODEL 5.0 VS_SHADER_ENTRYPOINT main)
 endmacro()
 
-set_hlsl_properties(src/HLSL/MirrorShader_VS.hlsl Vertex)
-set_hlsl_properties(src/HLSL/MirrorShader_PS.hlsl Pixel)
+set_hlsl_properties(src/HLSL/TrueScopeShader.hlsl Pixel)
 
 target_include_directories(
 	${PROJECT_NAME}
