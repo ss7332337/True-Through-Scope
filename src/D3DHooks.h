@@ -44,7 +44,7 @@ namespace ThroughScope {
         static void WINAPI hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
         
         // Store the original DrawIndexed function
-        static LPVOID originalDrawIndexed;
+        //static LPVOID originalDrawIndexed;
 
         // Flag to identify our scope quad
         static bool IsScopeQuadBeingDrawn(ID3D11DeviceContext* pContext, UINT IndexCount);

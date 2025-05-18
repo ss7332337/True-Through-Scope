@@ -25,6 +25,8 @@ namespace ThroughScope
     bool RenderUtilities::s_FirstPassComplete = false;
     bool RenderUtilities::s_SecondPassComplete = false;
 	bool RenderUtilities::s_CreatedMaterial = false;
+	bool RenderUtilities::s_SetupScopeQuad = false;
+	bool RenderUtilities::s_TriggerScopeQuadSetup = false;
 
 	ThroughScope::RenderUtilities::SavedD3DState RenderUtilities::s_SavedState{};
 
@@ -106,6 +108,26 @@ float4 main(PS_INPUT input) : SV_TARGET {
 	//虽然不优雅，但我觉得可能还比较高效，画几个顶点就能解决的问题就不要动纹理了
 	bool RenderUtilities::SetupWeaponScopeShape()
 	{
+		if (s_SetupScopeQuad) {
+			// Check if the scope node still exists (it might have been removed by a weapon switch)
+			auto playerCharacter = RE::PlayerCharacter::GetSingleton();
+			if (playerCharacter && playerCharacter->Get3D()) {
+				auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
+				if (weaponNode && weaponNode->IsNode()) {
+					auto weaponNiNode = static_cast<RE::NiNode*>(weaponNode);
+					auto existingNode = weaponNiNode->GetObjectByName("ScopeNode");
+					if (existingNode) {
+						// ScopeNode still exists, we don't need to recreate it
+						return true;
+					} else {
+						// ScopeNode is gone, we need to recreate it
+						logger::info("ScopeNode no longer exists, will recreate");
+						s_SetupScopeQuad = false;
+					}
+				}
+			}
+		}
+
 		// 获取玩家角色
 		auto playerCharacter = RE::PlayerCharacter::GetSingleton();
 		if (!playerCharacter || !playerCharacter->Get3D()) {
@@ -130,25 +152,27 @@ float4 main(PS_INPUT input) : SV_TARGET {
 		// 检查是否存在 scope node 以避免重复
 		RE::NiAVObject* existingNode = weaponNiNode->GetObjectByName("ScopeNode");
 		if (existingNode) {
-			logger::info("ScopeNode already exists, skipping creation");
-			return true;
+			weaponNiNode->DetachChild(existingNode);
+			logger::info("Removed existing ScopeNode");
 		}
+
 
 		try {
 			// 创建 scope node
+			
 			RE::NiNode* scopeShapeNode = new RE::NiNode(0);
-			if (!scopeShapeNode) {
-				logger::error("Failed to create scope node");
-				return false;
-			}
-
 			RE::BSFixedString scopeNodeName("ScopeNode");
 			scopeShapeNode->name = scopeNodeName;
 			scopeShapeNode->local.translate = RE::NiPoint3(0, 0, 0);
 			scopeShapeNode->local.rotate.MakeIdentity();
-
 			// 附加到武器节点
 			weaponNiNode->AttachChild(scopeShapeNode, false);
+			
+			
+			if (!scopeShapeNode) {
+				logger::error("Failed to create scope node");
+				return false;
+			}
 
 			auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 			auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
@@ -258,10 +282,54 @@ float4 main(PS_INPUT input) : SV_TARGET {
 			logger::info("Created scope quad with texture");
 			s_CreatedMaterial = true;
 
+			s_SetupScopeQuad = true;
 			return true;
 
 		} catch (const std::exception& e) {
 			logger::error("Exception in SetupWeaponScopeShape: {}", e.what());
+			return false;
+		}
+	}
+
+	bool RenderUtilities::RemoveWeaponScopeShape()
+	{
+		// Get player character
+		auto playerCharacter = RE::PlayerCharacter::GetSingleton();
+		if (!playerCharacter || !playerCharacter->Get3D()) {
+			logger::error("Player character or 3D model not available");
+			return false;
+		}
+
+		// Find weapon node
+		auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
+		if (!weaponNode) {
+			logger::error("Weapon node not found");
+			return false;
+		}
+
+		// Convert to NiNode
+		auto weaponNiNode = weaponNode->IsNode() ? static_cast<RE::NiNode*>(weaponNode) : nullptr;
+		if (!weaponNiNode) {
+			logger::error("Weapon node is not a NiNode");
+			return false;
+		}
+
+		// Check if the ScopeNode exists
+		auto scopeShapeNode = weaponNiNode->GetObjectByName("ScopeNode");
+		if (!scopeShapeNode) {
+			logger::info("ScopeNode not found, nothing to remove");
+			s_SetupScopeQuad = false;
+			return true;  // Not an error, just nothing to do
+		}
+
+		try {
+			// Detach the node from the parent
+			weaponNiNode->DetachChild(scopeShapeNode);
+			logger::info("Successfully removed ScopeNode from weapon");
+			s_SetupScopeQuad = false;
+			return true;
+		} catch (const std::exception& e) {
+			logger::error("Exception in RemoveWeaponScopeShape: {}", e.what());
 			return false;
 		}
 	}

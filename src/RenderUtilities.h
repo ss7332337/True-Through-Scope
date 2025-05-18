@@ -31,6 +31,7 @@ namespace ThroughScope
         static bool InitializeScreenQuad();
         static void RenderScreenQuad(ID3D11ShaderResourceView* textureView, float x, float y, float width, float height);
 		static bool SetupWeaponScopeShape();
+		static bool RemoveWeaponScopeShape();
 
         // Texture getters
         static ID3D11Texture2D* GetFirstPassColorTexture() { return s_FirstPassColorTexture; }
@@ -50,6 +51,8 @@ namespace ThroughScope
         static void SetScopeBSTexture(RE::BSGraphics::Texture* texture) { s_ScopeBSTexture = texture; }
         static RE::NiTexture* GetScopeNiTexture() { return s_ScopeNiTexture; }
         static void SetScopeNiTexture(RE::NiTexture* texture) { s_ScopeNiTexture = texture; }
+		static bool s_TriggerScopeQuadSetup;
+		static bool s_SetupScopeQuad;
 
     private:
         // Temporary textures for multi-pass rendering
@@ -77,6 +80,8 @@ namespace ThroughScope
         static bool s_FirstPassComplete;
         static bool s_SecondPassComplete;
 		static bool s_CreatedMaterial;
+		
+		
     
 	public:
 		struct SavedD3DState

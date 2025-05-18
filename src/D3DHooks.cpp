@@ -6,10 +6,18 @@
 
 namespace ThroughScope {
     
-    LPVOID D3DHooks::originalDrawIndexed = nullptr;
+    //LPVOID D3DHooks::originalDrawIndexed = nullptr;
     ID3D11ShaderResourceView* D3DHooks::s_ScopeTextureView = nullptr;
 
 	bool D3DHooks::s_isForwardStage = false;
+
+	// 为瞄准镜创建和管理资源的静态变量
+	static ID3D11Texture2D* stagingTexture = nullptr;
+	static ID3D11ShaderResourceView* stagingSRV = nullptr;
+	static ID3D11PixelShader* scopePixelShader = nullptr;
+	static ID3D11SamplerState* samplerState = nullptr;
+	static ID3D11BlendState* blendState = nullptr;
+	static ID3D11Buffer* constantBuffer = nullptr;
 
 	constexpr UINT MAX_SRV_SLOTS = 128;     // D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT
 	constexpr UINT MAX_SAMPLER_SLOTS = 16;  // D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT
@@ -18,7 +26,8 @@ namespace ThroughScope {
 	static constexpr UINT TARGET_STRIDE = 12;
 	static constexpr UINT TARGET_INDEX_COUNT = 6;
 	static constexpr UINT TARGET_BUFFER_SIZE = 0x0000000008000000;
-
+	typedef void(__stdcall* D3D11DrawIndexedHook)(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
+	D3D11DrawIndexedHook phookD3D11DrawIndexed = nullptr;
 
 	struct SavedState
 	{
@@ -107,17 +116,9 @@ namespace ThroughScope {
         
         // Hook the DrawIndexed function (index 12 in the virtual table)
         void* drawIndexedFunc = vTable[12];
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        DetourAttach(&drawIndexedFunc, hkDrawIndexed);
-        HRESULT result = DetourTransactionCommit();
-        
-        if (result != NO_ERROR) {
-            logger::error("Failed to hook DrawIndexed. Error: {}", result);
-            return false;
-        }
-        
-        originalDrawIndexed = drawIndexedFunc;
+
+		Utilities::CreateAndEnableHook(drawIndexedFunc, reinterpret_cast<void*>(hkDrawIndexed), reinterpret_cast<void**>(&phookD3D11DrawIndexed), "DrawIndexedHook");
+
         logger::info("D3D11 hooks initialized successfully");
         return true;
     }
@@ -139,13 +140,10 @@ namespace ThroughScope {
             SetScopeTexture(pContext);
             
             // Call the original DrawIndexed
-            typedef void (WINAPI* DrawIndexedFunc)(ID3D11DeviceContext*, UINT, UINT, INT);
-            ((DrawIndexedFunc)originalDrawIndexed)(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
+			phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
             
         } else {
-            // Not our scope quad or no texture ready, just pass through
-            typedef void (WINAPI* DrawIndexedFunc)(ID3D11DeviceContext*, UINT, UINT, INT);
-            ((DrawIndexedFunc)originalDrawIndexed)(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
+			phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
         }
     }
 
@@ -241,7 +239,7 @@ namespace ThroughScope {
 			Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> DrawIndexedSRV;
 			pContext->PSGetShaderResources(0, 1, DrawIndexedSRV.GetAddressOf());
 
-			if (!DrawIndexedSRV.Get())
+			if (!DrawIndexedSRV.Get() || DrawIndexedSRV.Get() == stagingSRV)
 				return true;
 		}
 
@@ -295,13 +293,7 @@ namespace ThroughScope {
 			}
 		}
 
-		// 为瞄准镜创建和管理资源的静态变量
-		static ID3D11Texture2D* stagingTexture = nullptr;
-		static ID3D11ShaderResourceView* stagingSRV = nullptr;
-		static ID3D11PixelShader* scopePixelShader = nullptr;
-		static ID3D11SamplerState* samplerState = nullptr;
-		static ID3D11BlendState* blendState = nullptr;
-		static ID3D11Buffer* constantBuffer = nullptr;
+		
 
 		// 获取纹理描述
 		D3D11_TEXTURE2D_DESC srcTexDesc;

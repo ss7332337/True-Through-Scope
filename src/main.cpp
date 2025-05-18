@@ -7,8 +7,8 @@
 #include "RenderUtilities.h"
 #include "Utilities.h"
 #include "D3DHooks.h"
-#include <detours.h>
 #include <winternl.h>
+#include <EventHandler.h>
 
 using namespace RE;
 using namespace RE::BSGraphics;
@@ -107,8 +107,15 @@ typedef void (*FnSetCurrentCubeMapRenderTarget)(RenderTargetManager*, int, SetRe
 typedef void (*FnSetDirtyRenderTargets)(void*);
 typedef void (*FnBSShaderRenderTargetsCreate)(void*);
 typedef void (*FnBGSetRenderTarget)(RendererShadowState* arShadowState, unsigned int auiIndex, int aiTarget, SetRenderTargetMode aeMode);
-typedef void (*BSEffectShaderProperty_GetRenderPasses_Original)(BSEffectShaderProperty* thisPtr,BSGeometry* geom,uint32_t renderMode,BSShaderAccumulator* accumulator);
-
+typedef void (*BSEffectShaderProperty_GetRenderPasses_Original)(BSEffectShaderProperty* thisPtr, BSGeometry* geom, uint32_t renderMode, BSShaderAccumulator* accumulator);
+typedef void (*FnRender_PreUI)(uint64_t ptr_drawWorld);
+typedef void (*FnBegin)(uint64_t ptr_drawWorld);
+typedef void (*FnMain_DrawWorldAndUI)(uint64_t, bool);
+typedef void (*FnMain_Swap)();
+typedef void (*FnBSCullingGroup_Process)(BSCullingGroup*, bool);
+typedef void (*Fn)(uint64_t);
+typedef void (*FnhkAdd1stPersonGeomToCuller)(uint64_t);
+typedef void (*hkRTManager_CreateaRenderTarget)(RenderTargetManager rtm, int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
 
 // 存储原始函数的指针
 DoZPrePassOriginalFuncType g_pDoZPrePassOriginal = nullptr;
@@ -125,8 +132,25 @@ FnSetDirtyRenderTargets g_SetDirtyRenderTargetsOriginal = nullptr;
 FnBSShaderRenderTargetsCreate g_BSShaderRenderTargetsCreateOriginal = nullptr;
 FnBGSetRenderTarget g_BGSetRenderTargetOriginal = nullptr;
 BSEffectShaderProperty_GetRenderPasses_Original g_BSEffectShaderGetRenderPassesOriginal = nullptr;
+FnRender_PreUI g_RenderPreUIOriginal = nullptr;
+FnBegin g_BeginOriginal = nullptr;
+FnMain_DrawWorldAndUI g_DrawWorldAndUIOriginal = nullptr;
+FnMain_Swap g_SwapOriginal = nullptr;
+FnBSCullingGroup_Process g_BSCullingGroupProcessOriginal = nullptr;
+Fn g_MainAccumOriginal = nullptr;
+Fn g_OcclusionMapRenderOriginal = nullptr;
+Fn g_MainRenderSetupOriginal = nullptr;
+Fn g_OpaqueWireframeOriginal = nullptr;
+Fn g_DeferredPrePassOriginal = nullptr;
+Fn g_DeferredLightsImplOriginal = nullptr;
+Fn g_DeferredCompositeOriginal = nullptr;
+Fn g_ForwardOriginal = nullptr;
+Fn g_RefractionOriginal = nullptr;
+FnhkAdd1stPersonGeomToCuller g_Add1stPersonGeomToCullerOriginal = nullptr;
+hkRTManager_CreateaRenderTarget g_RTManagerCreateRenderTargetOriginal = nullptr;
 
-bool isSetupScope = false;
+
+
 bool isFirstCopy = false;
 bool isRenderReady = false;
 bool isScopCamReady = false;
@@ -153,15 +177,31 @@ using namespace ThroughScope::Utilities;
 // ------ Main Render Hooks ------
 void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 {
-	typedef void (*FnRender_PreUI)(uint64_t ptr_drawWorld);
-	FnRender_PreUI fn = (FnRender_PreUI)DrawWorld_Render_PreUI_Ori.address();
+	// Check if we need to setup the scope quad (triggered by weapon switch)
+	if (RenderUtilities::s_TriggerScopeQuadSetup) {
+		static int setupDelay = 0;
+		setupDelay++;
 
-	if (!isSetupScope) {
-		isSetupScope = RenderUtilities::SetupWeaponScopeShape();
+		// Wait a few frames before creating the scope quad to ensure weapon model is fully loaded
+		if (setupDelay >= 5) {
+			logger::info("Creating scope quad after weapon switch");
+			RenderUtilities::SetupWeaponScopeShape();
+			RenderUtilities::s_TriggerScopeQuadSetup = false;
+			setupDelay = 0;
+		}
+	}
+
+	if (!RenderUtilities::s_SetupScopeQuad) {
+		RenderUtilities::SetupWeaponScopeShape();
+	}
+
+	if (GetAsyncKeyState(VK_END) & 0x1)
+	{
+		ThroughScope::Utilities::LogPlayerWeaponNodes();
 	}
 
 	//先正常渲染主场景
-	D3DEventNode((*fn)(ptr_drawWorld), L"First Render_PreUI");
+	D3DEventNode(g_RenderPreUIOriginal(ptr_drawWorld), L"First Render_PreUI");
 	ScopeCamera::ProcessCameraAdjustment();
 
 	if (!isScopCamReady || !isRenderReady)
@@ -189,7 +229,7 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 
 	ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
 
-	if (isSetupScope)
+	if (RenderUtilities::s_SetupScopeQuad)
 	{
 		ID3D11RenderTargetView* mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
 		ID3D11DepthStencilView* mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
@@ -227,7 +267,7 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 		DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
 
 		ScopeCamera::SetRenderingForScope(true);
-		(*fn)(ptr_drawWorld);  //第二次渲染
+		g_RenderPreUIOriginal(ptr_drawWorld);  //第二次渲染
 		ScopeCamera::SetRenderingForScope(false);
 		D3DPERF_EndEvent();
 
@@ -280,27 +320,25 @@ void __fastcall hkRenderer_DoZPrePass(uint64_t thisPtr, NiCamera* apFirstPersonC
 }
 void __fastcall hkBSDistantObjectInstanceRenderer_Render(uint64_t thisPtr)
 {
-	D3DEventNode((*g_BSDistantObjectInstanceRenderer_RenderOriginal)(thisPtr), L"hkBSDistantObjectInstanceRenderer_Render");
+	D3DEventNode(g_BSDistantObjectInstanceRenderer_RenderOriginal(thisPtr), L"hkBSDistantObjectInstanceRenderer_Render");
 }
 void __fastcall hkRenderTargetManager_ResummarizeHTileDepthStencilTarget(RenderTargetManager* thisPtr, int index)
 {
-	D3DEventNode((*g_ResummarizeHTileDepthStencilTarget_RenderOriginal)(thisPtr, index), L"hkRenderTargetManager_ResummarizeHTileDepthStencilTarget");
+	D3DEventNode(g_ResummarizeHTileDepthStencilTarget_RenderOriginal(thisPtr, index), L"hkRenderTargetManager_ResummarizeHTileDepthStencilTarget");
 }
 void __fastcall hkBSShaderAccumulator_ResetSunOcclusion(BSShaderAccumulator* thisPtr)
 {
-	D3DEventNode((*g_ResetSunOcclusionOriginal)(thisPtr), L"hkBSShaderAccumulator_ResetSunOcclusion");
+	D3DEventNode(g_ResetSunOcclusionOriginal(thisPtr), L"hkBSShaderAccumulator_ResetSunOcclusion");
 }
 void __fastcall hkDecompressDepthStencilTarget(RenderTargetManager* thisPtr, int index)
 {
-	D3DEventNode((*g_DecompressDepthStencilTargetOriginal)(thisPtr, index), L"hkBSShaderAccumulator_ResetSunOcclusion");
+	D3DEventNode(g_DecompressDepthStencilTargetOriginal(thisPtr, index), L"hkBSShaderAccumulator_ResetSunOcclusion");
 }
 void __fastcall hkAdd1stPersonGeomToCuller(uint64_t thisPtr)
 {
-	typedef void (*FnhkAdd1stPersonGeomToCuller)(uint64_t);
-	FnhkAdd1stPersonGeomToCuller fn = (FnhkAdd1stPersonGeomToCuller)DrawWorld_Add1stPersonGeomToCuller_Ori.address();
 	if (ScopeCamera::IsRenderingForScope())
 		return;
-	(*fn)(thisPtr);
+	g_Add1stPersonGeomToCullerOriginal(thisPtr);
 }
 void __fastcall hkBSShaderAccumulator_RenderBatches(
 	BSShaderAccumulator* thisPtr, int aiShader, bool abAlphaPass, int aeGroup)
@@ -323,9 +361,7 @@ void __fastcall hkBSShaderAccumulator_RenderOpaqueDecals(BSShaderAccumulator* th
 }
 void __fastcall hkBSCullingGroup_Process(BSCullingGroup* thisPtr, bool someFlag)
 {
-	typedef void (*FnBSCullingGroup_Process)(BSCullingGroup*, bool);
-	FnBSCullingGroup_Process fn = (FnBSCullingGroup_Process)BSCullingGroup_Process_Ori.address();
-	(*fn)(thisPtr, someFlag);
+	g_BSCullingGroupProcessOriginal(thisPtr, someFlag);
 }
 RenderTarget* __fastcall hkRenderer_CreateRenderTarget(Renderer* renderer, int aId, const wchar_t* apName, const RenderTargetProperties* aProperties)
 {
@@ -335,16 +371,12 @@ RenderTarget* __fastcall hkRenderer_CreateRenderTarget(Renderer* renderer, int a
 }
 void __fastcall hkRTManager_CreateRenderTarget(RenderTargetManager rtm, int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent)
 {
-	typedef void (*hkRTManager_CreateaRenderTarget)(RenderTargetManager rtm, int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
-	hkRTManager_CreateaRenderTarget fn = (hkRTManager_CreateaRenderTarget)RTM_CreateRenderTarget_Ori.address();
-	(*fn)(rtm, aIndex, arProperties, aPersistent);
+	g_RTManagerCreateRenderTargetOriginal(rtm, aIndex, arProperties, aPersistent);
 }
 
 void __fastcall hkMainAccum(uint64_t ptr_drawWorld)
 {
-	typedef void (*Fn)(uint64_t);
-	Fn fn = (Fn)DrawWorld_MainAccum_Ori.address();
-	D3DEventNode((*fn)(ptr_drawWorld), L"hkMainAccum");
+	D3DEventNode(g_MainAccumOriginal(ptr_drawWorld), L"hkMainAccum");
 }
 
 void __fastcall hkOcclusionMapRender()
@@ -356,78 +388,54 @@ void __fastcall hkOcclusionMapRender()
 
 void __fastcall hkMainRenderSetup(uint64_t ptr_drawWorld)
 {
-	typedef void (*Fn)(uint64_t);
-	Fn fn = (Fn)DrawWorld_MainRenderSetup_Ori.address();
-	D3DEventNode((*fn)(ptr_drawWorld), L"hkMainRenderSetup");
+	D3DEventNode(g_MainRenderSetupOriginal(ptr_drawWorld), L"hkMainRenderSetup");
 }
 
 void __fastcall hkOpaqueWireframe(uint64_t ptr_drawWorld)
 {
-	typedef void (*Fn)(uint64_t);
-	Fn fn = (Fn)DrawWorld_OpaqueWireframe_Ori.address();
-	D3DEventNode((*fn)(ptr_drawWorld), L"hkOpaqueWireframe");
+	D3DEventNode(g_OpaqueWireframeOriginal(ptr_drawWorld), L"hkOpaqueWireframe");
 }
 
 void __fastcall hkDeferredPrePass(uint64_t ptr_drawWorld)
 {
-	typedef void (*Fn)(uint64_t);
-	Fn fn = (Fn)DrawWorld_DeferredPrePass_Ori.address();
-	D3DEventNode((*fn)(ptr_drawWorld), L"hkDeferredPrePass");
+	D3DEventNode(g_DeferredPrePassOriginal(ptr_drawWorld), L"hkDeferredPrePass");
 }
 
 void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
 {
-	typedef void (*Fn)(uint64_t);
-	Fn fn = (Fn)DrawWorld_DeferredLightsImpl_Ori.address();
-	D3DEventNode((*fn)(ptr_drawWorld), L"hkDeferredLightsImpl");
+	D3DEventNode(g_DeferredLightsImplOriginal(ptr_drawWorld), L"hkDeferredLightsImpl");
 }
 
 void __fastcall hkDeferredComposite(uint64_t ptr_drawWorld)
 {
-	typedef void (*Fn)(uint64_t);
-	Fn fn = (Fn)DrawWorld_DeferredComposite_Ori.address();
-	D3DEventNode(fn(ptr_drawWorld), L"hkDeferredComposite");
+	D3DEventNode(g_DeferredCompositeOriginal(ptr_drawWorld), L"hkDeferredComposite");
 }
 
 void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
 {
-	typedef void (*Fn)(uint64_t);
-	Fn fn = (Fn)DrawWorld_Forward_Ori.address();
 	D3DHooks::SetForwardStage(true);
-	D3DEventNode((*fn)(ptr_drawWorld), L"hkDrawWorld_Forward");
+	D3DEventNode(g_ForwardOriginal(ptr_drawWorld), L"hkDrawWorld_Forward");
 	D3DHooks::SetForwardStage(false);
 }
 
 void __fastcall hkDrawWorld_Refraction(uint64_t this_ptr)
 {
-	typedef void (*Fn)(uint64_t);
-	Fn fn = (Fn)DrawWorld_Refraction_Ori.address();
-	D3DEventNode((*fn)(this_ptr), L"hkDrawWorld_Refraction");
+	D3DEventNode(g_RefractionOriginal(this_ptr), L"hkDrawWorld_Refraction");
 }
 
 void __fastcall hkBegin(uint64_t ptr_drawWorld)
 {
-	typedef void (*hkBegin)(uint64_t ptr_drawWorld);
-	hkBegin fn = (hkBegin)DrawWorld_Begin_Ori.address();
-	(*fn)(ptr_drawWorld);
+	g_BeginOriginal(ptr_drawWorld);
 }
 
 void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground)
 {
-	typedef void (*FnMain_DrawWorldAndUI)(uint64_t, bool);
-	FnMain_DrawWorldAndUI fn = (FnMain_DrawWorldAndUI)Main_DrawWorldAndUI_Ori.address();
-	//if (!isSetupScope && isFirstCopy)
-	//	isSetupScope = RenderUtilities::SetupWeaponScopeShape();
-
-	D3DEventNode((*fn)(ptr_drawWorld, abBackground), L"hkMain_DrawWorldAndUI");
+	D3DEventNode(g_DrawWorldAndUIOriginal(ptr_drawWorld, abBackground), L"hkMain_DrawWorldAndUI");
 }
 
 void hkMain_Swap()
 {
-	typedef void (*hkMain_Swap)();
-	hkMain_Swap fn = (hkMain_Swap)Main_Swap_Ori.address();
-
-	(*fn)();
+	g_SwapOriginal();
 }
 
 void __fastcall hkBGSetRenderTarget(RendererShadowState* arShadowState, unsigned int auiIndex, int aiTarget, SetRenderTargetMode aeMode)
@@ -456,8 +464,9 @@ void __fastcall hkSetCurrentRenderTarget(RenderTargetManager* manager, int aInde
 }
 void __fastcall hkSetCurrentCubeMapRenderTarget(RenderTargetManager* manager, int aCubeMapRenderTarget, SetRenderTargetMode aMode, int aView)
 {
-	return g_SetCurrentCubeMapRenderTargetOriginal(manager, aCubeMapRenderTarget, aMode, aView);
+	g_SetCurrentCubeMapRenderTargetOriginal(manager, aCubeMapRenderTarget, aMode, aView);
 }
+
 
 void RegisterHooks()
 {
@@ -505,29 +514,51 @@ void RegisterHooks()
 	CreateAndEnableHook((LPVOID)BG_SetRenderTarget_Ori.address(), &hkBGSetRenderTarget,
 		reinterpret_cast<LPVOID*>(&g_BGSetRenderTargetOriginal), "BGSetRenderTarget");
 
-	std::cout << "MinHook success" << std::endl;
+	// Now convert the remaining Detour hooks to MinHook
+	CreateAndEnableHook((LPVOID)DrawWorld_Render_PreUI_Ori.address(), &hkRender_PreUI,
+		reinterpret_cast<LPVOID*>(&g_RenderPreUIOriginal), "Render_PreUI");
 
-	DetourTransactionBegin();
-	DetourUpdateThread(GetCurrentThread());
-	DetourAttach(&(PVOID&)DrawWorld_Render_PreUI_Ori, hkRender_PreUI);
-	DetourAttach(&(PVOID&)DrawWorld_Begin_Ori, hkBegin);
-	DetourAttach(&(PVOID&)Main_DrawWorldAndUI_Ori, hkMain_DrawWorldAndUI);
-	DetourAttach(&(PVOID&)Main_Swap_Ori, hkMain_Swap);
-	DetourAttach(&(PVOID&)BSCullingGroup_Process_Ori, hkBSCullingGroup_Process);
+	CreateAndEnableHook((LPVOID)DrawWorld_Begin_Ori.address(), &hkBegin,
+		reinterpret_cast<LPVOID*>(&g_BeginOriginal), "Begin");
 
-	DetourAttach(&(PVOID&)DrawWorld_MainAccum_Ori, hkMainAccum);
-	DetourAttach(&(PVOID&)DrawWorld_OcclusionMapRender_Ori, hkOcclusionMapRender);
-	DetourAttach(&(PVOID&)DrawWorld_MainRenderSetup_Ori, hkMainRenderSetup);
-	DetourAttach(&(PVOID&)DrawWorld_OpaqueWireframe_Ori, hkOpaqueWireframe);
-	DetourAttach(&(PVOID&)DrawWorld_DeferredPrePass_Ori, hkDeferredPrePass);
-	//DetourAttach(&(PVOID&)DrawWorld_DeferredLightsImpl_Ori, hkDeferredLightsImpl);
-	DetourAttach(&(PVOID&)DrawWorld_DeferredComposite_Ori, hkDeferredComposite);
-	DetourAttach(&(PVOID&)DrawWorld_Forward_Ori, hkDrawWorld_Forward);
-	DetourAttach(&(PVOID&)DrawWorld_Refraction_Ori, hkDrawWorld_Refraction);
+	CreateAndEnableHook((LPVOID)Main_DrawWorldAndUI_Ori.address(), &hkMain_DrawWorldAndUI,
+		reinterpret_cast<LPVOID*>(&g_DrawWorldAndUIOriginal), "Main_DrawWorldAndUI");
 
-	DetourAttach(&(PVOID&)DrawWorld_Add1stPersonGeomToCuller_Ori, hkAdd1stPersonGeomToCuller);
-	DetourAttach(&(PVOID&)RTM_CreateRenderTarget_Ori, hkRTManager_CreateRenderTarget);
-	DetourTransactionCommit();
+	CreateAndEnableHook((LPVOID)Main_Swap_Ori.address(), &hkMain_Swap,
+		reinterpret_cast<LPVOID*>(&g_SwapOriginal), "Main_Swap");
+
+	CreateAndEnableHook((LPVOID)BSCullingGroup_Process_Ori.address(), &hkBSCullingGroup_Process,
+		reinterpret_cast<LPVOID*>(&g_BSCullingGroupProcessOriginal), "BSCullingGroup_Process");
+
+	CreateAndEnableHook((LPVOID)DrawWorld_MainAccum_Ori.address(), &hkMainAccum,
+		reinterpret_cast<LPVOID*>(&g_MainAccumOriginal), "MainAccum");
+
+	CreateAndEnableHook((LPVOID)DrawWorld_MainRenderSetup_Ori.address(), &hkMainRenderSetup,
+		reinterpret_cast<LPVOID*>(&g_MainRenderSetupOriginal), "MainRenderSetup");
+
+	CreateAndEnableHook((LPVOID)DrawWorld_OpaqueWireframe_Ori.address(), &hkOpaqueWireframe,
+		reinterpret_cast<LPVOID*>(&g_OpaqueWireframeOriginal), "OpaqueWireframe");
+
+	CreateAndEnableHook((LPVOID)DrawWorld_DeferredPrePass_Ori.address(), &hkDeferredPrePass,
+		reinterpret_cast<LPVOID*>(&g_DeferredPrePassOriginal), "DeferredPrePass");
+
+	CreateAndEnableHook((LPVOID)DrawWorld_DeferredLightsImpl_Ori.address(), &hkDeferredLightsImpl,
+		reinterpret_cast<LPVOID*>(&g_DeferredLightsImplOriginal), "DeferredLightsImpl");
+
+	CreateAndEnableHook((LPVOID)DrawWorld_DeferredComposite_Ori.address(), &hkDeferredComposite,
+		reinterpret_cast<LPVOID*>(&g_DeferredCompositeOriginal), "DeferredComposite");
+
+	CreateAndEnableHook((LPVOID)DrawWorld_Forward_Ori.address(), &hkDrawWorld_Forward,
+		reinterpret_cast<LPVOID*>(&g_ForwardOriginal), "DrawWorld_Forward");
+
+	CreateAndEnableHook((LPVOID)DrawWorld_Refraction_Ori.address(), &hkDrawWorld_Refraction,
+		reinterpret_cast<LPVOID*>(&g_RefractionOriginal), "DrawWorld_Refraction");
+
+	CreateAndEnableHook((LPVOID)DrawWorld_Add1stPersonGeomToCuller_Ori.address(), &hkAdd1stPersonGeomToCuller,
+		reinterpret_cast<LPVOID*>(&g_Add1stPersonGeomToCullerOriginal), "Add1stPersonGeomToCuller");
+
+	CreateAndEnableHook((LPVOID)RTM_CreateRenderTarget_Ori.address(), &hkRTManager_CreateRenderTarget,
+		reinterpret_cast<LPVOID*>(&g_RTManagerCreateRenderTargetOriginal), "RTManager_CreateRenderTarget");
 	logger::info("Hooks registered successfully");
 }
 
@@ -554,6 +585,7 @@ void InitializePlugin()
 {
 	RegisterHooks();
 	ThroughScope::D3DHooks::Initialize();
+	ThroughScope::EquipWatcher::GetSingleton()->Initialize();
     // Start initialization thread for components that need the game world
     HANDLE hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)InitThread, (HMODULE)REX::W32::GetCurrentModule(), 0, NULL);
 }
