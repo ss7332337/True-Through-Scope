@@ -19,54 +19,15 @@ namespace ThroughScope {
 	static ID3D11BlendState* blendState = nullptr;
 	static ID3D11Buffer* constantBuffer = nullptr;
 
-	constexpr UINT MAX_SRV_SLOTS = 128;     // D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT
-	constexpr UINT MAX_SAMPLER_SLOTS = 16;  // D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT
-	constexpr UINT MAX_CB_SLOTS = 14;       // D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT
+	constexpr UINT MAX_SRV_SLOTS = 128;
+	constexpr UINT MAX_SAMPLER_SLOTS = 16;
+	constexpr UINT MAX_CB_SLOTS = 14; 
 
 	static constexpr UINT TARGET_STRIDE = 12;
 	static constexpr UINT TARGET_INDEX_COUNT = 6;
 	static constexpr UINT TARGET_BUFFER_SIZE = 0x0000000008000000;
 	typedef void(__stdcall* D3D11DrawIndexedHook)(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
 	D3D11DrawIndexedHook phookD3D11DrawIndexed = nullptr;
-
-	struct SavedState
-	{
-		// IA Stage
-		ID3D11InputLayout* pInputLayout;
-		ID3D11Buffer* pVertexBuffers[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
-		UINT VertexStrides[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
-		UINT VertexOffsets[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
-		ID3D11Buffer* pIndexBuffer;
-		DXGI_FORMAT IndexBufferFormat;
-		UINT IndexBufferOffset;
-		D3D11_PRIMITIVE_TOPOLOGY PrimitiveTopology;
-
-		// VS Stage
-		ID3D11VertexShader* pVS;
-		ID3D11Buffer* pVSCBuffers[MAX_CB_SLOTS];
-		ID3D11ShaderResourceView* pVSSRVs[MAX_SRV_SLOTS];
-		ID3D11SamplerState* pVSSamplers[MAX_SAMPLER_SLOTS];
-
-		// PS Stage
-		ID3D11PixelShader* pPS;
-		ID3D11Buffer* pPSCBuffers[MAX_CB_SLOTS];
-		ID3D11ShaderResourceView* pPSSRVs[MAX_SRV_SLOTS];
-		ID3D11SamplerState* pPSSamplers[MAX_SAMPLER_SLOTS];
-
-		// RS Stage
-		D3D11_VIEWPORT Viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
-		UINT NumViewports;
-		ID3D11RasterizerState* pRasterizerState;
-
-		// OM Stage
-		ID3D11RenderTargetView* pRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT];
-		ID3D11DepthStencilView* pDSV;
-		ID3D11BlendState* pBlendState;
-		FLOAT BlendFactor[4];
-		UINT SampleMask;
-		ID3D11DepthStencilState* pDepthStencilState;
-		UINT StencilRef;
-	};
 
 	HRESULT D3DHooks::CreateShaderFromFile(const WCHAR* csoFileNameInOut, const WCHAR* hlslFileName, LPCSTR entryPoint, LPCSTR shaderModel, ID3DBlob** ppBlobOut)
 	{
