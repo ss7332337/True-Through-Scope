@@ -63,6 +63,30 @@ namespace ThroughScope
         }
     }
 
+	void ScopeCamera::AdjustPositionFTSNode(float x, float y, float z)
+	{
+		auto weaponnode = RE::PlayerCharacter::GetSingleton()->Get3D()->GetObjectByName("Weapon")->IsNode();
+		auto ftsNode = weaponnode->GetObjectByName("FTSNode");
+		if (!ftsNode)
+			return;
+
+		ftsNode->local.translate.x += x;
+		ftsNode->local.translate.y += y;
+		ftsNode->local.translate.z += z;
+
+		if (s_CachedDeltaPos.x != x || s_CachedDeltaPos.y != y || s_CachedDeltaPos.z != z) {
+			logger::info("Camera position: [{:.3f}, {:.3f}, {:.3f}]",
+				ftsNode->local.translate.x,
+				ftsNode->local.translate.y,
+				ftsNode->local.translate.z);
+			s_CachedDeltaPos = { x, y, z };
+		}
+
+		RE::NiUpdateData tempData{};
+		tempData.camera = s_ScopeCamera;
+		ftsNode->Update(tempData);
+	}
+
     void ScopeCamera::ProcessCameraAdjustment()
     {
         // Handle adjustment mode toggle
@@ -144,7 +168,7 @@ namespace ThroughScope
 
             // Apply position changes if any
             if (s_DeltaPos.x != 0.0f || s_DeltaPos.y != 0.0f || s_DeltaPos.z != 0.0f) {
-                AdjustPosition(s_DeltaPos.x, s_DeltaPos.y, s_DeltaPos.z);
+				AdjustPositionFTSNode(s_DeltaPos.x, s_DeltaPos.y, s_DeltaPos.z);
             }
         } else {
             // Adjust rotation on all axes simultaneously
@@ -171,7 +195,7 @@ namespace ThroughScope
                 zAngle -= s_AdjustmentSpeed * 0.01f;
 
             if (xAngle != 0.0f || yAngle != 0.0f || zAngle != 0.0f) {
-                AdjustRotation(xAngle, yAngle, zAngle);
+				AdjustRotationFTSNode(xAngle, yAngle, zAngle);
             }
         }
 
@@ -258,6 +282,58 @@ namespace ThroughScope
         }
     }
 
+
+	void ScopeCamera::AdjustRotationFTSNode(float x, float y, float z)
+	{
+		auto weaponnode = RE::PlayerCharacter::GetSingleton()->Get3D()->GetObjectByName("Weapon")->IsNode();
+		auto ftsNode = weaponnode->GetObjectByName("FTSNode");
+		if (!ftsNode)
+			return;
+
+		RE::NiMatrix3 rotMat = ftsNode->local.rotate;
+
+		// Create rotation matrices for each axis
+		RE::NiMatrix3 xRotMat, yRotMat, zRotMat;
+		xRotMat.MakeIdentity();
+		yRotMat.MakeIdentity();
+		zRotMat.MakeIdentity();
+
+		bool hasRotation = false;
+
+		// Apply X rotation if needed
+		if (x != 0.0f) {
+			xRotMat.FromEulerAnglesXYZ(x, 0.0f, 0.0f);
+			hasRotation = true;
+		}
+
+		// Apply Y rotation if needed
+		if (y != 0.0f) {
+			yRotMat.FromEulerAnglesXYZ(0.0f, y, 0.0f);
+			hasRotation = true;
+		}
+
+		// Apply Z rotation if needed
+		if (z != 0.0f) {
+			zRotMat.FromEulerAnglesXYZ(0.0f, 0.0f, z);
+			hasRotation = true;
+		}
+
+		// Apply all rotations in sequence if any changes
+		if (hasRotation) {
+			// Order matters for rotations, applying X, then Y, then Z
+			s_DeltaRot = zRotMat * yRotMat * xRotMat;
+			ftsNode->local.rotate = s_DeltaRot * rotMat;
+
+			// Get Euler angles for display
+			float pitch, yaw, roll;
+			ftsNode->local.rotate.ToEulerAnglesXYZ(pitch, yaw, roll);
+			logger::info("Camera rotation: [{:.3f}, {:.3f}, {:.3f}]", pitch, yaw, roll);
+
+			RE::NiUpdateData tempData{};
+			tempData.camera = s_ScopeCamera;
+			ftsNode->Update(tempData);
+		}
+	}
     void ScopeCamera::PrintCurrentValues()
     {
         if (!s_ScopeCamera)

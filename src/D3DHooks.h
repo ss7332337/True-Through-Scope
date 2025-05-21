@@ -38,7 +38,8 @@ namespace ThroughScope {
 		};
 
     public:
-        static bool Initialize();
+		static D3DHooks* GetSington();
+        bool Initialize();
 
         // D3D11 function hooks
         static void WINAPI hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
@@ -53,6 +54,8 @@ namespace ThroughScope {
         static ID3D11ShaderResourceView* s_ScopeTextureView;
 
 		static HRESULT CreateShaderFromFile(const WCHAR* csoFileNameInOut, const WCHAR* hlslFileName, LPCSTR entryPoint, LPCSTR shaderModel, ID3DBlob** ppBlobOut);
+		static bool IsEnableRender() { return s_EnableRender; }
+		static void SetEnableRender(bool value) { s_EnableRender = value; }
 
 	private:
 		struct BufferInfo
@@ -61,12 +64,18 @@ namespace ThroughScope {
 			UINT offset;
 			D3D11_BUFFER_DESC desc;
 		};
-
+		static bool s_EnableRender;
 		static bool s_isForwardStage;
-        
+		static bool s_isDoZPrePassStage;
+		static bool s_isDeferredPrePassStage;
+
 	public:
 		static void SetForwardStage(bool isForward) { s_isForwardStage = isForward; }
 		static bool GetForwardStage() { return s_isForwardStage; }
+		static void SetDoZPrePassStage(bool isForward) { s_isDoZPrePassStage = isForward; }
+		static bool GetDoZPrePassStage() { return s_isDoZPrePassStage; }
+		static void SetDeferredPrePassStage(bool isForward) { s_isDeferredPrePassStage = isForward; }
+		static bool GetDeferredPrePassStage() { return s_isDeferredPrePassStage; }
     private:
         // Helper methods for texture replacement
         static void SetScopeTexture(ID3D11DeviceContext* pContext);

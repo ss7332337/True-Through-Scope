@@ -9,6 +9,7 @@
 #include "D3DHooks.h"
 #include <winternl.h>
 #include <EventHandler.h>
+#include <CustomGeometryConstructor.h>
 
 using namespace RE;
 using namespace RE::BSGraphics;
@@ -39,6 +40,7 @@ REL::Relocation<uintptr_t> BSShaderAccumulator_RenderBlendedDecals_Ori{ REL::ID(
 REL::Relocation<uintptr_t> DrawWorld_Begin_Ori{ REL::ID(502840) };
 REL::Relocation<uintptr_t> Main_DrawWorldAndUI_Ori{ REL::ID(408683) };
 REL::Relocation<uintptr_t> Main_Swap_Ori{ REL::ID(1075087) };
+REL::Relocation<uintptr_t> PCUpdateMainThread_Ori{ REL::ID(1134912) };
 #pragma endregion
 
 REL::Relocation<uintptr_t> BSCullingGroup_Process_Ori{ REL::ID(1147875) };
@@ -61,6 +63,9 @@ REL::Relocation<uintptr_t> BG_SetDirtyRenderTargets_Ori{ REL::ID(361475) };
 REL::Relocation<uintptr_t> BG_SetRenderTarget_Ori{ REL::ID(1104516) };
 REL::Relocation<uintptr_t> BSRT_Create_Ori{ REL::ID(1118299) };
 REL::Relocation<uintptr_t> BSP_GetRenderPasses_Ori{ REL::ID(1289086) };
+REL::Relocation<uintptr_t> BSBatchRenderer_Draw_Ori{ REL::ID(1152191) };
+REL::Relocation<uintptr_t> MapDynamicTriShapeDynamicData_Ori{ REL::ID(732935) };
+REL::Relocation<uintptr_t> BSStreamLoad_Ori{ REL::ID(160035) };
 #pragma endregion
 
 #pragma region Pointer
@@ -116,8 +121,12 @@ typedef void (*FnBSCullingGroup_Process)(BSCullingGroup*, bool);
 typedef void (*Fn)(uint64_t);
 typedef void (*FnhkAdd1stPersonGeomToCuller)(uint64_t);
 typedef void (*hkRTManager_CreateaRenderTarget)(RenderTargetManager rtm, int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
+typedef void (*BSBatchRenderer_Draw_t)(BSRenderPass* apRenderPass);
+typedef void (*MapDynamicTriShapeDynamicData_t)(Renderer*, BSDynamicTriShape*, DynamicTriShape*, DynamicTriShapeDrawData*, unsigned int);
+typedef void (*BSStreamLoad)(BSStream* stream, const char* apFileName, NiBinaryStream* apStream);
+typedef void (*PCUpdateMainThread)(PlayerCharacter*);
 
-// 存储原始函数的指针
+	// 存储原始函数的指针
 DoZPrePassOriginalFuncType g_pDoZPrePassOriginal = nullptr;
 RenderZPrePassOriginalFuncType g_RenderZPrePassOriginal = nullptr;
 RenderAlphaTestZPrePassOriginalFuncType g_RenderAlphaTestZPrePassOriginal = nullptr;
@@ -148,12 +157,16 @@ Fn g_ForwardOriginal = nullptr;
 Fn g_RefractionOriginal = nullptr;
 FnhkAdd1stPersonGeomToCuller g_Add1stPersonGeomToCullerOriginal = nullptr;
 hkRTManager_CreateaRenderTarget g_RTManagerCreateRenderTargetOriginal = nullptr;
-
-
+BSBatchRenderer_Draw_t g_originalBSBatchRendererDraw = nullptr;
+MapDynamicTriShapeDynamicData_t g_MapDynamicTriShapeDynamicData = nullptr;
+BSStreamLoad g_BSStreamLoad = nullptr;
+PCUpdateMainThread g_PCUpdateMainThread = nullptr;
 
 bool isFirstCopy = false;
 bool isRenderReady = false;
 bool isScopCamReady = false;
+ThroughScope::D3DHooks* d3dHooks;
+NIFLoader* nifloader;
 	    // Helper to get renderer shadow state
 static RendererShadowState* GetRendererShadowState()
 {
@@ -174,49 +187,35 @@ static RendererShadowState* GetRendererShadowState()
 using namespace ThroughScope;
 using namespace ThroughScope::Utilities;
 
+void hkBSBatchRenderer_Draw(BSRenderPass* apRenderPass)
+{
+	g_originalBSBatchRendererDraw(apRenderPass);
+}
+
+void hkMapDynamicTriShapeDynamicData(Renderer* renderer, BSDynamicTriShape* bsDynamicTriShape, DynamicTriShape* dynamicTriShape, DynamicTriShapeDrawData* drawdata, unsigned int auiSize)
+{
+	g_MapDynamicTriShapeDynamicData(renderer, bsDynamicTriShape, dynamicTriShape, drawdata, auiSize);
+}
+
+void hkBSStreamLoad(BSStream* stream, const char* apFileName, NiBinaryStream* apStream)
+{
+	logger::info("apFileName: {}", apFileName);
+	g_BSStreamLoad(stream, apFileName, apStream);
+}
+
 // ------ Main Render Hooks ------
 void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 {
-	// Check if we need to setup the scope quad (triggered by weapon switch)
-	if (RenderUtilities::s_TriggerScopeQuadSetup) {
-		static int setupDelay = 0;
-		setupDelay++;
-
-		// Wait a few frames before creating the scope quad to ensure weapon model is fully loaded
-		if (setupDelay >= 5) {
-			logger::info("Creating scope quad after weapon switch");
-			RenderUtilities::SetupWeaponScopeShape();
-			RenderUtilities::s_TriggerScopeQuadSetup = false;
-			setupDelay = 0;
-		}
-	}
-
-	if (!RenderUtilities::s_SetupScopeQuad) {
-		RenderUtilities::SetupWeaponScopeShape();
-	}
-
-	if (GetAsyncKeyState(VK_END) & 0x1)
-	{
-		ThroughScope::Utilities::LogPlayerWeaponNodes();
-	}
 
 	//先正常渲染主场景
 	D3DEventNode(g_RenderPreUIOriginal(ptr_drawWorld), L"First Render_PreUI");
-	ScopeCamera::ProcessCameraAdjustment();
+	
 
 	if (!isScopCamReady || !isRenderReady)
 		return;
 
 	auto playerCamera = *ptr_DrawWorldCamera;
 	auto scopeCamera = ScopeCamera::GetScopeCamera();
-
-	// Make sure our temporary textures are created
-	if (!RenderUtilities::GetFirstPassColorTexture() ||
-		!RenderUtilities::GetSecondPassColorTexture() ||
-		!RenderUtilities::GetFirstPassDepthTexture() ||
-		!RenderUtilities::GetSecondPassDepthTexture()) {
-		RenderUtilities::CreateTemporaryTextures();
-	}
 
 	if (!scopeCamera || !scopeCamera->parent)
 		return;
@@ -229,13 +228,12 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 
 	ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
 
-	if (RenderUtilities::s_SetupScopeQuad)
+	//if (RenderUtilities::s_SetupScopeQuad)
 	{
 		ID3D11RenderTargetView* mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
 		ID3D11DepthStencilView* mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
 		ID3D11Texture2D* mainRTTexture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
 		ID3D11Texture2D* mainDSTexture = (ID3D11Texture2D*)rendererData->depthStencilTargets[2].texture;
-
 
 		if (mainRTTexture) {
 			// Copy the render target to our texture
@@ -249,6 +247,7 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 		//更新瞄具镜头
 		NiCloningProcess tempP{};
 		NiCamera* originalCamera = (NiCamera*)((*ptr_DrawWorldCamera)->CreateClone(tempP));
+
 		auto originalCamera1st = *ptr_DrawWorldCamera;
 		auto originalCamera1stport = (*ptr_DrawWorld1stCamera)->port;
 		scopeCamera->local.translate = originalCamera->local.translate;
@@ -259,7 +258,6 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 		context->ClearRenderTargetView(mainRTV, clearColor);
 		context->ClearDepthStencilView(mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-		
 		D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
 		DrawWorld::SetCamera(scopeCamera);
 		DrawWorld::SetUpdateCameraFOV(true);
@@ -276,15 +274,15 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 		ID3D11ShaderResourceView* scopeSRV = nullptr;
 
 		// 现在更新scope模型的纹理
-		if (RenderUtilities::IsSecondPassComplete()) 
-		{
+		if (RenderUtilities::IsSecondPassComplete()) {
 			// Restore the original render target content for normal display
 			context->CopyResource(mainRTTexture, RenderUtilities::GetFirstPassColorTexture());
 			context->CopyResource(mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
 		}
+
 		DrawWorld::SetCamera(originalCamera);
 		DrawWorld::SetUpdateCameraFOV(true);
-		
+
 		if (originalCamera) {
 			if (originalCamera->DecRefCount() == 0) {
 				originalCamera->DeleteThis();
@@ -403,6 +401,8 @@ void __fastcall hkDeferredPrePass(uint64_t ptr_drawWorld)
 
 void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
 {
+	if (ScopeCamera::IsRenderingForScope())
+		return;
 	D3DEventNode(g_DeferredLightsImplOriginal(ptr_drawWorld), L"hkDeferredLightsImpl");
 }
 
@@ -414,7 +414,9 @@ void __fastcall hkDeferredComposite(uint64_t ptr_drawWorld)
 void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
 {
 	D3DHooks::SetForwardStage(true);
+
 	D3DEventNode(g_ForwardOriginal(ptr_drawWorld), L"hkDrawWorld_Forward");
+
 	D3DHooks::SetForwardStage(false);
 }
 
@@ -467,6 +469,31 @@ void __fastcall hkSetCurrentCubeMapRenderTarget(RenderTargetManager* manager, in
 	g_SetCurrentCubeMapRenderTargetOriginal(manager, aCubeMapRenderTarget, aMode, aView);
 }
 
+void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
+{
+	if (GetAsyncKeyState(VK_NUMPAD1) & 0x1) {
+		auto weaponnode = PlayerCharacter::GetSingleton()->Get3D()->GetObjectByName("Weapon");
+		RE::NiAVObject* existingNode = weaponnode->GetObjectByName("ScopeNode");
+		Utilities::PrintNodeHierarchy(existingNode);
+	}
+
+	if (GetAsyncKeyState(VK_NUMPAD7) & 0x1) {
+		if (!D3DHooks::IsEnableRender())
+			D3DHooks::SetEnableRender(true);
+		else
+			D3DHooks::SetEnableRender(false);
+		//RenderUtilities::SetupWeaponScopeShape();
+	}
+
+	if (GetAsyncKeyState(VK_NUMPAD5) & 0x1) {
+		//RenderUtilities::s_EnableRender = !RenderUtilities::s_EnableRender;
+		nifloader->LoadNIF("TTSTemplate_Circle.nif");
+	}
+	ScopeCamera::ProcessCameraAdjustment();
+
+	g_PCUpdateMainThread(pChar);
+}
+
 
 void RegisterHooks()
 {
@@ -514,7 +541,6 @@ void RegisterHooks()
 	CreateAndEnableHook((LPVOID)BG_SetRenderTarget_Ori.address(), &hkBGSetRenderTarget,
 		reinterpret_cast<LPVOID*>(&g_BGSetRenderTargetOriginal), "BGSetRenderTarget");
 
-	// Now convert the remaining Detour hooks to MinHook
 	CreateAndEnableHook((LPVOID)DrawWorld_Render_PreUI_Ori.address(), &hkRender_PreUI,
 		reinterpret_cast<LPVOID*>(&g_RenderPreUIOriginal), "Render_PreUI");
 
@@ -559,23 +585,47 @@ void RegisterHooks()
 
 	CreateAndEnableHook((LPVOID)RTM_CreateRenderTarget_Ori.address(), &hkRTManager_CreateRenderTarget,
 		reinterpret_cast<LPVOID*>(&g_RTManagerCreateRenderTargetOriginal), "RTManager_CreateRenderTarget");
+
+	//CreateAndEnableHook((LPVOID)BSBatchRenderer_Draw_Ori.address(), &hkBSBatchRenderer_Draw,
+	//	reinterpret_cast<LPVOID*>(&g_originalBSBatchRendererDraw), "BSBatchRenderer_Draw");
+
+	//CreateAndEnableHook((LPVOID)MapDynamicTriShapeDynamicData_Ori.address(), &hkMapDynamicTriShapeDynamicData,
+	//	reinterpret_cast<LPVOID*>(&g_MapDynamicTriShapeDynamicData), "MapDynamicTriShapeDynamicData");
+
+
+	 CreateAndEnableHook((LPVOID)BSStreamLoad_Ori.address(), &hkBSStreamLoad,
+		reinterpret_cast<LPVOID*>(&g_BSStreamLoad), "BSStreamLoad");
+	 
+	 
+	 CreateAndEnableHook((LPVOID)PCUpdateMainThread_Ori.address(), &hkPCUpdateMainThread,
+		reinterpret_cast<LPVOID*>(&g_PCUpdateMainThread), "PCUpdateMainThread");
+
 	logger::info("Hooks registered successfully");
 }
 
 // Initialization thread function
 DWORD WINAPI InitThread(HMODULE hModule) 
 {
+	while (!BSGraphics::RendererData::GetSingleton() 
+		|| !BSGraphics::RendererData::GetSingleton()->renderWindow 
+		|| !BSGraphics::RendererData::GetSingleton()->renderWindow->hwnd 
+		|| !BSGraphics::RendererData::GetSingleton()->renderWindow->swapChain 
+		|| !RE::BSGraphics::RendererData::GetSingleton()->device
+		|| !RE::BSGraphics::RendererData::GetSingleton()->context) {
+		Sleep(10);
+	}
+
+	d3dHooks->Initialize();
     // Wait for the game world to be fully loaded
 	while (!RE::PlayerCharacter::GetSingleton() || !RE::PlayerCharacter::GetSingleton()->Get3D() || !RE::PlayerControls::GetSingleton() || !RE::PlayerCamera::GetSingleton() || !RE::Main::WorldRootCamera()) 
     {
-		Sleep(1000);
+		Sleep(500);
 	}
     logger::info("Game world loaded, initializing ThroughScope...");
     
     // Initialize systems
     isScopCamReady = ThroughScope::ScopeCamera::Initialize();
 	isRenderReady = ThroughScope::RenderUtilities::Initialize();
-    
     logger::info("ThroughScope initialization completed");
     return 0;
 }
@@ -584,7 +634,6 @@ DWORD WINAPI InitThread(HMODULE hModule)
 void InitializePlugin()
 {
 	RegisterHooks();
-	ThroughScope::D3DHooks::Initialize();
 	ThroughScope::EquipWatcher::GetSingleton()->Initialize();
     // Start initialization thread for components that need the game world
     HANDLE hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)InitThread, (HMODULE)REX::W32::GetCurrentModule(), 0, NULL);
@@ -652,6 +701,8 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
     Sleep(1000);
 #endif
 
+	d3dHooks = D3DHooks::GetSington();
+	nifloader = new NIFLoader();
     F4SE::Init(a_f4se);
     
     // Register plugin for F4SE messages

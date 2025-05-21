@@ -32,8 +32,9 @@ struct PS_INPUT
 {
     float4 position : SV_POSITION;
     float4 texCoord : TEXCOORD;
-    float4 color0 : COLOR0;
-    float4 fogColor : COLOR1;
+    float4 color0 : COLOR;
+    //float4 color0 : COLOR0;
+    //float4 fogColor : COLOR1;
 };
 
 float2 clampMagnitude(float2 v, float l)

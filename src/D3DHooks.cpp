@@ -6,6 +6,7 @@
 
 namespace ThroughScope {
     
+	using namespace Microsoft::WRL;
     //LPVOID D3DHooks::originalDrawIndexed = nullptr;
     ID3D11ShaderResourceView* D3DHooks::s_ScopeTextureView = nullptr;
 
@@ -18,16 +19,22 @@ namespace ThroughScope {
 	static ID3D11SamplerState* samplerState = nullptr;
 	static ID3D11BlendState* blendState = nullptr;
 	static ID3D11Buffer* constantBuffer = nullptr;
+	bool D3DHooks::s_EnableRender = false;
 
 	constexpr UINT MAX_SRV_SLOTS = 128;
 	constexpr UINT MAX_SAMPLER_SLOTS = 16;
 	constexpr UINT MAX_CB_SLOTS = 14; 
 
-	static constexpr UINT TARGET_STRIDE = 12;
-	static constexpr UINT TARGET_INDEX_COUNT = 6;
+	/*static constexpr UINT TARGET_STRIDE = 12;
+	static constexpr UINT TARGET_INDEX_COUNT = 6;*/
+	//static constexpr UINT TARGET_STRIDE = 20;
+	//static constexpr UINT TARGET_INDEX_COUNT = 24;
+	static constexpr UINT TARGET_STRIDE = 28;
+	static constexpr UINT TARGET_INDEX_COUNT = 96;
 	static constexpr UINT TARGET_BUFFER_SIZE = 0x0000000008000000;
 	typedef void(__stdcall* D3D11DrawIndexedHook)(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
 	D3D11DrawIndexedHook phookD3D11DrawIndexed = nullptr;
+	D3DHooks* D3DInstance = D3DHooks::GetSington();
 
 	HRESULT D3DHooks::CreateShaderFromFile(const WCHAR* csoFileNameInOut, const WCHAR* hlslFileName, LPCSTR entryPoint, LPCSTR shaderModel, ID3DBlob** ppBlobOut)
 	{
@@ -61,6 +68,12 @@ namespace ThroughScope {
 
 		return hr;
 	}
+
+	D3DHooks* D3DHooks::GetSington()
+	{
+		static D3DHooks instance;
+		return &instance;
+	}
     
     bool D3DHooks::Initialize() {
         logger::info("Initializing D3D11 hooks...");
@@ -86,11 +99,17 @@ namespace ThroughScope {
     
     void WINAPI D3DHooks::hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) {
         // Check if the current draw call is for our scope quad
+
+		if (!s_EnableRender)
+		{
+			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
+		}
+
         bool isScopeQuad = IsScopeQuadBeingDrawn(pContext, IndexCount);
         
-        if (isScopeQuad && RenderUtilities::IsSecondPassComplete()) {
+        if (isScopeQuad) {
 
-             // Save current shader resources
+			// Save current shader resources
 			ID3D11ShaderResourceView* psShaderResources[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = { nullptr };
 			pContext->PSGetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, psShaderResources);
 
@@ -98,21 +117,25 @@ namespace ThroughScope {
 			ID3D11ShaderResourceView* nullSRV[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = { nullptr };
 			pContext->PSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullSRV);
 
-            SetScopeTexture(pContext);
-            
+			SetScopeTexture(pContext);
+
+			if (ScopeCamera::IsRenderingForScope())
+				return phookD3D11DrawIndexed(pContext, 0, 0, 0);
+
+			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
             // Call the original DrawIndexed
-			phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
+			//return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
             
         } else {
-			phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
+			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
         }
     }
 
 	bool D3DHooks::IsTargetDrawCall(const BufferInfo& vertexInfo, const BufferInfo& indexInfo, UINT indexCount)
 	{
 		return 
-			vertexInfo.stride == 12 
-			&& indexCount == 6 
+			vertexInfo.stride == TARGET_STRIDE  
+			&& indexCount == TARGET_INDEX_COUNT  
 			//&& indexInfo.offset == 2133504
 			&& indexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE 
 			&& vertexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE;
@@ -179,10 +202,10 @@ namespace ThroughScope {
 		return true;
 	}
     
-    bool D3DHooks::IsScopeQuadBeingDrawn(ID3D11DeviceContext* pContext, UINT IndexCount)
+	bool D3DHooks::IsScopeQuadBeingDrawn(ID3D11DeviceContext* pContext, UINT IndexCount)
 	{
 		// Our scope should use exactly 6 indices (2 triangles)
-		if (IndexCount != 6 || !s_isForwardStage)
+		if (IndexCount != TARGET_INDEX_COUNT || !s_isForwardStage)
 			return false;
 
 		// Check if player exists
@@ -190,6 +213,7 @@ namespace ThroughScope {
 		if (!playerCharacter || !playerCharacter->Get3D())
 			return false;
 
+		// Check vertex buffer info
 		std::vector<BufferInfo> vertexInfo;
 		BufferInfo indexInfo;
 		if (!GetVertexBuffersInfo(pContext, vertexInfo) || !GetIndexBufferInfo(pContext, indexInfo))
@@ -201,7 +225,7 @@ namespace ThroughScope {
 			pContext->PSGetShaderResources(0, 1, DrawIndexedSRV.GetAddressOf());
 
 			if (!DrawIndexedSRV.Get() || DrawIndexedSRV.Get() == stagingSRV)
-				return true;
+			return true;
 		}
 
 		return false;

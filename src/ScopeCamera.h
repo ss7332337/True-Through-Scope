@@ -61,7 +61,9 @@ namespace ThroughScope
 
         // Adjustment helper methods
         static void AdjustPosition(float x, float y, float z);
+        static void AdjustPositionFTSNode(float x, float y, float z);
         static void AdjustRotation(float x, float y, float z);
+		static void AdjustRotationFTSNode(float x, float y, float z);
         static void PrintCurrentValues();
         static void ResetCamera();
     };
