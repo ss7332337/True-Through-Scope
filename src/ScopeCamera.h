@@ -19,8 +19,6 @@ namespace ThroughScope
         static RE::NiCamera* GetScopeCamera() { return s_ScopeCamera; }
         static void SetScopeCamera(RE::NiCamera* camera) { s_ScopeCamera = camera; }
         
-        // Scope camera adjustment
-        static void ProcessCameraAdjustment();
         static bool IsAdjustmentMode() { return s_AdjustmentMode; }
         static void ToggleAdjustmentMode() { s_AdjustmentMode = !s_AdjustmentMode; }
         
@@ -31,10 +29,6 @@ namespace ThroughScope
         // Flag indicating if we're in scope render mode
         static bool IsRenderingForScope() { return s_IsRenderingForScope; }
         static void SetRenderingForScope(bool value) { s_IsRenderingForScope = value; }
-        
-        // Cached offsets
-        static RE::NiPoint3& GetDeltaPosition() { return s_DeltaPos; }
-        static RE::NiMatrix3& GetDeltaRotation() { return s_DeltaRot; }
         
     private:
         // Camera objects
@@ -53,18 +47,14 @@ namespace ThroughScope
         static RE::NiPoint3 s_CachedDeltaPos;
         static RE::NiMatrix3 s_DeltaRot;
         static RE::NiMatrix3 s_CachedDeltaRot;
+		static RE::NiPoint3 s_DeltaScale;
+		static RE::NiPoint3 s_CachedDeltaScale;
         
         // State flags
         static bool s_OriginalFirstPerson;
         static bool s_OriginalRenderDecals;
         static bool s_IsRenderingForScope;
 
-        // Adjustment helper methods
-        static void AdjustPosition(float x, float y, float z);
-        static void AdjustPositionFTSNode(float x, float y, float z);
-        static void AdjustRotation(float x, float y, float z);
-		static void AdjustRotationFTSNode(float x, float y, float z);
-        static void PrintCurrentValues();
         static void ResetCamera();
     };
 }

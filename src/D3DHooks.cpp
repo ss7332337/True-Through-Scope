@@ -1,14 +1,23 @@
 #include "D3DHooks.h"
 #include "Utilities.h"
 #include <detours.h>
-#include <wrl/client.h>
+#include <imgui.h>
+#include <imgui_impl_dx11.h>
+#include <imgui_impl_win32.h>
 #include <ScopeCamera.h>
+#include <wrl/client.h>
 
+#include "ImGuiManager.h"
+
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 namespace ThroughScope {
     
 	using namespace Microsoft::WRL;
-    //LPVOID D3DHooks::originalDrawIndexed = nullptr;
     ID3D11ShaderResourceView* D3DHooks::s_ScopeTextureView = nullptr;
+	ComPtr<IDXGISwapChain> D3DHooks::s_SwapChain = nullptr;
+	WNDPROC D3DHooks::s_OriginalWndProc = nullptr;
+	HRESULT(WINAPI* D3DHooks::s_OriginalPresent)(IDXGISwapChain*, UINT, UINT) = nullptr;
+	RECT D3DHooks::oldRect{};
 
 	bool D3DHooks::s_isForwardStage = false;
 
@@ -20,6 +29,7 @@ namespace ThroughScope {
 	static ID3D11BlendState* blendState = nullptr;
 	static ID3D11Buffer* constantBuffer = nullptr;
 	bool D3DHooks::s_EnableRender = false;
+	bool D3DHooks::s_InPresent = false;
 
 	constexpr UINT MAX_SRV_SLOTS = 128;
 	constexpr UINT MAX_SAMPLER_SLOTS = 16;
@@ -33,8 +43,12 @@ namespace ThroughScope {
 	static constexpr UINT TARGET_INDEX_COUNT = 96;
 	static constexpr UINT TARGET_BUFFER_SIZE = 0x0000000008000000;
 	typedef void(__stdcall* D3D11DrawIndexedHook)(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
+	using ClipCur = decltype(&ClipCursor);
+
 	D3D11DrawIndexedHook phookD3D11DrawIndexed = nullptr;
+	ClipCur phookClipCursor = nullptr;
 	D3DHooks* D3DInstance = D3DHooks::GetSington();
+	ImGuiManager* imguiMgr;
 
 	HRESULT D3DHooks::CreateShaderFromFile(const WCHAR* csoFileNameInOut, const WCHAR* hlslFileName, LPCSTR entryPoint, LPCSTR shaderModel, ID3DBlob** ppBlobOut)
 	{
@@ -75,26 +89,48 @@ namespace ThroughScope {
 		return &instance;
 	}
     
-    bool D3DHooks::Initialize() {
-        logger::info("Initializing D3D11 hooks...");
-        
-        // Get the D3D11 device and context from the game's renderer
-        auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-        if (!rendererData || !rendererData->device || !rendererData->context) {
-            logger::error("Failed to get D3D11 device or context");
-            return false;
-        }
-        
-        // Get the virtual table of the device context
-        void** vTable = *(void***)rendererData->context;
-        
-        // Hook the DrawIndexed function (index 12 in the virtual table)
-        void* drawIndexedFunc = vTable[12];
+    bool D3DHooks::Initialize() 
+	{
+		logger::info("Initializing D3D11 hooks...");
 
+		// Get the D3D11 device and context from the game's renderer
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		if (!rendererData || !rendererData->device || !rendererData->context) {
+			logger::error("Failed to get D3D11 device or context");
+			return false;
+		}
+
+		// 先获取SwapChain
+		s_SwapChain = reinterpret_cast<IDXGISwapChain*>(rendererData->renderWindow->swapChain);
+		if (!s_SwapChain) {
+			logger::error("Failed to get SwapChain");
+			return false;
+		}
+
+		// 获取窗口句柄并设置窗口过程
+		DXGI_SWAP_CHAIN_DESC sd;
+		s_SwapChain->GetDesc(&sd);
+		::GetWindowRect(sd.OutputWindow, &oldRect);
+
+		s_OriginalWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtr(sd.OutputWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(hkWndProc)));
+
+		// 获取虚函数表
+		void** contextVTable = *(void***)rendererData->context;
+		void** swapChainVTable = *(void***)s_SwapChain.Get();
+
+		void* drawIndexedFunc = contextVTable[12];
+		void* presentFunc = swapChainVTable[8];  // 注意：Present是SwapChain的方法，不是Context的
+
+		// 初始化ImGui管理器
+		imguiMgr = ImGuiManager::GetSingleton();
+
+		// 创建Hook
 		Utilities::CreateAndEnableHook(drawIndexedFunc, reinterpret_cast<void*>(hkDrawIndexed), reinterpret_cast<void**>(&phookD3D11DrawIndexed), "DrawIndexedHook");
+		Utilities::CreateAndEnableHook(presentFunc, reinterpret_cast<void*>(hkPresent), reinterpret_cast<void**>(&s_OriginalPresent), "Present");
+		Utilities::CreateAndEnableHook(&ClipCursor, ClipCursorHook, reinterpret_cast<LPVOID*>(&phookClipCursor), "ClipCursorHook");
 
-        logger::info("D3D11 hooks initialized successfully");
-        return true;
+		logger::info("D3D11 hooks initialized successfully");
+		return true;
     }
     
     void WINAPI D3DHooks::hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) {
@@ -130,6 +166,7 @@ namespace ThroughScope {
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
         }
     }
+
 
 	bool D3DHooks::IsTargetDrawCall(const BufferInfo& vertexInfo, const BufferInfo& indexInfo, UINT indexCount)
 	{
@@ -461,5 +498,66 @@ namespace ThroughScope {
 		pContext->PSSetSamplers(0, 1, &samplerState);
 
 		device->Release();
+	}
+
+	HRESULT WINAPI D3DHooks::hkPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
+	{
+		// 防止递归调用
+		if (s_InPresent) {
+			return s_OriginalPresent(pSwapChain, SyncInterval, Flags);
+		}
+
+		s_InPresent = true;
+		HRESULT result = S_OK;
+
+		if (imguiMgr && imguiMgr->IsInitialized()) {
+			imguiMgr->Render();
+		}
+
+		// Call original Present
+		result = s_OriginalPresent(pSwapChain, SyncInterval, Flags);
+
+		s_InPresent = false;
+		return result;
+	}
+
+	LRESULT CALLBACK D3DHooks::hkWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+	{
+		if (imguiMgr && imguiMgr->IsInitialized() && imguiMgr->IsMenuOpen()) {
+			if (ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam)) {
+				return true;
+			}
+
+			// Block game input when ImGui is capturing keyboard/mouse
+			ImGuiIO& io = ImGui::GetIO();
+			if (io.WantCaptureMouse || io.WantCaptureKeyboard) {
+				// Block specific messages that should not be passed to the game
+				switch (uMsg) {
+				case WM_LBUTTONDOWN:
+				case WM_LBUTTONUP:
+				case WM_RBUTTONDOWN:
+				case WM_RBUTTONUP:
+				case WM_MBUTTONDOWN:
+				case WM_MBUTTONUP:
+				case WM_MOUSEWHEEL:
+				case WM_MOUSEMOVE:
+				case WM_KEYDOWN:
+				case WM_KEYUP:
+				case WM_CHAR:
+					return true;
+				}
+			}
+		}
+
+		// Pass to the original window procedure
+		return CallWindowProcA(s_OriginalWndProc, hWnd, uMsg, wParam, lParam);
+	}
+
+	BOOL __stdcall D3DHooks::ClipCursorHook(RECT* lpRect)
+	{
+		if (imguiMgr->IsMenuOpen()) {
+			*lpRect = oldRect;
+		}
+		return phookClipCursor(lpRect);
 	}
 }

@@ -135,20 +135,11 @@ namespace ThroughScope
 			// When a weapon is equipped, we need to setup the scope quad again
 			logger::info("Weapon equipped, setting up scope quad...");
 
-			// We'll remove any ScopeNode that might exist first (cleanup)
-			RenderUtilities::RemoveWeaponScopeShape();
-
-			// We'll mark that the scope quad needs to be set up, but delay the actual setup
-			// to give the game time to fully initialize the weapon node hierarchy
-			RenderUtilities::s_TriggerScopeQuadSetup = true;
-			RenderUtilities::s_SetupScopeQuad = false;
-
 			// We'll wait a few frames before creating the new scope shape
 			logger::info("Marked scope quad for setup, will be created shortly");
 		} else {
 			// Weapon unequipped, clean up resources
 			logger::info("Weapon unequipped, removing scope quad");
-			RenderUtilities::RemoveWeaponScopeShape();
 			s_IsScopeActive = false;
 		}
 

@@ -1,15 +1,17 @@
-#include <Windows.h>
+#include "Constants.h"
+#include "D3DHooks.h"
+#include "RenderUtilities.h"
+#include "ScopeCamera.h"
+#include "Utilities.h"
+#include <EventHandler.h>
+#include <mutex>
+#include <NiFLoader.h>
 #include <string>
 #include <thread>
-#include <mutex>
-#include "Constants.h"
-#include "ScopeCamera.h"
-#include "RenderUtilities.h"
-#include "Utilities.h"
-#include "D3DHooks.h"
+#include <Windows.h>
 #include <winternl.h>
-#include <EventHandler.h>
-#include <CustomGeometryConstructor.h>
+
+#include "ImGuiManager.h"
 
 using namespace RE;
 using namespace RE::BSGraphics;
@@ -165,6 +167,7 @@ PCUpdateMainThread g_PCUpdateMainThread = nullptr;
 bool isFirstCopy = false;
 bool isRenderReady = false;
 bool isScopCamReady = false;
+bool isImguiManagerInit = false;
 ThroughScope::D3DHooks* d3dHooks;
 NIFLoader* nifloader;
 	    // Helper to get renderer shadow state
@@ -471,25 +474,8 @@ void __fastcall hkSetCurrentCubeMapRenderTarget(RenderTargetManager* manager, in
 
 void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 {
-	if (GetAsyncKeyState(VK_NUMPAD1) & 0x1) {
-		auto weaponnode = PlayerCharacter::GetSingleton()->Get3D()->GetObjectByName("Weapon");
-		RE::NiAVObject* existingNode = weaponnode->GetObjectByName("ScopeNode");
-		Utilities::PrintNodeHierarchy(existingNode);
-	}
-
-	if (GetAsyncKeyState(VK_NUMPAD7) & 0x1) {
-		if (!D3DHooks::IsEnableRender())
-			D3DHooks::SetEnableRender(true);
-		else
-			D3DHooks::SetEnableRender(false);
-		//RenderUtilities::SetupWeaponScopeShape();
-	}
-
-	if (GetAsyncKeyState(VK_NUMPAD5) & 0x1) {
-		//RenderUtilities::s_EnableRender = !RenderUtilities::s_EnableRender;
-		nifloader->LoadNIF("TTSTemplate_Circle.nif");
-	}
-	ScopeCamera::ProcessCameraAdjustment();
+	if(isImguiManagerInit)
+		ThroughScope::ImGuiManager::GetSingleton()->Update();
 
 	g_PCUpdateMainThread(pChar);
 }
@@ -615,6 +601,7 @@ DWORD WINAPI InitThread(HMODULE hModule)
 		Sleep(10);
 	}
 
+	isImguiManagerInit = ThroughScope::ImGuiManager::GetSingleton()->Initialize();
 	d3dHooks->Initialize();
     // Wait for the game world to be fully loaded
 	while (!RE::PlayerCharacter::GetSingleton() || !RE::PlayerCharacter::GetSingleton()->Get3D() || !RE::PlayerControls::GetSingleton() || !RE::PlayerCamera::GetSingleton() || !RE::Main::WorldRootCamera()) 
@@ -635,6 +622,7 @@ void InitializePlugin()
 {
 	RegisterHooks();
 	ThroughScope::EquipWatcher::GetSingleton()->Initialize();
+	
     // Start initialization thread for components that need the game world
     HANDLE hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)InitThread, (HMODULE)REX::W32::GetCurrentModule(), 0, NULL);
 }

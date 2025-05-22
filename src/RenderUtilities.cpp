@@ -3,8 +3,6 @@
 #include "ScopeCamera.h"
 
 #include "Utilities.h"
-#include <CustomGeometryConstructor.h>
-
 namespace ThroughScope
 {
     ID3D11Texture2D* RenderUtilities::s_FirstPassColorTexture = nullptr;

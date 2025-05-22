@@ -9,6 +9,10 @@
     "detours",
     "fmt",
     "rsm-mmio",
-    "spdlog"
+    "spdlog",
+    {
+      "name": "imgui",
+      "features": ["docking-experimental"]
+    }
   ]
 }

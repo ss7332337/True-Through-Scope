@@ -80,16 +80,13 @@ float4 main(PS_INPUT input) : SV_TARGET
     float2 scope_center = float2(0.5, 0.5);
     float distToCenter = distance(aspectCorrectTex, scope_center);
 
-    //if (distToCenter > 2)
-    //{
-    //    return float4(0, 1, 0, 1); // Red indicates pixels where step() would return 0
-    //}
-    
     float parallaxValue = (step(distToCenter, 2) * getparallax(distToParallax, float2(1, 1), 1));
-    //if (parallaxValue <= 0.01)
-    //{
-    //    return float4(0, 0, 1, 1); // Green indicates pixels where getparallax() returns near 0
-    //}
+    
+    if (texCoord.x >= 0.48 && texCoord.x <= 0.52)
+        color.r = 1;
+    
+    if (texCoord.y >= 0.48 && texCoord.y <= 0.52)
+        color.r = 1;
     
     // Apply final effect
     color.rgb *= parallaxValue;

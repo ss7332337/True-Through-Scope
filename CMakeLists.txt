@@ -57,7 +57,7 @@ project(
 )
 
 find_package(spdlog REQUIRED CONFIG)
-find_package(imgui REQUIRED CONFIG)
+#cfind_package(imgui REQUIRED CONFIG)
 find_package(nlohmann_json REQUIRED CONFIG)
 find_library(DETOURS_LIBRARY detours REQUIRED)
 find_package(minhook CONFIG REQUIRED)
@@ -85,6 +85,50 @@ source_group(
 	FILES ${CMAKE_CURRENT_BINARY_DIR}/include/Version.h
 )
 
+# 添加 ImGui 子目录
+set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../imgui")
+
+# 检查 ImGui 目录是否存在
+if(NOT EXISTS ${IMGUI_DIR})
+    message(FATAL_ERROR "ImGui directory not found at ${IMGUI_DIR}")
+endif()
+
+# 创建 ImGui 静态库
+add_library(imgui STATIC
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    
+    # 后端文件（根据你使用的后端选择）
+    ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp
+    ${IMGUI_DIR}/misc/cpp/imgui_stdlib.cpp
+    # 如果使用其他后端，添加相应的文件
+    # ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+    # ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+)
+
+# 设置 ImGui 的包含目录
+target_include_directories(imgui PUBLIC
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+)
+
+# 启用 docking 功能
+target_compile_definitions(imgui PUBLIC
+    IMGUI_ENABLE_DOCKING
+    # 如果需要多视口支持，取消下面注释
+    # IMGUI_ENABLE_VIEWPORTS
+)
+
+if(WIN32)
+    target_link_libraries(imgui PUBLIC
+        d3d11
+        dxgi
+    )
+endif()
 
 file(GLOB HLSL_FILES src/HLSL/*.hlsl)
 
@@ -113,7 +157,7 @@ target_include_directories(
 		${CMAKE_CURRENT_BINARY_DIR}/include
 		${CMAKE_CURRENT_SOURCE_DIR}/src
 		${CMAKE_CURRENT_SOURCE_DIR}/include
-		${IMGUI_INCLUDE_DIRS}
+		#${IMGUI_INCLUDE_DIRS}
 
 )
 
@@ -124,7 +168,8 @@ target_link_libraries(
 		minhook::minhook
 		CommonLibF4::CommonLibF4
 		spdlog::spdlog
-		imgui::imgui
+		#imgui::imgui
+		imgui
 		${DETOURS_LIBRARY}
 )
 

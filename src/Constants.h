@@ -1,33 +1,50 @@
 #pragma once
-#include <Windows.h>
 namespace ThroughScope
 {
-    constexpr float DEFAULT_ADJUSTMENT_SPEED = 1.0f;
-    constexpr float DEFAULT_FOV = 90.0f;
-    
-    // Hotkeys
-    constexpr int TOGGLE_ADJUSTMENT_KEY = VK_NUMPAD0;
-    constexpr int TOGGLE_ADJUSTMENT_TARGET_KEY = VK_DIVIDE;
-    constexpr int CYCLE_ADJUSTMENT_AXIS_KEY = VK_MULTIPLY;
-    constexpr int DECREASE_ADJUSTMENT_SPEED_KEY = VK_OEM_MINUS;
-    constexpr int INCREASE_ADJUSTMENT_SPEED_KEY = VK_OEM_PLUS;
-    constexpr int INCREASE_FOV_KEY = VK_NUMPAD9;
-    constexpr int DECREASE_FOV_KEY = VK_NUMPAD3;
-    constexpr int PRINT_VALUES_KEY = VK_F8;
-    constexpr int RESET_CAMERA_KEY = VK_F9;
+	// Default values
+	constexpr float DEFAULT_FOV = 20.0f;
+	constexpr float DEFAULT_ADJUSTMENT_SPEED = 0.1f;
 
-    // Camera adjustment targets
-    enum class AdjustmentTarget
-    {
-        POSITION,
-        ROTATION
-    };
+	// Adjustment targets
+	enum class AdjustmentTarget
+	{
+		POSITION = 0,
+		ROTATION = 1,
+		SCALE = 2
+	};
 
-    // Adjustment axes
-    enum class AdjustmentAxis
-    {
-        X = 0,
-        Y = 1,
-        Z = 2
-    };
+	// Render targets for scope rendering
+	constexpr int SCOPE_RENDER_TARGET_MAIN = 100;
+	constexpr int SCOPE_RENDER_TARGET_TEMP = 101;
+
+	// Texture dimensions for scope rendering
+	constexpr unsigned int SCOPE_TEXTURE_WIDTH = 1024;
+	constexpr unsigned int SCOPE_TEXTURE_HEIGHT = 1024;
+
+	// Performance settings
+	constexpr bool ENABLE_REAL_TIME_ADJUSTMENT = true;
+	constexpr bool ENABLE_DEBUG_LOGGING = true;
+
+	// Scale limits
+	constexpr float MIN_SCALE_VALUE = 0.01f;
+	constexpr float MAX_SCALE_VALUE = 10.0f;
+	constexpr float DEFAULT_SCALE_VALUE = 1.0f;
+
+	// Position limits
+	constexpr float MIN_POSITION_VALUE = -100.0f;
+	constexpr float MAX_POSITION_VALUE = 100.0f;
+
+	// Rotation limits (in degrees)
+	constexpr float MIN_ROTATION_VALUE = -180.0f;
+	constexpr float MAX_ROTATION_VALUE = 180.0f;
+
+	// FOV limits
+	constexpr float MIN_FOV_VALUE = 5.0f;
+	constexpr float MAX_FOV_VALUE = 100.0f;
+
+	// Fine adjustment increments
+	constexpr float FINE_POSITION_INCREMENT = 0.1f;
+	constexpr float FINE_ROTATION_INCREMENT = 1.0f;  // degrees
+	constexpr float FINE_SCALE_INCREMENT = 0.1f;
+	constexpr float FINE_FOV_INCREMENT = 1.0f;
 }

@@ -4,6 +4,7 @@
 #include <DirectXMath.h>
 #include <dxgi.h>
 #include "RenderUtilities.h"
+#include <wrl/client.h>
 
 namespace ThroughScope {
 	using namespace DirectX;
@@ -43,14 +44,11 @@ namespace ThroughScope {
 
         // D3D11 function hooks
         static void WINAPI hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
-        
-        // Store the original DrawIndexed function
-        //static LPVOID originalDrawIndexed;
-
-        // Flag to identify our scope quad
+		static HRESULT WINAPI hkPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags);
+		static LRESULT CALLBACK hkWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
         static bool IsScopeQuadBeingDrawn(ID3D11DeviceContext* pContext, UINT IndexCount);
-        
-        // Store texture resource view for the scope
+		static BOOL __stdcall ClipCursorHook(RECT* lpRect);
+
         static ID3D11ShaderResourceView* s_ScopeTextureView;
 
 		static HRESULT CreateShaderFromFile(const WCHAR* csoFileNameInOut, const WCHAR* hlslFileName, LPCSTR entryPoint, LPCSTR shaderModel, ID3DBlob** ppBlobOut);
@@ -68,6 +66,12 @@ namespace ThroughScope {
 		static bool s_isForwardStage;
 		static bool s_isDoZPrePassStage;
 		static bool s_isDeferredPrePassStage;
+		static Microsoft::WRL::ComPtr<IDXGISwapChain> s_SwapChain;
+		static WNDPROC s_OriginalWndProc;
+		static HRESULT(WINAPI* s_OriginalPresent)(IDXGISwapChain*, UINT, UINT);
+		static HWND s_GameWindow;
+		static RECT oldRect;
+		static bool s_InPresent;  // 防止递归调用的标志
 
 	public:
 		static void SetForwardStage(bool isForward) { s_isForwardStage = isForward; }
@@ -77,7 +81,6 @@ namespace ThroughScope {
 		static void SetDeferredPrePassStage(bool isForward) { s_isDeferredPrePassStage = isForward; }
 		static bool GetDeferredPrePassStage() { return s_isDeferredPrePassStage; }
     private:
-        // Helper methods for texture replacement
         static void SetScopeTexture(ID3D11DeviceContext* pContext);
 		static bool IsTargetDrawCall(const BufferInfo& vertexInfo, const BufferInfo& indexInfo, UINT indexCount);
 		static UINT GetVertexBuffersInfo(ID3D11DeviceContext* pContext, std::vector<BufferInfo>& outInfos, UINT maxSlotsToCheck = D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT);
