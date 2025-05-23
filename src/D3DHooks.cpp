@@ -18,6 +18,10 @@ namespace ThroughScope {
 	WNDPROC D3DHooks::s_OriginalWndProc = nullptr;
 	HRESULT(WINAPI* D3DHooks::s_OriginalPresent)(IDXGISwapChain*, UINT, UINT) = nullptr;
 	RECT D3DHooks::oldRect{};
+	IAStateCache D3DHooks::s_CachedIAState;
+	VSStateCache D3DHooks::s_CachedVSState;
+	RSStateCache D3DHooks::s_CachedRSState;  // 新增
+	bool D3DHooks::s_HasCachedState = false;
 
 	bool D3DHooks::s_isForwardStage = false;
 
@@ -132,41 +136,62 @@ namespace ThroughScope {
 		logger::info("D3D11 hooks initialized successfully");
 		return true;
     }
+
+
     
     void WINAPI D3DHooks::hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) {
         // Check if the current draw call is for our scope quad
 
-		if (!s_EnableRender)
+		if (!s_EnableRender || RenderUtilities::IsRender_PreUIComplete())
 		{
-			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
+			phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
+			RenderUtilities::SetRender_PreUIComplete(false);
+			return;
 		}
 
         bool isScopeQuad = IsScopeQuadBeingDrawn(pContext, IndexCount);
         
-        if (isScopeQuad) {
+        if (isScopeQuad) 
+		{
 
+			CacheIAState(pContext);
+			CacheVSState(pContext);
+			CacheRSState(pContext);
+			s_HasCachedState = true;
 			// Save current shader resources
-			ID3D11ShaderResourceView* psShaderResources[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = { nullptr };
-			pContext->PSGetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, psShaderResources);
+			//ID3D11ShaderResourceView* psShaderResources[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = { nullptr };
+			//pContext->PSGetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, psShaderResources);
 
-			// Clear any shader resources that might conflict with render targets
-			ID3D11ShaderResourceView* nullSRV[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = { nullptr };
-			pContext->PSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullSRV);
+			//// Clear any shader resources that might conflict with render targets
+			//ID3D11ShaderResourceView* nullSRV[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = { nullptr };
+			//pContext->PSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullSRV);
 
-			SetScopeTexture(pContext);
-
-			if (ScopeCamera::IsRenderingForScope())
-				return phookD3D11DrawIndexed(pContext, 0, 0, 0);
-
+			//SetScopeTexture(pContext);
+			//return phookD3D11DrawIndexed(pContext, 0, 0, 0);
+			//if (ScopeCamera::IsRenderingForScope())
+			//	return phookD3D11DrawIndexed(pContext, 0, 0, 0);
+   //         // Call the original DrawIndexed
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
-            // Call the original DrawIndexed
-			//return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
             
         } else {
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
         }
     }
 
+	void D3DHooks::RestoreAllCachedStates(ID3D11DeviceContext* pContext)
+	{
+		if (s_HasCachedState) {
+			RestoreIAState(pContext);
+			RestoreVSState(pContext);
+			RestoreRSState(pContext);
+
+			// 清除缓存
+			s_CachedIAState.Clear();
+			s_CachedVSState.Clear();
+			s_CachedRSState.Clear();
+			s_HasCachedState = false;
+		}
+	}
 
 	bool D3DHooks::IsTargetDrawCall(const BufferInfo& vertexInfo, const BufferInfo& indexInfo, UINT indexCount)
 	{
@@ -176,6 +201,17 @@ namespace ThroughScope {
 			//&& indexInfo.offset == 2133504
 			&& indexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE 
 			&& vertexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE;
+	}
+
+	bool D3DHooks::IsTargetDrawCall(std::vector<BufferInfo> vertexInfos, const BufferInfo& indexInfo, UINT indexCount)
+	{
+		UINT strideCount = 0;
+		for (auto& info : vertexInfos) {
+			strideCount += info.stride;
+		}
+		return strideCount == TARGET_STRIDE && indexCount == TARGET_INDEX_COUNT
+		       //&& indexInfo.offset == 2133504
+		       && indexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE && vertexInfos[0].desc.ByteWidth == TARGET_BUFFER_SIZE;
 	}
 
 	UINT D3DHooks::GetVertexBuffersInfo(
@@ -266,6 +302,76 @@ namespace ThroughScope {
 		}
 
 		return false;
+	}
+	
+	bool D3DHooks::IsScopeQuadBeingDrawnShape(ID3D11DeviceContext* pContext, UINT IndexCount)
+	{
+		if (IndexCount != TARGET_INDEX_COUNT || s_isForwardStage)
+			return false;
+
+		auto playerCharacter = RE::PlayerCharacter::GetSingleton();
+		if (!playerCharacter || !playerCharacter->Get3D())
+			return false;
+
+		std::vector<BufferInfo> vertexInfo;
+		BufferInfo indexInfo;
+		if (!GetVertexBuffersInfo(pContext, vertexInfo) || !GetIndexBufferInfo(pContext, indexInfo))
+			return false;
+
+		 // Get pixel shader resources to check for the textures
+		ID3D11ShaderResourceView* psSRVs[3] = { nullptr };
+		pContext->PSGetShaderResources(0, 3, psSRVs);
+
+		bool foundTargetTextures = true;
+
+		// Check the three SRVs
+		for (int i = 0; i < 3; i++) {
+			if (!psSRVs[i]) {
+				foundTargetTextures = false;
+				break;
+			}
+
+			// Get the resource from SRV
+			ID3D11Resource* resource = nullptr;
+			psSRVs[i]->GetResource(&resource);
+
+			if (!resource) {
+				foundTargetTextures = false;
+				break;
+			}
+
+			// Check if it's a texture 2D
+			ID3D11Texture2D* texture = nullptr;
+			HRESULT hr = resource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&texture);
+			resource->Release();
+
+			if (FAILED(hr) || !texture) {
+				foundTargetTextures = false;
+				break;
+			}
+
+			// Get texture description to check dimensions and format
+			D3D11_TEXTURE2D_DESC desc;
+			texture->GetDesc(&desc);
+			texture->Release();
+
+			// Check if dimensions are 1x1 and format is R8G8B8A8_UNORM
+			if (desc.Width != 1 || desc.Height != 1 ||
+				desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM) {
+				foundTargetTextures = false;
+				break;
+			}
+		}
+
+		// Release the SRVs
+		for (int i = 0; i < 3; i++) {
+			if (psSRVs[i]) {
+				psSRVs[i]->Release();
+			}
+		}
+
+		// Return true if this is our target draw call
+		return foundTargetTextures;
 	}
     
     void D3DHooks::SetScopeTexture(ID3D11DeviceContext* pContext)
@@ -416,6 +522,36 @@ namespace ThroughScope {
 			}
 
 			logger::info("Successfully created all scope rendering resources");
+
+			 D3D11_BLEND_DESC blendDesc = {};
+			blendDesc.AlphaToCoverageEnable = FALSE;
+			blendDesc.IndependentBlendEnable = FALSE;
+
+			// 设置第一个渲染目标的混合状态
+			blendDesc.RenderTarget[0].BlendEnable = TRUE;
+
+			// 源混合因子：使用源颜色的Alpha
+			blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+			blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+			blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+
+			// Alpha混合：直接使用源Alpha覆盖
+			blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+			blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+			blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+
+			// 写入所有颜色通道
+			blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+			hr = device->CreateBlendState(&blendDesc, &blendState);
+			if (FAILED(hr)) {
+				logger::error("Failed to create blend state: 0x{:X}", hr);
+				// 清理其他已创建的资源...
+				device->Release();
+				return;
+			}
+
+			logger::info("Successfully created all scope rendering resources including blend state");
 		}
 
 		// 复制/解析纹理内容
@@ -488,6 +624,8 @@ namespace ThroughScope {
 			pContext->Unmap(constantBuffer, 0);
 		}
 
+		FLOAT blendFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		pContext->OMSetBlendState(blendState, blendFactor, 0xffffffff);
 		pContext->PSSetConstantBuffers(0, 1, &constantBuffer);
 
 		// 设置我们的像素着色器
@@ -556,8 +694,170 @@ namespace ThroughScope {
 	BOOL __stdcall D3DHooks::ClipCursorHook(RECT* lpRect)
 	{
 		if (imguiMgr->IsMenuOpen()) {
+			if (!lpRect)
+				return false;
 			*lpRect = oldRect;
 		}
 		return phookClipCursor(lpRect);
+	}
+
+	void D3DHooks::CacheIAState(ID3D11DeviceContext* pContext)
+	{
+		// 缓存Input Layout
+		pContext->IAGetInputLayout(s_CachedIAState.inputLayout.GetAddressOf());
+
+		// 缓存Vertex Buffers
+		pContext->IAGetVertexBuffers(0, IAStateCache::MAX_VERTEX_BUFFERS,
+			reinterpret_cast<ID3D11Buffer**>(s_CachedIAState.vertexBuffers),
+			s_CachedIAState.strides,
+			s_CachedIAState.offsets);
+
+		// 缓存Index Buffer
+		pContext->IAGetIndexBuffer(s_CachedIAState.indexBuffer.GetAddressOf(),
+			&s_CachedIAState.indexFormat,
+			&s_CachedIAState.indexOffset);
+
+		// 缓存Primitive Topology
+		pContext->IAGetPrimitiveTopology(&s_CachedIAState.topology);
+	}
+
+	void D3DHooks::CacheVSState(ID3D11DeviceContext* pContext)
+	{
+		// 获取D3D11设备
+		ID3D11Device* device = nullptr;
+		pContext->GetDevice(&device);
+		if (!device) {
+			logger::error("Failed to get D3D11 device in CacheVSState");
+			return;
+		}
+
+		// 缓存Vertex Shader
+		ID3D11ClassInstance* classInstances[256];
+		UINT numClassInstances = 256;
+		pContext->VSGetShader(s_CachedVSState.vertexShader.GetAddressOf(),
+			classInstances, &numClassInstances);
+
+		// 释放class instances（如果有的话）
+		for (UINT i = 0; i < numClassInstances; ++i) {
+			if (classInstances[i]) {
+				classInstances[i]->Release();
+			}
+		}
+
+		// 缓存Constant Buffers - 获取原始指针并创建副本
+		pContext->VSGetConstantBuffers(0, VSStateCache::MAX_CONSTANT_BUFFERS,
+			reinterpret_cast<ID3D11Buffer**>(s_CachedVSState.originalConstantBuffers));
+
+		// 为每个绑定的常量缓冲区创建副本并复制数据
+		for (UINT i = 0; i < VSStateCache::MAX_CONSTANT_BUFFERS; ++i) {
+			if (s_CachedVSState.originalConstantBuffers[i].Get()) {
+				// 获取原始缓冲区描述
+				D3D11_BUFFER_DESC originalDesc;
+				s_CachedVSState.originalConstantBuffers[i]->GetDesc(&originalDesc);
+
+				// 创建可读的副本缓冲区
+				D3D11_BUFFER_DESC copyDesc = originalDesc;
+				copyDesc.Usage = D3D11_USAGE_DEFAULT;
+				copyDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+				copyDesc.CPUAccessFlags = 0;
+				copyDesc.MiscFlags = 0;
+
+				HRESULT hr = device->CreateBuffer(&copyDesc, nullptr,
+					s_CachedVSState.copiedConstantBuffers[i].GetAddressOf());
+
+				if (SUCCEEDED(hr)) {
+					// 复制缓冲区内容
+					pContext->CopyResource(s_CachedVSState.copiedConstantBuffers[i].Get(),
+						s_CachedVSState.originalConstantBuffers[i].Get());
+				} else {
+					logger::error("Failed to create copy of constant buffer {}: 0x{:X}", i, hr);
+					s_CachedVSState.copiedConstantBuffers[i].Reset();
+				}
+			}
+		}
+
+		// 缓存Shader Resources
+		pContext->VSGetShaderResources(0, VSStateCache::MAX_SHADER_RESOURCES,
+			reinterpret_cast<ID3D11ShaderResourceView**>(s_CachedVSState.shaderResources));
+
+		// 缓存Samplers
+		pContext->VSGetSamplers(0, VSStateCache::MAX_SAMPLERS,
+			reinterpret_cast<ID3D11SamplerState**>(s_CachedVSState.samplers));
+
+		device->Release();
+	}
+
+	void D3DHooks::RestoreIAState(ID3D11DeviceContext* pContext)
+	{
+		if (!s_HasCachedState)
+			return;
+
+		// 恢复Input Layout
+		pContext->IASetInputLayout(s_CachedIAState.inputLayout.Get());
+
+		// 恢复Vertex Buffers
+		ID3D11Buffer* vertexBuffers[IAStateCache::MAX_VERTEX_BUFFERS];
+		for (int i = 0; i < IAStateCache::MAX_VERTEX_BUFFERS; ++i) {
+			vertexBuffers[i] = s_CachedIAState.vertexBuffers[i].Get();
+		}
+		pContext->IASetVertexBuffers(0, IAStateCache::MAX_VERTEX_BUFFERS,
+			vertexBuffers, s_CachedIAState.strides, s_CachedIAState.offsets);
+
+		// 恢复Index Buffer
+		pContext->IASetIndexBuffer(s_CachedIAState.indexBuffer.Get(),
+			s_CachedIAState.indexFormat, s_CachedIAState.indexOffset);
+
+		// 恢复Primitive Topology
+		pContext->IASetPrimitiveTopology(s_CachedIAState.topology);
+	}
+
+	void D3DHooks::RestoreVSState(ID3D11DeviceContext* pContext)
+	{
+		if (!s_HasCachedState)
+			return;
+
+		// 恢复Vertex Shader
+		pContext->VSSetShader(s_CachedVSState.vertexShader.Get(), nullptr, 0);
+
+		// 恢复Constant Buffers - 使用复制的缓冲区
+		ID3D11Buffer* constantBuffers[VSStateCache::MAX_CONSTANT_BUFFERS];
+		for (int i = 0; i < VSStateCache::MAX_CONSTANT_BUFFERS; ++i) {
+			// 优先使用复制的缓冲区，如果没有则使用原始指针
+			if (s_CachedVSState.copiedConstantBuffers[i].Get()) {
+				constantBuffers[i] = s_CachedVSState.copiedConstantBuffers[i].Get();
+			} else {
+				constantBuffers[i] = s_CachedVSState.originalConstantBuffers[i].Get();
+			}
+		}
+		pContext->VSSetConstantBuffers(0, VSStateCache::MAX_CONSTANT_BUFFERS, constantBuffers);
+
+		// 恢复Shader Resources
+		ID3D11ShaderResourceView* shaderResources[VSStateCache::MAX_SHADER_RESOURCES];
+		for (int i = 0; i < VSStateCache::MAX_SHADER_RESOURCES; ++i) {
+			shaderResources[i] = s_CachedVSState.shaderResources[i].Get();
+		}
+		pContext->VSSetShaderResources(0, VSStateCache::MAX_SHADER_RESOURCES, shaderResources);
+
+		// 恢复Samplers
+		ID3D11SamplerState* samplers[VSStateCache::MAX_SAMPLERS];
+		for (int i = 0; i < VSStateCache::MAX_SAMPLERS; ++i) {
+			samplers[i] = s_CachedVSState.samplers[i].Get();
+		}
+		pContext->VSSetSamplers(0, VSStateCache::MAX_SAMPLERS, samplers);
+	}
+
+	void D3DHooks::CacheRSState(ID3D11DeviceContext* pContext)
+	{
+		// 缓存Rasterizer State
+		pContext->RSGetState(s_CachedRSState.rasterizerState.GetAddressOf());
+	}
+
+	void D3DHooks::RestoreRSState(ID3D11DeviceContext* pContext)
+	{
+		if (!s_HasCachedState)
+			return;
+
+		// 恢复Rasterizer State
+		pContext->RSSetState(s_CachedRSState.rasterizerState.Get());
 	}
 }

@@ -14,6 +14,7 @@ namespace ThroughScope
     RE::NiTexture* RenderUtilities::s_ScopeNiTexture = nullptr;
     bool RenderUtilities::s_FirstPassComplete = false;
     bool RenderUtilities::s_SecondPassComplete = false;
+	bool RenderUtilities::s_Render_PreUIComplete = false;
 
 
     bool RenderUtilities::Initialize()

@@ -38,6 +38,8 @@ namespace ThroughScope
         static void SetFirstPassComplete(bool value) { s_FirstPassComplete = value; }
         static bool IsSecondPassComplete() { return s_SecondPassComplete; }
         static void SetSecondPassComplete(bool value) { s_SecondPassComplete = value; }
+		static bool IsRender_PreUIComplete() { return s_Render_PreUIComplete; }
+		static void SetRender_PreUIComplete(bool value) { s_Render_PreUIComplete = value; }
         
         // Scope texture management
         static RE::BSGraphics::Texture* GetScopeBSTexture() { return s_ScopeBSTexture; }
@@ -58,5 +60,6 @@ namespace ThroughScope
         // Status flags
         static bool s_FirstPassComplete;
         static bool s_SecondPassComplete;
+		static bool s_Render_PreUIComplete;
     };
 }

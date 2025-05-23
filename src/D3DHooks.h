@@ -8,6 +8,88 @@
 
 namespace ThroughScope {
 	using namespace DirectX;
+
+	struct RSStateCache
+	{
+		// Rasterizer State
+		Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerState;
+
+		void Clear()
+		{
+			rasterizerState.Reset();
+		}
+	};
+
+
+	struct IAStateCache
+	{
+		// Input Layout
+		Microsoft::WRL::ComPtr<ID3D11InputLayout> inputLayout;
+
+		// Vertex Buffers
+		static constexpr UINT MAX_VERTEX_BUFFERS = 16;
+		Microsoft::WRL::ComPtr<ID3D11Buffer> vertexBuffers[MAX_VERTEX_BUFFERS];
+		UINT strides[MAX_VERTEX_BUFFERS];
+		UINT offsets[MAX_VERTEX_BUFFERS];
+
+		// Index Buffer
+		Microsoft::WRL::ComPtr<ID3D11Buffer> indexBuffer;
+		DXGI_FORMAT indexFormat;
+		UINT indexOffset;
+
+		// Primitive Topology
+		D3D11_PRIMITIVE_TOPOLOGY topology;
+
+		void Clear()
+		{
+			inputLayout.Reset();
+			for (int i = 0; i < MAX_VERTEX_BUFFERS; ++i) {
+				vertexBuffers[i].Reset();
+				strides[i] = 0;
+				offsets[i] = 0;
+			}
+			indexBuffer.Reset();
+			indexFormat = DXGI_FORMAT_UNKNOWN;
+			indexOffset = 0;
+			topology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+		}
+	};
+
+	struct VSStateCache
+	{
+		// Vertex Shader
+		Microsoft::WRL::ComPtr<ID3D11VertexShader> vertexShader;
+
+		// Constant Buffers - 保存原始指针和拷贝的缓冲区
+		static constexpr UINT MAX_CONSTANT_BUFFERS = 14;
+		Microsoft::WRL::ComPtr<ID3D11Buffer> originalConstantBuffers[MAX_CONSTANT_BUFFERS];
+		Microsoft::WRL::ComPtr<ID3D11Buffer> copiedConstantBuffers[MAX_CONSTANT_BUFFERS];
+
+		// Shader Resources
+		static constexpr UINT MAX_SHADER_RESOURCES = 128;
+		Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> shaderResources[MAX_SHADER_RESOURCES];
+
+		// Samplers
+		static constexpr UINT MAX_SAMPLERS = 16;
+		Microsoft::WRL::ComPtr<ID3D11SamplerState> samplers[MAX_SAMPLERS];
+
+		void Clear()
+		{
+			vertexShader.Reset();
+			for (int i = 0; i < MAX_CONSTANT_BUFFERS; ++i) {
+				originalConstantBuffers[i].Reset();
+				copiedConstantBuffers[i].Reset();
+			}
+			for (int i = 0; i < MAX_SHADER_RESOURCES; ++i) {
+				shaderResources[i].Reset();
+			}
+			for (int i = 0; i < MAX_SAMPLERS; ++i) {
+				samplers[i].Reset();
+			}
+		}
+	};
+
+
     class D3DHooks 
 	{
 	private:
@@ -47,6 +129,7 @@ namespace ThroughScope {
 		static HRESULT WINAPI hkPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags);
 		static LRESULT CALLBACK hkWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
         static bool IsScopeQuadBeingDrawn(ID3D11DeviceContext* pContext, UINT IndexCount);
+        static bool IsScopeQuadBeingDrawnShape(ID3D11DeviceContext* pContext, UINT IndexCount);
 		static BOOL __stdcall ClipCursorHook(RECT* lpRect);
 
         static ID3D11ShaderResourceView* s_ScopeTextureView;
@@ -72,6 +155,13 @@ namespace ThroughScope {
 		static HWND s_GameWindow;
 		static RECT oldRect;
 		static bool s_InPresent;  // 防止递归调用的标志
+		static IAStateCache s_CachedIAState;
+		static VSStateCache s_CachedVSState;
+		static RSStateCache s_CachedRSState;  // 新增
+		static bool s_HasCachedState;
+
+		
+		
 
 	public:
 		static void SetForwardStage(bool isForward) { s_isForwardStage = isForward; }
@@ -80,9 +170,18 @@ namespace ThroughScope {
 		static bool GetDoZPrePassStage() { return s_isDoZPrePassStage; }
 		static void SetDeferredPrePassStage(bool isForward) { s_isDeferredPrePassStage = isForward; }
 		static bool GetDeferredPrePassStage() { return s_isDeferredPrePassStage; }
-    private:
         static void SetScopeTexture(ID3D11DeviceContext* pContext);
+		// 添加缓存和恢复方法
+		static void CacheIAState(ID3D11DeviceContext* pContext);
+		static void CacheVSState(ID3D11DeviceContext* pContext);
+		static void CacheRSState(ID3D11DeviceContext* pContext);
+		static void RestoreIAState(ID3D11DeviceContext* pContext);
+		static void RestoreVSState(ID3D11DeviceContext* pContext);
+		static void RestoreRSState(ID3D11DeviceContext* pContext);
+		static void RestoreAllCachedStates(ID3D11DeviceContext* pContext);
+    private:
 		static bool IsTargetDrawCall(const BufferInfo& vertexInfo, const BufferInfo& indexInfo, UINT indexCount);
+		static bool IsTargetDrawCall(std::vector<BufferInfo> vertexInfos, const BufferInfo& indexInfo, UINT indexCount);
 		static UINT GetVertexBuffersInfo(ID3D11DeviceContext* pContext, std::vector<BufferInfo>& outInfos, UINT maxSlotsToCheck = D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT);
 		static bool GetIndexBufferInfo(ID3D11DeviceContext* pContext, BufferInfo& outInfo);
     };

@@ -57,4 +57,7 @@ namespace ThroughScope
 		inline static const std::string ANIM_EVENT_SCOPE_START = "sightedTransitionStart";
 		inline static const std::string ANIM_EVENT_SCOPE_END = "sightedTransitionEnd";
 	};
+
+	
+
 }

@@ -31,8 +31,8 @@ cbuffer ScopeConstants : register(b0)
 struct PS_INPUT
 {
     float4 position : SV_POSITION;
-    float4 texCoord : TEXCOORD;
-    float4 color0 : COLOR;
+    //float4 texCoord : TEXCOORD;
+    //float4 color0 : COLOR;
     //float4 color0 : COLOR0;
     //float4 fogColor : COLOR1;
 };
@@ -81,12 +81,21 @@ float4 main(PS_INPUT input) : SV_TARGET
     float distToCenter = distance(aspectCorrectTex, scope_center);
 
     float parallaxValue = (step(distToCenter, 2) * getparallax(distToParallax, float2(1, 1), 1));
+   // 十字线绘制 - 修复版本
+    float2 pos = input.position.xy;
+    float2 centerPos = float2(screenWidth, screenHeight) / 2.0; // 修正屏幕中心计算
+    float lineWidth = 2.0; // 增加线条宽度
     
-    if (texCoord.x >= 0.48 && texCoord.x <= 0.52)
-        color.r = 1;
+    // 绘制垂直线
+    bool isVerticalLine = abs(pos.x - centerPos.x) <= lineWidth;
+    // 绘制水平线  
+    bool isHorizontalLine = abs(pos.y - centerPos.y) <= lineWidth;
     
-    if (texCoord.y >= 0.48 && texCoord.y <= 0.52)
-        color.r = 1;
+    // 如果在十字线上，设置红色
+    if (isVerticalLine || isHorizontalLine)
+    {
+        color = float4(1, 0, 0, 1); // 红色十字线
+    }
     
     // Apply final effect
     color.rgb *= parallaxValue;

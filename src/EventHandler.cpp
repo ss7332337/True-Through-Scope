@@ -151,42 +151,6 @@ namespace ThroughScope
 		if (!weapon)
 			return false;
 
-		// Check weapon mods/components for scopes
-		// This is a simplified example - you'll need to customize this based on
-		// how scopes are identified in your game setup
-
-		// Get object modifications
-		//auto modifiableWeapon = weapon->As<RE::TESObjectWEAPMods>();
-		//if (!modifiableWeapon)
-		//	return false;
-
-		//// Check attached mods for anything that looks like a scope
-		//for (auto& mod : modifiableWeapon->weaponMods) {
-		//	if (!mod)
-		//		continue;
-
-		//	// Check mod name or properties - you might need to check specific mod types or keywords
-		//	std::string modName = mod->GetName();
-		//	if (modName.find("Scope") != std::string::npos ||
-		//		modName.find("scope") != std::string::npos ||
-		//		modName.find("Sight") != std::string::npos ||
-		//		modName.find("sight") != std::string::npos) {
-		//		return true;
-		//	}
-
-		//	// Check if mod contains scope keyword
-		//	for (uint32_t i = 0; i < mod->GetNumKeywords(); i++) {
-		//		auto keyword = mod->GetKeywordAt(i);
-		//		if (keyword) {
-		//			std::string keywordStr = keyword->GetFormEditorID();
-		//			if (keywordStr.find("Scope") != std::string::npos ||
-		//				keywordStr.find("scope") != std::string::npos) {
-		//				return true;
-		//			}
-		//		}
-		//	}
-		//}
-
 		return false;
 	}
 }

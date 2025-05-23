@@ -305,20 +305,24 @@ namespace ThroughScope
             // Tabs
             ImGui::BeginTabBar("MainTabs");
             
-            if (ImGui::BeginTabItem("Camera Adjustment")) {
+            if (ImGui::BeginTabItem("Camera Adjustment")) 
+			{
 				auto ttsNode = GetTTSNode();
-				m_DeltaPosX = ttsNode->local.translate.x;
-				m_DeltaPosY = ttsNode->local.translate.y;
-				m_DeltaPosZ = ttsNode->local.translate.z;
-				RE::NiPoint3 ttsNodeRot;
-				ttsNode->local.rotate.ToEulerAnglesXYZ(ttsNodeRot);
-				m_DeltaRot[0] = ttsNodeRot.x;
-				m_DeltaRot[1] = ttsNodeRot.y;
-				m_DeltaRot[2] = ttsNodeRot.z;
-				m_DeltaScale = ttsNode->local.scale;
+				if (ttsNode) {
+					m_DeltaPosX = ttsNode->local.translate.x;
+					m_DeltaPosY = ttsNode->local.translate.y;
+					m_DeltaPosZ = ttsNode->local.translate.z;
+					RE::NiPoint3 ttsNodeRot;
+					ttsNode->local.rotate.ToEulerAnglesXYZ(ttsNodeRot);
+					m_DeltaRot[0] = ttsNodeRot.x;
+					m_DeltaRot[1] = ttsNodeRot.y;
+					m_DeltaRot[2] = ttsNodeRot.z;
+					m_DeltaScale = ttsNode->local.scale;
 
-				RenderCameraAdjustmentPanel();
-                ImGui::EndTabItem();
+					RenderCameraAdjustmentPanel();
+					ImGui::EndTabItem();
+				} else
+					ImGui::EndTabItem();
             }
             
             if (ImGui::BeginTabItem("Rendering")) {
