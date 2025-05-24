@@ -39,6 +39,12 @@ namespace ThroughScope {
 	constexpr UINT MAX_SAMPLER_SLOTS = 16;
 	constexpr UINT MAX_CB_SLOTS = 14; 
 
+	float D3DHooks::s_CurrentRelativeFogRadius = 0.5f;
+	float D3DHooks::s_CurrentScopeSwayAmount = 0.1f;
+	float D3DHooks::s_CurrentMaxTravel = 0.05f;
+	float D3DHooks::s_CurrentRadius = 0.3f;
+
+
 	/*static constexpr UINT TARGET_STRIDE = 12;
 	static constexpr UINT TARGET_INDEX_COUNT = 6;*/
 	//static constexpr UINT TARGET_STRIDE = 20;
@@ -85,6 +91,16 @@ namespace ThroughScope {
 		}
 
 		return hr;
+	}
+
+	void D3DHooks::UpdateScopeSettings(float relativeFogRadius, float scopeSwayAmount, float maxTravel, float radius)
+	{
+		s_CurrentRelativeFogRadius = relativeFogRadius;
+		s_CurrentScopeSwayAmount = scopeSwayAmount;
+		s_CurrentMaxTravel = maxTravel;
+		s_CurrentRadius = radius;
+
+		logger::info("Updated D3D scope settings - Parallax: {:.3f}, {:.3f}, {:.3f}, {:.3f}", relativeFogRadius, scopeSwayAmount, maxTravel, radius);
 	}
 
 	D3DHooks* D3DHooks::GetSington()
@@ -158,19 +174,6 @@ namespace ThroughScope {
 			CacheVSState(pContext);
 			CacheRSState(pContext);
 			s_HasCachedState = true;
-			// Save current shader resources
-			//ID3D11ShaderResourceView* psShaderResources[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = { nullptr };
-			//pContext->PSGetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, psShaderResources);
-
-			//// Clear any shader resources that might conflict with render targets
-			//ID3D11ShaderResourceView* nullSRV[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = { nullptr };
-			//pContext->PSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullSRV);
-
-			//SetScopeTexture(pContext);
-			//return phookD3D11DrawIndexed(pContext, 0, 0, 0);
-			//if (ScopeCamera::IsRenderingForScope())
-			//	return phookD3D11DrawIndexed(pContext, 0, 0, 0);
-   //         // Call the original DrawIndexed
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
             
         } else {
@@ -597,26 +600,26 @@ namespace ThroughScope {
 				0, 0, 0, 1
 			};
 
-			 rotationMatrix._11 = playerCamera->world.rotate.entry[0].x;
-			 rotationMatrix._12 = playerCamera->world.rotate.entry[0].y;
-			 rotationMatrix._13 = playerCamera->world.rotate.entry[0].z;
-			 rotationMatrix._14 = playerCamera->world.rotate.entry[0].w;
+			rotationMatrix._11 = playerCamera->world.rotate.entry[0].x;
+			rotationMatrix._12 = playerCamera->world.rotate.entry[0].y;
+			rotationMatrix._13 = playerCamera->world.rotate.entry[0].z;
+			rotationMatrix._14 = playerCamera->world.rotate.entry[0].w;
 
-			 rotationMatrix._21 = playerCamera->world.rotate.entry[1].x;
-			 rotationMatrix._22 = playerCamera->world.rotate.entry[1].y;
-			 rotationMatrix._23 = playerCamera->world.rotate.entry[1].z;
-			 rotationMatrix._24 = playerCamera->world.rotate.entry[1].w;
+			rotationMatrix._21 = playerCamera->world.rotate.entry[1].x;
+			rotationMatrix._22 = playerCamera->world.rotate.entry[1].y;
+			rotationMatrix._23 = playerCamera->world.rotate.entry[1].z;
+			rotationMatrix._24 = playerCamera->world.rotate.entry[1].w;
 
-			 rotationMatrix._31 = playerCamera->world.rotate.entry[2].x;
-			 rotationMatrix._32 = playerCamera->world.rotate.entry[2].y;
-			 rotationMatrix._33 = playerCamera->world.rotate.entry[2].z;
-			 rotationMatrix._34 = playerCamera->world.rotate.entry[2].w;
+			rotationMatrix._31 = playerCamera->world.rotate.entry[2].x;
+			rotationMatrix._32 = playerCamera->world.rotate.entry[2].y;
+			rotationMatrix._33 = playerCamera->world.rotate.entry[2].z;
+			rotationMatrix._34 = playerCamera->world.rotate.entry[2].w;
 
 			// 效果强度参数 - 可以通过配置文件或UI调整
-			cbData->parallax_Radius = 2.0f;              // 折射强度
-			cbData->parallax_relativeFogRadius = 8.0f;  // 视差强度
-			cbData->parallax_scopeSwayAmount = 2.0f;     // 暗角强度
-			cbData->parallax_maxTravel = 16.0f;           // 折射强度
+			cbData->parallax_Radius = s_CurrentRadius;  // 折射强度
+			cbData->parallax_relativeFogRadius = s_CurrentRelativeFogRadius;  // 视差强度
+			cbData->parallax_scopeSwayAmount = s_CurrentScopeSwayAmount;      // 暗角强度
+			cbData->parallax_maxTravel = s_CurrentMaxTravel;                  // 折射强度
 
 			//auto camMat = playerCamera->local.rotate.entry[0];
 			auto camMat = RE::PlayerCamera::GetSingleton() -> cameraRoot->local.rotate.entry[0];

@@ -59,6 +59,7 @@ namespace ThroughScope
 			bool thermalVision = false;
 		};
 
+		
 		struct ScopeConfig
 		{
 			WeaponConfig weaponConfig;
@@ -67,7 +68,10 @@ namespace ThroughScope
 			ScopeSettings scopeSettings;
 			int reticleIndex = -1;
 			std::string customReticlePath;
+			std::string modelName;
+			std::string nifFileName;
 		};
+
 
 		struct GlobalSettings
 		{
@@ -101,6 +105,7 @@ namespace ThroughScope
 
 		// Config management
 		bool GeneratePresetConfig(uint32_t localFormID, const std::string& modFileName);
+		bool GeneratePresetConfig(uint32_t localFormID, const std::string& modFileName, const std::string& nifFileName);
 		const ScopeConfig* GetConfig(const std::string& key) const;
 		std::vector<const ScopeConfig*> GetAllConfigs() const;
 		bool RemoveConfig(const std::string& key);

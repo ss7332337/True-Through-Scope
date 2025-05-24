@@ -2,7 +2,40 @@
 
 using namespace RE;
 
-bool NIFLoader::LoadNIF(const char* filePath)
+NIFLoader* NIFLoader::GetSington()
+{
+	static NIFLoader instance;
+	return &instance;
+}
+
+NiNode* NIFLoader::LoadNIF(const char* filePath)
+{
+	// Create a BSStream object to load the NIF file
+	BSStream* stream = BSStream::Create();
+
+	// Load the NIF file using BSStream::Load
+	if (!stream->Load(filePath)) {
+		logger::error("Failed to load NIF file: {}", filePath);
+		return nullptr;
+	}
+
+	NiObject* rootObject = stream->topObjects[0].get();
+	if (!rootObject) {
+		logger::error("Failed to get root object from NIF file");
+		return nullptr;
+	}
+
+	// Cast the root object to NiNode
+	NiNode* rootNode = rootObject->IsNode();
+	if (!rootNode) {
+		logger::error("Root object is not a NiNode");
+		return nullptr;
+	}
+
+	return rootNode;
+}
+
+bool NIFLoader::LoadNIFAndAttach(const char* filePath)
 {
 	// Create a BSStream object to load the NIF file
 	BSStream* stream = BSStream::Create();
@@ -34,9 +67,6 @@ bool NIFLoader::LoadNIF(const char* filePath)
 	NiUpdateData udata;
 	weaponnode->Update(udata);
 	rootNode->Update(udata);
-
-	// Process the NiNode and its children
-	//ProcessNiNode(rootNode);
 
 	return true;
 }

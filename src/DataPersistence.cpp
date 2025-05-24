@@ -189,6 +189,8 @@ namespace ThroughScope
 			config.reticleIndex = reticleJson["index"];
 			config.customReticlePath = reticleJson.value("customPath", "");
 
+			config.modelName = configJson.value("modelName", "");
+
 			// Add to multimap
 			m_Configurations.emplace(config.weaponConfig.GetKey(), config);
 
@@ -246,6 +248,8 @@ namespace ThroughScope
 				{ "customPath", config.customReticlePath }
 			};
 
+			configJson["modelName"] = config.modelName;
+
 			// Create directory if it doesn't exist
 			std::filesystem::create_directories(m_ConfigDirectory);
 
@@ -266,11 +270,12 @@ namespace ThroughScope
 		}
 	}
 
-	bool DataPersistence::GeneratePresetConfig(uint32_t localFormID, const std::string& modFileName)
+	bool DataPersistence::GeneratePresetConfig(uint32_t localFormID, const std::string& modFileName, const std::string& nifFileName)
 	{
 		ScopeConfig presetConfig;
 		presetConfig.weaponConfig.localFormID = localFormID;
 		presetConfig.weaponConfig.modFileName = modFileName;
+		presetConfig.modelName = nifFileName;
 
 		// Set default camera adjustments
 		presetConfig.cameraAdjustments = {
@@ -300,6 +305,11 @@ namespace ThroughScope
 		presetConfig.customReticlePath = "";
 
 		return SaveConfig(presetConfig);
+	}
+
+	bool DataPersistence::GeneratePresetConfig(uint32_t localFormID, const std::string& modFileName)
+	{
+		return GeneratePresetConfig(localFormID, modFileName, "");  // 默认空字符串
 	}
 
 	void DataPersistence::SetGlobalSettings(const GlobalSettings& settings)

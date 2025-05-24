@@ -24,7 +24,16 @@ namespace ThroughScope
         
         // Get target FOV
         static float GetTargetFOV() { return s_TargetFOV; }
-        static void SetTargetFOV(float fov) { s_TargetFOV = fov; }
+		static void SetTargetFOV(float fov)
+		{
+			s_TargetFOV = std::clamp(fov, minFov, maxFov);
+		}
+
+		static void SetFOVMinMax(float _minFov, float _maxFov)
+		{
+			minFov = _minFov;
+			maxFov = _maxFov;
+		}
         
         // Flag indicating if we're in scope render mode
         static bool IsRenderingForScope() { return s_IsRenderingForScope; }
@@ -49,6 +58,8 @@ namespace ThroughScope
         static RE::NiMatrix3 s_CachedDeltaRot;
 		static RE::NiPoint3 s_DeltaScale;
 		static RE::NiPoint3 s_CachedDeltaScale;
+		static float minFov;
+		static float maxFov;
         
         // State flags
         static bool s_OriginalFirstPerson;

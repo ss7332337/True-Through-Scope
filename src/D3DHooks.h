@@ -138,6 +138,8 @@ namespace ThroughScope {
 		static bool IsEnableRender() { return s_EnableRender; }
 		static void SetEnableRender(bool value) { s_EnableRender = value; }
 
+		static void UpdateScopeSettings(float relativeFogRadius, float scopeSwayAmount, float maxTravel, float radius);
+
 	private:
 		struct BufferInfo
 		{
@@ -160,8 +162,11 @@ namespace ThroughScope {
 		static RSStateCache s_CachedRSState;  // 新增
 		static bool s_HasCachedState;
 
-		
-		
+	private:
+		static float s_CurrentRelativeFogRadius;
+		static float s_CurrentScopeSwayAmount;
+		static float s_CurrentMaxTravel;
+		static float s_CurrentRadius;
 
 	public:
 		static void SetForwardStage(bool isForward) { s_isForwardStage = isForward; }

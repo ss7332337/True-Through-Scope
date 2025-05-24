@@ -267,11 +267,11 @@ namespace ThroughScope
 	{
 		m_DeltaPosX = 0.0f;
 		m_DeltaPosY = 0.0f;
-		m_DeltaPosZ = 0.0f;
+		m_DeltaPosZ = 6.5f;
 		m_DeltaRot[0] = 0.0f;
 		m_DeltaRot[1] = 0.0f;
 		m_DeltaRot[2] = 0.0f;
-		m_DeltaScale = 1.0f;
+		m_DeltaScale = 1.5f;
 
 		// Apply the reset values immediately if real-time is enabled
 		if (m_RealTimeAdjustment) {
@@ -282,6 +282,156 @@ namespace ThroughScope
 
 		snprintf(m_DebugText, sizeof(m_DebugText), "All adjustments reset!");
 	}
+
+	void ImGuiManager::ScanForNIFFiles()
+	{
+		if (m_NIFFilesScanned) {
+			return;  // 已经扫描过了
+		}
+
+		m_AvailableNIFFiles.clear();
+
+		try {
+			// 构建路径：Data/Meshes/TTS/ScopeShape/
+			std::filesystem::path dataPath = std::filesystem::current_path() / "Data" / "Meshes" / "TTS" / "ScopeShape";
+
+			if (!std::filesystem::exists(dataPath)) {
+				logger::warn("ScopeShape directory not found: {}", dataPath.string());
+				snprintf(m_DebugText, sizeof(m_DebugText), "ScopeShape directory not found!");
+				return;
+			}
+
+			// 扫描所有.nif文件
+			for (const auto& entry : std::filesystem::directory_iterator(dataPath)) {
+				if (entry.is_regular_file() && entry.path().extension() == ".nif") {
+					std::string fileName = entry.path().filename().string();
+					m_AvailableNIFFiles.push_back(fileName);
+					logger::info("Found NIF file: {}", fileName);
+				}
+			}
+
+			if (m_AvailableNIFFiles.empty()) {
+				logger::warn("No NIF files found in ScopeShape directory");
+				snprintf(m_DebugText, sizeof(m_DebugText), "No NIF files found in ScopeShape directory!");
+			} else {
+				logger::info("Found {} NIF files in ScopeShape directory", m_AvailableNIFFiles.size());
+				snprintf(m_DebugText, sizeof(m_DebugText), "Found %d NIF files", (int)m_AvailableNIFFiles.size());
+			}
+
+			m_NIFFilesScanned = true;
+		} catch (const std::exception& e) {
+			logger::error("Error scanning for NIF files: {}", e.what());
+			snprintf(m_DebugText, sizeof(m_DebugText), "Error scanning NIF files: %s", e.what());
+		}
+	}
+
+	void ImGuiManager::RemoveExistingTTSNode()
+	{
+		try {
+			auto playerCharacter = RE::PlayerCharacter::GetSingleton();
+			if (!playerCharacter || !playerCharacter->Get3D()) {
+				return;
+			}
+
+			auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
+			if (!weaponNode || !weaponNode->IsNode()) {
+				return;
+			}
+
+			auto weaponNiNode = static_cast<RE::NiNode*>(weaponNode);
+			auto existingTTSNode = weaponNiNode->GetObjectByName("TTSNode");
+
+			if (existingTTSNode) {
+				logger::info("Removing existing TTSNode");
+				weaponNiNode->DetachChild(existingTTSNode);
+
+				// 更新节点
+				RE::NiUpdateData updateData{};
+				updateData.camera = ScopeCamera::GetScopeCamera();
+				if (updateData.camera) {
+					weaponNiNode->Update(updateData);
+				}
+
+				snprintf(m_DebugText, sizeof(m_DebugText), "Existing TTSNode removed");
+			}
+		} catch (const std::exception& e) {
+			logger::error("Error removing existing TTSNode: {}", e.what());
+			snprintf(m_DebugText, sizeof(m_DebugText), "Error removing TTSNode: %s", e.what());
+		}
+	}
+
+
+	bool ImGuiManager::CreateTTSNodeFromNIF(const std::string& nifFileName)
+	{
+		try {
+			auto playerCharacter = RE::PlayerCharacter::GetSingleton();
+			if (!playerCharacter || !playerCharacter->Get3D()) {
+				logger::error("Player character or 3D not available");
+				snprintf(m_DebugText, sizeof(m_DebugText), "Player character not available!");
+				return false;
+			}
+
+			auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
+			if (!weaponNode || !weaponNode->IsNode()) {
+				logger::error("Weapon node not found or invalid");
+				snprintf(m_DebugText, sizeof(m_DebugText), "Weapon node not found!");
+				return false;
+			}
+
+			auto weaponNiNode = static_cast<RE::NiNode*>(weaponNode);
+
+			// 移除现有的TTSNode
+			RemoveExistingTTSNode();
+
+			// 构建完整的NIF文件路径
+			std::string fullPath = "Meshes\\TTS\\ScopeShape\\" + nifFileName;
+
+			logger::info("Loading NIF file: {}", fullPath);
+
+			// 使用NIFLoader加载NIF文件
+			auto nifLoader = NIFLoader::GetSington();
+			RE::NiNode* loadedNode = nifLoader->LoadNIF(fullPath.c_str());
+
+			if (!loadedNode) {
+				logger::error("Failed to load NIF file: {}", fullPath);
+				snprintf(m_DebugText, sizeof(m_DebugText), "Failed to load NIF: %s", nifFileName.c_str());
+				return false;
+			}
+
+			// 设置节点名称为TTSNode
+			loadedNode->name = "TTSNode";
+
+			// 设置初始变换
+			loadedNode->local.translate = RE::NiPoint3(0.0f, 0.0f, 6.5f);
+			loadedNode->local.rotate.MakeIdentity();
+			loadedNode->local.scale = 1.5f;
+
+			// 将加载的节点附加到武器节点
+			weaponNiNode->AttachChild(loadedNode, true);
+
+			// 更新节点变换
+			RE::NiUpdateData updateData{};
+			updateData.camera = ScopeCamera::GetScopeCamera();
+			if (updateData.camera) {
+				loadedNode->Update(updateData);
+				weaponNiNode->Update(updateData);
+			}
+
+			logger::info("TTSNode created successfully from: {}", nifFileName);
+			snprintf(m_DebugText, sizeof(m_DebugText), "TTSNode created from: %s", nifFileName.c_str());
+
+			// 重置调整值
+			ResetAllAdjustments();
+
+			return true;
+		} catch (const std::exception& e) {
+			logger::error("Exception creating TTSNode: {}", e.what());
+			snprintf(m_DebugText, sizeof(m_DebugText), "Exception: %s", e.what());
+			return false;
+		}
+	}
+
+
     
     void ImGuiManager::RenderMainMenu()
     {
@@ -294,25 +444,25 @@ namespace ThroughScope
         ImGui::SetNextWindowPos(ImVec2(center.x - menuWidth/2, center.y - menuHeight/2), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(menuWidth, menuHeight), ImGuiCond_FirstUseEver);
         
-        if (ImGui::Begin("TrueThroughScope Settings", &m_MenuOpen, ImGuiWindowFlags_MenuBar)) {
-            // Menu bar
-            if (ImGui::BeginMenuBar()) {
-                if (ImGui::MenuItem("About")) {
-                    // Implement about dialog if needed
-                }
-                ImGui::EndMenuBar();
-            }
-            
+        if (ImGui::Begin("TrueThroughScope Settings", &m_MenuOpen, ImGuiWindowFlags_MenuBar)) 
+		{
+
             // Tabs
             ImGui::BeginTabBar("MainTabs");
             
             if (ImGui::BeginTabItem("Camera Adjustment")) 
 			{
-				auto ttsNode = GetTTSNode();
 				RenderCameraAdjustmentPanel();
 				ImGui::EndTabItem();
             }
 
+			DataPersistence::WeaponInfo weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+			if (weaponInfo.currentConfig && ImGui::BeginTabItem("Scope Shape Switcher")) 
+			{
+				RenderModelSwitcher();
+				ImGui::EndTabItem();
+			}
+			
             if (ImGui::BeginTabItem("Debug")) {
                 RenderDebugPanel();
                 ImGui::EndTabItem();
@@ -354,6 +504,8 @@ namespace ThroughScope
 			ImGui::Separator();
 			ImGui::TextColored(m_WarningColor, "No configuration found");
 
+			ScanForNIFFiles();
+
 			// Show creation options
 			static int createOption = 0;  // 0 = weapon, 1 = first mod, etc.
 
@@ -380,12 +532,75 @@ namespace ThroughScope
 				ImGui::EndCombo();
 			}
 
+			ImGui::Spacing();
+			ImGui::TextColored(m_AccentColor, "Select Scope Shape (NIF File):");
+
+			if (m_AvailableNIFFiles.empty()) {
+				ImGui::TextColored(m_WarningColor, "No NIF files found in Meshes/TTS/ScopeShape/");
+
+				if (ImGui::Button("Rescan NIF Files")) {
+					m_NIFFilesScanned = false;
+					ScanForNIFFiles();
+				}
+			} else {
+				// NIF文件选择下拉框
+				const char* currentNIFName = m_SelectedNIFIndex < m_AvailableNIFFiles.size() ?
+				                                 m_AvailableNIFFiles[m_SelectedNIFIndex].c_str() :
+				                                 "None";
+
+				if (ImGui::BeginCombo("NIF File", currentNIFName)) {
+					for (int i = 0; i < m_AvailableNIFFiles.size(); i++) {
+						bool isSelected = (m_SelectedNIFIndex == i);
+						if (ImGui::Selectable(m_AvailableNIFFiles[i].c_str(), isSelected)) {
+							m_SelectedNIFIndex = i;
+						}
+						if (isSelected) {
+							ImGui::SetItemDefaultFocus();
+						}
+					}
+					ImGui::EndCombo();
+				}
+
+				ImGui::SameLine();
+				if (ImGui::Button("Rescan")) {
+					m_NIFFilesScanned = false;
+					ScanForNIFFiles();
+				}
+
+				// 预览当前TTSNode状态
+				ImGui::Spacing();
+				auto ttsNode = GetTTSNode();
+				if (ttsNode) {
+					ImGui::TextColored(m_SuccessColor, "TTSNode exists");
+					ImGui::SameLine();
+					if (ImGui::Button("Remove TTSNode")) {
+						RemoveExistingTTSNode();
+					}
+				} else {
+					ImGui::TextColored(m_WarningColor, "No TTSNode found");
+				}
+			}
+
+			ImGui::Spacing();
+
 			if (ImGui::Button("Create Configuration")) {
 				bool success = false;
+				std::string selectedNIF = "";
 
+				if (!m_AvailableNIFFiles.empty() && m_SelectedNIFIndex < m_AvailableNIFFiles.size()) {
+					selectedNIF = m_AvailableNIFFiles[m_SelectedNIFIndex];
+					if (CreateTTSNodeFromNIF(selectedNIF)) {
+						logger::info("TTSNode created from: {}", selectedNIF);
+					} else {
+						logger::error("Failed to create TTSNode from: {}", selectedNIF);
+						snprintf(m_DebugText, sizeof(m_DebugText), "Failed to create TTSNode!");
+					}
+				}
+
+				// 然后创建配置
 				if (createOption == 0) {
 					// Create for weapon
-					success = dataPersistence->GeneratePresetConfig(weaponInfo.weaponFormID, weaponInfo.weaponModName);
+					success = dataPersistence->GeneratePresetConfig(weaponInfo.weaponFormID, weaponInfo.weaponModName, selectedNIF);
 				} else if (createOption > 0 && createOption <= (int)weaponInfo.availableMods.size()) {
 					// Create for modification
 					auto modForm = weaponInfo.availableMods[createOption - 1];
@@ -395,7 +610,8 @@ namespace ThroughScope
 				}
 
 				if (success) {
-					snprintf(m_DebugText, sizeof(m_DebugText), "Configuration created successfully!");
+					snprintf(m_DebugText, sizeof(m_DebugText), "Configuration created successfully! Model: %s",
+						selectedNIF.empty() ? "None" : selectedNIF.c_str());
 					// Refresh the config
 					dataPersistence->LoadAllConfigs();
 				} else {
@@ -404,7 +620,7 @@ namespace ThroughScope
 			}
 
 			ImGui::Separator();
-			return;  // Don't show settings until config is created
+			return;
 		}
 
 		// 使用找到的配置继续处理...
@@ -739,6 +955,125 @@ namespace ThroughScope
 		if (strlen(m_DebugText) > 0) {
 			ImGui::TextWrapped("%s", m_DebugText);
 		}
+	}
+
+	void ImGuiManager::RenderModelSwitcher()
+	{
+		auto dataPersistence = DataPersistence::GetSingleton();
+		DataPersistence::WeaponInfo weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+		ScanForNIFFiles();
+
+		ImGui::TextColored(m_AccentColor, "Model Management");
+		ImGui::Separator();
+
+		if (weaponInfo.currentConfig) {
+			// 显示当前模型
+			if (!weaponInfo.currentConfig->modelName.empty()) {
+				ImGui::Text("Current Model: %s", weaponInfo.currentConfig->modelName.c_str());
+			} else {
+				ImGui::TextColored(m_WarningColor, "No model assigned to this configuration");
+			}
+
+			// 模型切换下拉框
+			if (!m_AvailableNIFFiles.empty()) {
+				// 找到当前模型在列表中的索引
+				int currentModelIndex = -1;
+				for (int i = 0; i < m_AvailableNIFFiles.size(); i++) {
+					if (m_AvailableNIFFiles[i] == weaponInfo.currentConfig->modelName) {
+						currentModelIndex = i;
+						break;
+					}
+				}
+
+				const char* previewText = currentModelIndex >= 0 ?
+				                              m_AvailableNIFFiles[currentModelIndex].c_str() :
+				                              "Select Model...";
+
+				if (ImGui::BeginCombo("Change Model", previewText)) {
+					for (int i = 0; i < m_AvailableNIFFiles.size(); i++) {
+						bool isSelected = (i == currentModelIndex);
+						if (ImGui::Selectable(m_AvailableNIFFiles[i].c_str(), isSelected)) {
+							// 用户选择了新的模型
+							std::string newModel = m_AvailableNIFFiles[i];
+
+							// 创建新的配置副本
+							auto modifiedConfig = *weaponInfo.currentConfig;
+							modifiedConfig.modelName = newModel;
+
+							if (dataPersistence->SaveConfig(modifiedConfig)) {
+								// 重新加载TTSNode
+								if (CreateTTSNodeFromNIF(newModel)) {
+									snprintf(m_DebugText, sizeof(m_DebugText),
+										"Model changed to: %s", newModel.c_str());
+								} else {
+									snprintf(m_DebugText, sizeof(m_DebugText),
+										"Failed to load new model: %s", newModel.c_str());
+								}
+							} else {
+								snprintf(m_DebugText, sizeof(m_DebugText),
+									"Failed to save configuration with new model");
+							}
+						}
+						if (isSelected) {
+							ImGui::SetItemDefaultFocus();
+						}
+					}
+					ImGui::EndCombo();
+				}
+			}
+		}
+	}
+
+	// 更新自动加载TTSNode的方法
+	bool ImGuiManager::AutoLoadTTSNodeFromConfig(const ThroughScope::DataPersistence::ScopeConfig* config)
+	{
+		if (!config || config->modelName.empty()) {
+			logger::warn("No model file specified in configuration");
+			return false;
+		}
+
+		// 检查是否已经有正确的TTSNode
+		auto existingTTSNode = GetTTSNode();
+		if (existingTTSNode) {
+			logger::info("TTSNode already exists, checking if reload is needed");
+		}
+
+		// 创建或重新创建TTSNode
+		if (CreateTTSNodeFromNIF(config->modelName)) {
+			// 应用保存的变换设置
+			auto ttsNode = GetTTSNode();
+			if (ttsNode) {
+				ttsNode->local.translate.x = config->cameraAdjustments.deltaPosX;
+				ttsNode->local.translate.y = config->cameraAdjustments.deltaPosY;
+				ttsNode->local.translate.z = config->cameraAdjustments.deltaPosZ;
+
+				// 应用旋转
+				float pitch = config->cameraAdjustments.deltaRot[0] * 0.01745329251f;  // 转换为弧度
+				float yaw = config->cameraAdjustments.deltaRot[1] * 0.01745329251f;
+				float roll = config->cameraAdjustments.deltaRot[2] * 0.01745329251f;
+
+				RE::NiMatrix3 rotMat;
+				rotMat.MakeIdentity();
+				rotMat.FromEulerAnglesXYZ(pitch, yaw, roll);
+				ttsNode->local.rotate = rotMat;
+
+				// 应用缩放
+				ttsNode->local.scale = config->cameraAdjustments.deltaScale;
+
+				// 更新节点
+				RE::NiUpdateData updateData{};
+				updateData.camera = ScopeCamera::GetScopeCamera();
+				if (updateData.camera) {
+					ttsNode->Update(updateData);
+				}
+
+				logger::info("TTSNode loaded and transformed from config: {}", config->modelName);
+				return true;
+			}
+		}
+
+		logger::error("Failed to auto-load TTSNode from config");
+		return false;
 	}
     
 }

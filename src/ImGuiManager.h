@@ -8,6 +8,8 @@
 #include "Constants.h"
 #include "RenderUtilities.h"
 
+#include "DataPersistence.h"
+
 namespace ThroughScope
 {
     class ImGuiManager
@@ -35,13 +37,19 @@ namespace ThroughScope
         void RenderCameraAdjustmentPanel();
         void RenderRenderingPanel();
         void RenderDebugPanel();    
-
 		// Helper functions for real-time adjustments
 		void ApplyPositionAdjustment();
 		void ApplyRotationAdjustment();
 		void ApplyScaleAdjustment();
 		void ResetAllAdjustments();
 		RE::NiAVObject* GetTTSNode();
+
+		void ScanForNIFFiles();
+		bool CreateTTSNodeFromNIF(const std::string& nifFileName);
+		void RemoveExistingTTSNode();
+		bool AutoLoadTTSNodeFromConfig(const ThroughScope::DataPersistence::ScopeConfig* config);
+		void RenderModelSwitcher();
+		std::vector<std::string> GetNIFFileList() const { return m_AvailableNIFFiles; }
         
         // State variables
         bool m_Initialized = false;
@@ -50,9 +58,9 @@ namespace ThroughScope
 		// Camera adjustment settings
 		float m_DeltaPosX = 0.0f;
 		float m_DeltaPosY = 0.0f;
-		float m_DeltaPosZ = 0.0f;
+		float m_DeltaPosZ = 6.5f;
 		float m_DeltaRot[3] = { 0.0f, 0.0f, 0.0f };    // Pitch, Yaw, Roll in degrees
-		float m_DeltaScale = 1.0f;                   // X, Y, Z scale factors
+		float m_DeltaScale = 1.5f;                   // X, Y, Z scale factors
 		float m_AdjustmentSpeed = DEFAULT_ADJUSTMENT_SPEED;
 
 		// Previous values for change detection
@@ -65,6 +73,10 @@ namespace ThroughScope
         bool m_EnableRendering = false;
 		bool m_RealTimeAdjustment = true;
 		bool m_AutoApply = true;
+
+		std::vector<std::string> m_AvailableNIFFiles;
+		int m_SelectedNIFIndex = 0;
+		bool m_NIFFilesScanned = false;
         
         // Debug variables
         char m_DebugText[1024] = "";

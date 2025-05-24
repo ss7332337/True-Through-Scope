@@ -108,6 +108,13 @@ namespace ThroughScope::Utilities
 		return output.str();
 	}
 
+
+	inline bool IsInADS(RE::Actor* a)
+	{
+		return (a->gunState == RE::GUN_STATE::kSighted || a->gunState == RE::GUN_STATE::kFireSighted);
+	}
+
+
 	inline RE::TESForm* GetFormFromMod(std::string modname, uint32_t formid)
 	{
 		if (!modname.length() || !formid)

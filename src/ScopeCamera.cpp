@@ -19,6 +19,9 @@ namespace ThroughScope
     RE::NiMatrix3 ScopeCamera::s_CachedDeltaRot;
 	RE::NiPoint3 ScopeCamera::s_DeltaScale = { 1.0f, 1.0f, 1.0f };        // Initialize to 1.0 for neutral scale
 	RE::NiPoint3 ScopeCamera::s_CachedDeltaScale = { 1.0f, 1.0f, 1.0f };  // Initialize to 1.0 for neutral scale
+
+	float ScopeCamera::minFov = 1;
+	float ScopeCamera::maxFov = 100;
     
     bool ScopeCamera::s_OriginalFirstPerson = false;
     bool ScopeCamera::s_OriginalRenderDecals = false;

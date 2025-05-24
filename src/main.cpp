@@ -214,7 +214,7 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	D3DEventNode(g_RenderPreUIOriginal(ptr_drawWorld), L"First Render_PreUI");
 	
 
-	if (!isScopCamReady || !isRenderReady)
+	if (!isScopCamReady || !isRenderReady || !D3DHooks::IsEnableRender())
 		return;
 
 	auto playerCamera = *ptr_DrawWorldCamera;
@@ -294,12 +294,11 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	DrawWorld::SetUpdateCameraFOV(true);
 
 	RenderUtilities::SetRender_PreUIComplete(true);
-	if (d3dHooks->IsEnableRender())
-	{
-		d3dHooks->RestoreAllCachedStates(context);
-		d3dHooks->SetScopeTexture(context);
-		context->DrawIndexed(96, 0, 0);
-	}
+
+	d3dHooks->RestoreAllCachedStates(context);
+	d3dHooks->SetScopeTexture(context);
+	context->DrawIndexed(96, 0, 0);
+
 	RenderUtilities::SetRender_PreUIComplete(false);
 
 	if (originalCamera) {
@@ -615,8 +614,8 @@ void RegisterHooks()
 	//	reinterpret_cast<LPVOID*>(&g_MapDynamicTriShapeDynamicData), "MapDynamicTriShapeDynamicData");
 
 
-	 CreateAndEnableHook((LPVOID)BSStreamLoad_Ori.address(), &hkBSStreamLoad,
-		reinterpret_cast<LPVOID*>(&g_BSStreamLoad), "BSStreamLoad");
+	/* CreateAndEnableHook((LPVOID)BSStreamLoad_Ori.address(), &hkBSStreamLoad,
+		reinterpret_cast<LPVOID*>(&g_BSStreamLoad), "BSStreamLoad");*/
 	 
 	 
 	 CreateAndEnableHook((LPVOID)PCUpdateMainThread_Ori.address(), &hkPCUpdateMainThread,
@@ -726,7 +725,7 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 #endif
 
 	d3dHooks = D3DHooks::GetSington();
-	nifloader = new NIFLoader();
+	nifloader = NIFLoader::GetSington();
     F4SE::Init(a_f4se);
     
     // Register plugin for F4SE messages
