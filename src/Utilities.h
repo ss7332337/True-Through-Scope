@@ -9,7 +9,7 @@
 
 namespace ThroughScope::Utilities
 {
-    // Hook creation helpers
+
     inline bool CreateAndEnableHook(void* target, void* hook, void** original, const char* hookName)
     {
         if (MH_CreateHook(target, hook, original) != MH_OK) {
@@ -108,6 +108,34 @@ namespace ThroughScope::Utilities
 		return output.str();
 	}
 
+	inline RE::TESForm* GetFormFromMod(std::string modname, uint32_t formid)
+	{
+		if (!modname.length() || !formid)
+			return nullptr;
+		RE::TESDataHandler* dh = RE::TESDataHandler::GetSingleton();
+		RE::TESFile* modFile = nullptr;
+		for (auto it = dh->files.begin(); it != dh->files.end(); ++it) {
+			RE::TESFile* f = *it;
+			if (strcmp(f->filename, modname.c_str()) == 0) {
+				modFile = f;
+				break;
+			}
+		}
+		if (!modFile)
+			return nullptr;
+		uint8_t modIndex = modFile->compileIndex;
+		uint32_t id = formid;
+		if (modIndex < 0xFE) {
+			id |= ((uint32_t)modIndex) << 24;
+		} else {
+			uint16_t lightModIndex = modFile->smallFileCompileIndex;
+			if (lightModIndex != 0xFFFF) {
+				id |= 0xFE000000 | (uint32_t(lightModIndex) << 12);
+			}
+		}
+		return RE::TESForm::GetFormByID(id);
+	}
+
 
 	inline void LogNodeHierarchy(RE::NiAVObject* parentNode, const std::string& nodeName = "Node", bool recursive = true, int maxDepth = 3)
 	{
@@ -151,6 +179,80 @@ namespace ThroughScope::Utilities
 			logger::info("No ScopeNode found under weapon node");
 		}
 	}
+
+	inline void LogPlayerWeaponMods()
+	{
+		using namespace RE;
+
+		auto player = RE::PlayerCharacter::GetSingleton();
+		if (!player || !player->Get3D()) {
+			logger::error("LogPlayerWeaponMods: Player character or 3D model not available");
+			return;
+		}
+		if (!player->currentProcess)
+			return;
+
+		auto& eventEquipped = player->currentProcess->middleHigh->equippedItems;
+
+		if (eventEquipped.size() > 0 && eventEquipped[0].item.instanceData && ((TESObjectWEAP::InstanceData*)eventEquipped[0].item.instanceData.get())->type == WEAPON_TYPE::kGun) {
+			TESObjectWEAP* equippedWeapon = ((TESObjectWEAP*)eventEquipped[0].item.object);
+			TESObjectWEAP::InstanceData* eventInstance = (TESObjectWEAP::InstanceData*)eventEquipped[0].item.instanceData.get();
+
+			logger::info("===== Current Equipped Weapon Mods =====");
+			logger::info("Weapon: {} (FormID: {:08X})", equippedWeapon->fullName.c_str(), equippedWeapon->GetFormID());
+
+			auto invItems = player->inventoryList;
+			if (!invItems) {
+				logger::error("LogPlayerWeaponMods: Failed to get inventory list");
+				return;
+			}
+
+			for (size_t i = 0; i < invItems->data.size(); i++) {
+				auto& item = invItems->data[i];
+				if (!item.object || item.object != equippedWeapon) {
+					continue;
+				}
+
+				// 找到了装备的武器，检查其modifications
+				if (item.stackData && item.stackData->extra) {
+					auto extraDataList = item.stackData->extra.get();
+
+					// 查找ExtraDataList中的modification数据
+					auto objectInstanceExtra = extraDataList->GetByType<BGSObjectInstanceExtra>();
+					if (objectInstanceExtra) {
+						// 获取武器的TESObjectWEAP数据
+						auto weaponForm = equippedWeapon->As<RE::TESObjectWEAP>();
+						if (weaponForm && weaponForm->weaponData.equipSlot) {
+							logger::info("Weapon has {} attachment slots",
+								weaponForm->weaponData.equipSlot->parentSlots.size());
+						}
+
+						auto indexData = objectInstanceExtra->GetIndexData();
+						if (!indexData.empty()) {
+							logger::info("Weapon has {} modifications:", indexData.size());
+
+							for (size_t j = 0; j < indexData.size(); ++j) {
+								auto& modData = indexData[j];
+								auto modForm = RE::TESForm::GetFormByID(modData.objectID);
+								auto modFormLocal = modForm->GetLocalFormID();
+								const char* modFormStr = modForm->GetFormEditorID();
+								auto modFilename = modForm->GetFile()->filename;
+								logger::info("  Mod[{:08X}], EditorID: {}, FileName: {}", modFormLocal, modFormStr, modFilename);
+							}
+						} else {
+							logger::info("No modifications found in index data");
+						}
+					} else {
+						logger::info("No instance data found for weapon");
+					}
+				}
+
+				break;  // 找到武器后退出循环
+			}
+		}
+		logger::info("===== End Weapon Mods =====");
+	}
+
 
 	inline RE::NiAVObject* FindNodeByName(RE::NiAVObject* parentNode, const std::string& childName, bool recursive = true)
 	{

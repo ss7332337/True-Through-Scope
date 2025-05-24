@@ -6,6 +6,7 @@ set(SOURCES
 	src/NiFLoader.cpp
 	src/ImGuiManager.cpp
 	src/EventHandler.cpp
+	src/DataPersistence.cpp
 	src/HLSL/TrueScopeShader.hlsl
 )
 	

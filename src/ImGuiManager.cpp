@@ -2,6 +2,8 @@
 #include <Utilities.h>
 #include <NiFLoader.h>
 
+#include "DataPersistence.h"
+
 namespace ThroughScope
 {
     ImGuiManager* ImGuiManager::GetSingleton()
@@ -128,7 +130,6 @@ namespace ThroughScope
 
 			auto input = (RE::BSInputDeviceManager::GetSingleton());
 			RE::ControlMap::GetSingleton()->ignoreKeyboardMouse = m_MenuOpen;
-			logger::info("Menu toggled: {}", m_MenuOpen ? "open" : "closed");
 		}
 
 		// Real-time adjustment updates
@@ -308,28 +309,10 @@ namespace ThroughScope
             if (ImGui::BeginTabItem("Camera Adjustment")) 
 			{
 				auto ttsNode = GetTTSNode();
-				if (ttsNode) {
-					m_DeltaPosX = ttsNode->local.translate.x;
-					m_DeltaPosY = ttsNode->local.translate.y;
-					m_DeltaPosZ = ttsNode->local.translate.z;
-					RE::NiPoint3 ttsNodeRot;
-					ttsNode->local.rotate.ToEulerAnglesXYZ(ttsNodeRot);
-					m_DeltaRot[0] = ttsNodeRot.x;
-					m_DeltaRot[1] = ttsNodeRot.y;
-					m_DeltaRot[2] = ttsNodeRot.z;
-					m_DeltaScale = ttsNode->local.scale;
+				RenderCameraAdjustmentPanel();
+				ImGui::EndTabItem();
+            }
 
-					RenderCameraAdjustmentPanel();
-					ImGui::EndTabItem();
-				} else
-					ImGui::EndTabItem();
-            }
-            
-            if (ImGui::BeginTabItem("Rendering")) {
-                RenderRenderingPanel();
-                ImGui::EndTabItem();
-            }
-            
             if (ImGui::BeginTabItem("Debug")) {
                 RenderDebugPanel();
                 ImGui::EndTabItem();
@@ -339,9 +322,122 @@ namespace ThroughScope
         }
         ImGui::End();
     }
-    
+
+
     void ImGuiManager::RenderCameraAdjustmentPanel()
 	{
+		using namespace RE;
+		auto dataPersistence = DataPersistence::GetSingleton();
+
+		// 获取武器信息
+		DataPersistence::WeaponInfo weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+
+		// 检查是否有有效的武器
+		if (!weaponInfo.weapon || !weaponInfo.instanceData) {
+			ImGui::TextColored(m_WarningColor, "No valid weapon equipped");
+			return;
+		}
+
+		// Display current weapon/mod info
+		ImGui::Text("Current Weapon: [%08X] %s", weaponInfo.weaponFormID, weaponInfo.weaponModName.c_str());
+		if (weaponInfo.selectedModForm) {
+			ImGui::Text("Using Config From: [%08X] %s (%s)",
+				weaponInfo.selectedModForm->GetLocalFormID(),
+				weaponInfo.selectedModForm->GetFile()->filename,
+				weaponInfo.configSource.c_str());
+		} else if (weaponInfo.currentConfig) {
+			ImGui::Text("Using Config From: Weapon (%s)", weaponInfo.configSource.c_str());
+		}
+
+		// If no config found, show creation options
+		if (!weaponInfo.currentConfig) {
+			ImGui::Separator();
+			ImGui::TextColored(m_WarningColor, "No configuration found");
+
+			// Show creation options
+			static int createOption = 0;  // 0 = weapon, 1 = first mod, etc.
+
+			// Show creation options
+			if (ImGui::BeginCombo("Create Config For",
+					createOption == 0 ? "Weapon" :
+										(createOption <= (int)weaponInfo.availableMods.size() ?
+												fmt::format("Modification [{}]", createOption).c_str() :
+												""))) {
+				if (ImGui::Selectable("Weapon", createOption == 0)) {
+					createOption = 0;
+				}
+
+				for (size_t i = 0; i < weaponInfo.availableMods.size(); i++) {
+					auto modForm = weaponInfo.availableMods[i];
+					std::string label = fmt::format("Modification [{}] {:08X} {}",
+						i + 1, modForm->GetLocalFormID(), modForm->GetFormEditorID());
+
+					if (ImGui::Selectable(label.c_str(), createOption == (i + 1))) {
+						createOption = i + 1;
+					}
+				}
+
+				ImGui::EndCombo();
+			}
+
+			if (ImGui::Button("Create Configuration")) {
+				bool success = false;
+
+				if (createOption == 0) {
+					// Create for weapon
+					success = dataPersistence->GeneratePresetConfig(weaponInfo.weaponFormID, weaponInfo.weaponModName);
+				} else if (createOption > 0 && createOption <= (int)weaponInfo.availableMods.size()) {
+					// Create for modification
+					auto modForm = weaponInfo.availableMods[createOption - 1];
+					success = dataPersistence->GeneratePresetConfig(
+						modForm->GetLocalFormID(),
+						modForm->GetFile()->filename);
+				}
+
+				if (success) {
+					snprintf(m_DebugText, sizeof(m_DebugText), "Configuration created successfully!");
+					// Refresh the config
+					dataPersistence->LoadAllConfigs();
+				} else {
+					snprintf(m_DebugText, sizeof(m_DebugText), "Failed to create configuration!");
+				}
+			}
+
+			ImGui::Separator();
+			return;  // Don't show settings until config is created
+		}
+
+		// 使用找到的配置继续处理...
+		const auto* currentConfig = weaponInfo.currentConfig;
+
+		// Load current settings from config
+		static int minFOV = currentConfig->scopeSettings.minFOV;
+		static int maxFOV = currentConfig->scopeSettings.maxFOV;
+		static bool nightVision = currentConfig->scopeSettings.nightVision;
+		static bool thermalVision = currentConfig->scopeSettings.thermalVision;
+
+		static float relativeFogRadius = currentConfig->parallaxSettings.relativeFogRadius;
+		static float scopeSwayAmount = currentConfig->parallaxSettings.scopeSwayAmount;
+		static float maxTravel = currentConfig->parallaxSettings.maxTravel;
+		static float radius = currentConfig->parallaxSettings.radius;
+
+		// Get current TTS node for real-time adjustments
+		auto ttsNode = GetTTSNode();
+		if (ttsNode) {
+			m_DeltaPosX = ttsNode->local.translate.x;
+			m_DeltaPosY = ttsNode->local.translate.y;
+			m_DeltaPosZ = ttsNode->local.translate.z;
+
+			RE::NiPoint3 ttsNodeRot;
+			ttsNode->local.rotate.ToEulerAnglesXYZ(ttsNodeRot);
+			m_DeltaRot[0] = ttsNodeRot.x;
+			m_DeltaRot[1] = ttsNodeRot.y;
+			m_DeltaRot[2] = ttsNodeRot.z;
+
+			m_DeltaScale = ttsNode->local.scale;
+		}
+
+		// ==================== CAMERA ADJUSTMENT CONTROLS ====================
 		ImGui::TextColored(m_AccentColor, "Scope Camera Position Adjustment");
 		ImGui::Separator();
 
@@ -353,35 +449,29 @@ namespace ThroughScope
 
 		// Fine adjustment buttons
 		ImGui::Text("Fine Position Adjustments:");
-		if (ImGui::Button("X-0.1")) {
+		if (ImGui::Button("X-0.1"))
 			m_DeltaPosX -= 0.1f;
-		}
 		ImGui::SameLine();
-		if (ImGui::Button("X+0.1")) {
+		if (ImGui::Button("X+0.1"))
 			m_DeltaPosX += 0.1f;
-		}
 		ImGui::SameLine();
-		if (ImGui::Button("Y-0.1")) {
+		if (ImGui::Button("Y-0.1"))
 			m_DeltaPosY -= 0.1f;
-		}
 		ImGui::SameLine();
-		if (ImGui::Button("Y+0.1")) {
+		if (ImGui::Button("Y+0.1"))
 			m_DeltaPosY += 0.1f;
-		}
 		ImGui::SameLine();
-		if (ImGui::Button("Z-0.1")) {
+		if (ImGui::Button("Z-0.1"))
 			m_DeltaPosZ -= 0.1f;
-		}
 		ImGui::SameLine();
-		if (ImGui::Button("Z+0.1")) {
+		if (ImGui::Button("Z+0.1"))
 			m_DeltaPosZ += 0.1f;
-		}
 
 		ImGui::Spacing();
 		ImGui::Separator();
 		ImGui::TextColored(m_AccentColor, "Scope Camera Rotation Adjustment");
 
-		// Rotation sliders (using degrees for more intuitive adjustments)
+		// Rotation sliders (degrees)
 		ImGui::Text("Rotation Adjustments (Degrees)");
 		ImGui::SliderFloat("Pitch (X)", &m_DeltaRot[0], -180.0f, 180.0f, "%.1f");
 		ImGui::SliderFloat("Yaw (Y)", &m_DeltaRot[1], -180.0f, 180.0f, "%.1f");
@@ -389,69 +479,97 @@ namespace ThroughScope
 
 		// Fine rotation adjustment buttons
 		ImGui::Text("Fine Rotation Adjustments:");
-		if (ImGui::Button("Pitch-1")) {
+		if (ImGui::Button("Pitch-1"))
 			m_DeltaRot[0] -= 1.0f;
-		}
 		ImGui::SameLine();
-		if (ImGui::Button("Pitch+1")) {
+		if (ImGui::Button("Pitch+1"))
 			m_DeltaRot[0] += 1.0f;
-		}
 		ImGui::SameLine();
-		if (ImGui::Button("Yaw-1")) {
+		if (ImGui::Button("Yaw-1"))
 			m_DeltaRot[1] -= 1.0f;
-		}
 		ImGui::SameLine();
-		if (ImGui::Button("Yaw+1")) {
+		if (ImGui::Button("Yaw+1"))
 			m_DeltaRot[1] += 1.0f;
-		}
 		ImGui::SameLine();
-		if (ImGui::Button("Roll-1")) {
+		if (ImGui::Button("Roll-1"))
 			m_DeltaRot[2] -= 1.0f;
-		}
 		ImGui::SameLine();
-		if (ImGui::Button("Roll+1")) {
+		if (ImGui::Button("Roll+1"))
 			m_DeltaRot[2] += 1.0f;
-		}
 
 		ImGui::Spacing();
 		ImGui::Separator();
 		ImGui::TextColored(m_AccentColor, "Scope Camera Scale Adjustment");
 
-		// Scale sliders
+		// Scale slider
 		ImGui::Text("Scale Adjustments");
 		ImGui::SliderFloat("Scale", &m_DeltaScale, 0.1f, 10.0f, "%.3f");
 
 		// Fine scale adjustment buttons
 		ImGui::Text("Fine Scale Adjustments:");
-		if (ImGui::Button("-0.1")) {
+		if (ImGui::Button("-0.1"))
 			m_DeltaScale -= 0.1f;
-		}
-
 		ImGui::SameLine();
-		if (ImGui::Button("+0.1")) {
+		if (ImGui::Button("+0.1"))
 			m_DeltaScale += 0.1f;
-		}
 
+		// ==================== SCOPE SETTINGS ====================
 		ImGui::Spacing();
 		ImGui::Separator();
-		ImGui::TextColored(m_AccentColor, "Field of View (FOV) Adjustment");
+		ImGui::TextColored(m_AccentColor, "Scope Settings");
 
+		// FOV controls
+		ImGui::SliderInt("Minimum FOV", &minFOV, 1, 180);
+		ImGui::SliderInt("Maximum FOV", &maxFOV, 1, 180);
+
+		// Vision modes
+		ImGui::Checkbox("Night Vision", &nightVision);
+		ImGui::Checkbox("Thermal Vision", &thermalVision);
+
+		// ==================== PARALLAX SETTINGS ====================
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::TextColored(m_AccentColor, "Parallax Settings");
+
+		ImGui::SliderFloat("Relative Fog Radius", &relativeFogRadius, 0.0f, 1.0f);
+		ImGui::SliderFloat("Scope Sway Amount", &scopeSwayAmount, 0.0f, 1.0f);
+		ImGui::SliderFloat("Max Travel", &maxTravel, 0.0f, 0.5f);
+		ImGui::SliderFloat("Radius", &radius, 0.0f, 1.0f);
+
+		// ==================== ACTION BUTTONS ====================
 		ImGui::Spacing();
 		ImGui::Separator();
 
-		// Reset and action buttons
 		if (ImGui::Button("Reset All Adjustments")) {
 			ResetAllAdjustments();
 		}
 
 		ImGui::SameLine();
 
-		// Display current debug text
-		ImGui::Spacing();
-		if (strlen(m_DebugText) > 0) {
-			ImGui::TextWrapped("%s", m_DebugText);
+		// Save button
+		if (ImGui::Button("Save Settings")) {
+			// Create a copy of the config to modify
+			DataPersistence::ScopeConfig modifiedConfig = *currentConfig;
+
+			// Update settings
+			modifiedConfig.scopeSettings.minFOV = minFOV;
+			modifiedConfig.scopeSettings.maxFOV = maxFOV;
+			modifiedConfig.scopeSettings.nightVision = nightVision;
+			modifiedConfig.scopeSettings.thermalVision = thermalVision;
+
+			modifiedConfig.parallaxSettings.relativeFogRadius = relativeFogRadius;
+			modifiedConfig.parallaxSettings.scopeSwayAmount = scopeSwayAmount;
+			modifiedConfig.parallaxSettings.maxTravel = maxTravel;
+			modifiedConfig.parallaxSettings.radius = radius;
+
+			if (dataPersistence->SaveConfig(modifiedConfig)) {
+				snprintf(m_DebugText, sizeof(m_DebugText), "Settings saved successfully!");
+			} else {
+				snprintf(m_DebugText, sizeof(m_DebugText), "Failed to save settings!");
+			}
 		}
 	}
+
     
 	void ImGuiManager::RenderRenderingPanel()
 	{
@@ -578,15 +696,6 @@ namespace ThroughScope
 
 		ImGui::SameLine();
 
-		if (ImGui::Button("Load Template NIF")) {
-			// This is from the hkPCUpdateMainThread function that loads the NIF template
-			NIFLoader* nifloader = new NIFLoader();
-			nifloader->LoadNIF("TTSTemplate_Circle.nif");
-			snprintf(m_DebugText, sizeof(m_DebugText), "Template NIF loaded");
-		}
-
-		ImGui::SameLine();
-
 		if (ImGui::Button("Refresh TTSNode")) {
 			auto node = GetTTSNode();
 			if (node) {
@@ -595,6 +704,8 @@ namespace ThroughScope
 				snprintf(m_DebugText, sizeof(m_DebugText), "TTSNode not found!");
 			}
 		}
+
+		ImGui::SameLine();
 
 		// Copy current values to clipboard (useful for saving configurations)
 		if (ImGui::Button("Copy Values to Clipboard")) {

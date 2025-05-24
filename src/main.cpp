@@ -11,6 +11,7 @@
 #include <Windows.h>
 #include <winternl.h>
 
+#include "DataPersistence.h"
 #include "ImGuiManager.h"
 
 using namespace RE;
@@ -170,7 +171,7 @@ bool isScopCamReady = false;
 bool isImguiManagerInit = false;
 ThroughScope::D3DHooks* d3dHooks;
 NIFLoader* nifloader;
-	    // Helper to get renderer shadow state
+
 static RendererShadowState* GetRendererShadowState()
 {
 	_TEB* teb = NtCurrentTeb();
@@ -493,17 +494,29 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 
 	SHORT keyIncreaseFOV = GetAsyncKeyState(VK_NUMPAD3);
 	SHORT keyDecreaseFOV = GetAsyncKeyState(VK_NUMPAD9);
+	SHORT keyPgDown = GetAsyncKeyState(VK_NEXT);
+	SHORT keyPgUp = GetAsyncKeyState(VK_PRIOR);
 
 	if (keyIncreaseFOV & 0x8000)
 		ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() + 1);
 	if (keyDecreaseFOV & 0x8000)
 		ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() - 1);
 
+	if (keyPgUp & 0x1) {
+		auto player = RE::PlayerCharacter::GetSingleton();
+		if (player && player->currentProcess && !player->currentProcess->middleHigh->equippedItems.empty()) {
+			auto& equippedItem = player->currentProcess->middleHigh->equippedItems[0];
+			uint32_t formID = equippedItem.item.object->GetLocalFormID();
+			std::string modName = equippedItem.item.object->GetFile()->filename;
+
+			DataPersistence::GetSingleton()->GeneratePresetConfig(formID, modName);
+		}
+	}
+	if (keyPgDown & 0x1)
+		Utilities::LogPlayerWeaponMods();
 
 	g_PCUpdateMainThread(pChar);
 }
-
-
 void RegisterHooks()
 {
 	logger::info("Registering hooks...");
