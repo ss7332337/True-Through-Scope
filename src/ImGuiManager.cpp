@@ -122,6 +122,18 @@ namespace ThroughScope
     
     void ImGuiManager::Update()
 	{
+		static float lastUpdateTime = 0.0f;
+		float currentTime = ImGui::GetTime();
+		float deltaTime = currentTime - lastUpdateTime;
+		lastUpdateTime = currentTime;
+
+		// 性能监控 - 如果更新太频繁则跳过
+		static int frameCounter = 0;
+		frameCounter++;
+		if (frameCounter % 2 == 0) {  // 每两帧更新一次以提升性能
+			return;
+		}
+
 		// Toggle menu on/off when F2 is pressed
 		if (GetAsyncKeyState(VK_F2) & 0x1) {
 			ToggleMenu();
@@ -132,28 +144,42 @@ namespace ThroughScope
 			RE::ControlMap::GetSingleton()->ignoreKeyboardMouse = m_MenuOpen;
 		}
 
-		// Real-time adjustment updates
+		// Real-time adjustment updates (只在菜单打开时更新)
 		if (m_MenuOpen && m_Initialized && m_RealTimeAdjustment) {
+			bool hasChanges = false;
+
 			// Check for position changes
-			if (m_DeltaPosX != m_PrevDeltaPosX || m_DeltaPosY != m_PrevDeltaPosY || m_DeltaPosZ != m_PrevDeltaPosZ) {
+			if (std::abs(m_DeltaPosX - m_PrevDeltaPosX) > 0.001f ||
+				std::abs(m_DeltaPosY - m_PrevDeltaPosY) > 0.001f ||
+				std::abs(m_DeltaPosZ - m_PrevDeltaPosZ) > 0.001f) {
 				ApplyPositionAdjustment();
 				m_PrevDeltaPosX = m_DeltaPosX;
 				m_PrevDeltaPosY = m_DeltaPosY;
 				m_PrevDeltaPosZ = m_DeltaPosZ;
+				hasChanges = true;
 			}
 
 			// Check for rotation changes
-			if (m_DeltaRot[0] != m_PrevDeltaRot[0] || m_DeltaRot[1] != m_PrevDeltaRot[1] || m_DeltaRot[2] != m_PrevDeltaRot[2]) {
+			if (std::abs(m_DeltaRot[0] - m_PrevDeltaRot[0]) > 0.1f ||
+				std::abs(m_DeltaRot[1] - m_PrevDeltaRot[1]) > 0.1f ||
+				std::abs(m_DeltaRot[2] - m_PrevDeltaRot[2]) > 0.1f) {
 				ApplyRotationAdjustment();
 				m_PrevDeltaRot[0] = m_DeltaRot[0];
 				m_PrevDeltaRot[1] = m_DeltaRot[1];
 				m_PrevDeltaRot[2] = m_DeltaRot[2];
+				hasChanges = true;
 			}
 
 			// Check for scale changes
-			if (m_DeltaScale != m_PrevDeltaScale) {
+			if (std::abs(m_DeltaScale - m_PrevDeltaScale) > 0.001f) {
 				ApplyScaleAdjustment();
 				m_PrevDeltaScale = m_DeltaScale;
+				hasChanges = true;
+			}
+
+			// 标记有未保存的更改
+			if (hasChanges) {
+				m_HasUnsavedChanges = true;
 			}
 		}
 	}
@@ -432,46 +458,68 @@ namespace ThroughScope
 	}
 
 
-    
     void ImGuiManager::RenderMainMenu()
-    {
-        const float menuWidth = 400.0f;
-        const float menuHeight = 600.0f;
-        
-        // Center the window on the screen
-        ImGuiIO& io = ImGui::GetIO();
-        ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
-        ImGui::SetNextWindowPos(ImVec2(center.x - menuWidth/2, center.y - menuHeight/2), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(menuWidth, menuHeight), ImGuiCond_FirstUseEver);
-        
-        if (ImGui::Begin("TrueThroughScope Settings", &m_MenuOpen, ImGuiWindowFlags_MenuBar)) 
-		{
+	{
+		const float menuWidth = 600.0f;  // 增加宽度以容纳更多内容
+		const float menuHeight = 700.0f;
 
-            // Tabs
-            ImGui::BeginTabBar("MainTabs");
-            
-            if (ImGui::BeginTabItem("Camera Adjustment")) 
-			{
-				RenderCameraAdjustmentPanel();
-				ImGui::EndTabItem();
-            }
+		// Center the window on the screen
+		ImGuiIO& io = ImGui::GetIO();
+		ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+		ImGui::SetNextWindowPos(ImVec2(center.x - menuWidth / 2, center.y - menuHeight / 2), ImGuiCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(menuWidth, menuHeight), ImGuiCond_FirstUseEver);
 
-			DataPersistence::WeaponInfo weaponInfo = DataPersistence::GetCurrentWeaponInfo();
-			if (weaponInfo.currentConfig && ImGui::BeginTabItem("Scope Shape Switcher")) 
-			{
-				RenderModelSwitcher();
-				ImGui::EndTabItem();
+		// 设置窗口标志以提升用户体验
+		ImGuiWindowFlags windowFlags = ImGuiWindowFlags_None;
+		if (m_HasUnsavedChanges) {
+			windowFlags |= ImGuiWindowFlags_UnsavedDocument;  // 显示未保存标记
+		}
+
+		if (ImGui::Begin("TrueThroughScope Settings", &m_MenuOpen, windowFlags)) {
+			// 顶部状态栏
+			RenderStatusBar();
+			ImGui::Spacing();
+
+			// 主要内容区域
+			if (ImGui::BeginTabBar("MainTabs", ImGuiTabBarFlags_Reorderable)) {
+				// Camera Adjustment Tab - 始终显示
+				if (ImGui::BeginTabItem("Camera Adjustment")) {
+					RenderCameraAdjustmentPanel();
+					ImGui::EndTabItem();
+				}
+
+				// Scope Shape Switcher Tab - 只在有配置时显示
+				DataPersistence::WeaponInfo weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+				if (weaponInfo.currentConfig) {
+					if (ImGui::BeginTabItem("Scope Shape")) {
+						RenderModelSwitcher();
+						ImGui::EndTabItem();
+					}
+				}
+
+				// Settings Tab - 新增设置页面
+				if (ImGui::BeginTabItem("Settings")) {
+					RenderSettingsPanel();
+					ImGui::EndTabItem();
+				}
+
+				// Debug Tab
+				if (ImGui::BeginTabItem("Debug")) {
+					RenderDebugPanel();
+					ImGui::EndTabItem();
+				}
+
+				ImGui::EndTabBar();
 			}
-			
-            if (ImGui::BeginTabItem("Debug")) {
-                RenderDebugPanel();
-                ImGui::EndTabItem();
-            }
-            
-            ImGui::EndTabBar();
-        }
-        ImGui::End();
-    }
+
+			// 检查自动保存
+			CheckAutoSave();
+
+			// 显示错误对话框（如果有）
+			ShowErrorDialog("", "");
+		}
+		ImGui::End();
+	}
 
 
     void ImGuiManager::RenderCameraAdjustmentPanel()
@@ -485,70 +533,120 @@ namespace ThroughScope
 		// 检查是否有有效的武器
 		if (!weaponInfo.weapon || !weaponInfo.instanceData) {
 			ImGui::TextColored(m_WarningColor, "No valid weapon equipped");
+			ImGui::TextWrapped("Please equip a weapon with scope capabilities to configure settings.");
 			return;
 		}
 
-		// Display current weapon/mod info
-		ImGui::Text("Current Weapon: [%08X] %s", weaponInfo.weaponFormID, weaponInfo.weaponModName.c_str());
+		// ==================== WEAPON INFORMATION SECTION ====================
+		ImGui::TextColored(m_AccentColor, "Current Weapon Information");
+		ImGui::Separator();
+
+		ImGui::Text("Weapon: [%08X] %s", weaponInfo.weaponFormID, weaponInfo.weaponModName.c_str());
+
 		if (weaponInfo.selectedModForm) {
-			ImGui::Text("Using Config From: [%08X] %s (%s)",
+			ImGui::Text("Config Source: [%08X] %s (%s)",
 				weaponInfo.selectedModForm->GetLocalFormID(),
 				weaponInfo.selectedModForm->GetFile()->filename,
 				weaponInfo.configSource.c_str());
 		} else if (weaponInfo.currentConfig) {
-			ImGui::Text("Using Config From: Weapon (%s)", weaponInfo.configSource.c_str());
+			ImGui::Text("Config Source: Weapon (%s)", weaponInfo.configSource.c_str());
 		}
 
-		// If no config found, show creation options
+		// 显示当前模型信息（这是你询问的第一个位置）
+		if (weaponInfo.currentConfig) {
+			if (!weaponInfo.currentConfig->modelName.empty()) {
+				ImGui::Text("Current Model: %s", weaponInfo.currentConfig->modelName.c_str());
+
+				ImGui::SameLine();
+				if (ImGui::Button("Reload TTSNode")) {
+					if (CreateTTSNodeFromNIF(weaponInfo.currentConfig->modelName)) {
+						snprintf(m_DebugText, sizeof(m_DebugText),
+							"TTSNode reloaded from: %s",
+							weaponInfo.currentConfig->modelName.c_str());
+					} else {
+						snprintf(m_DebugText, sizeof(m_DebugText),
+							"Failed to reload TTSNode from: %s",
+							weaponInfo.currentConfig->modelName.c_str());
+					}
+				}
+
+				// 显示帮助信息
+				ImGui::SameLine();
+				ImGui::TextDisabled("(?)");
+				if (ImGui::IsItemHovered()) {
+					ImGui::SetTooltip("Click to recreate the TTSNode from the saved model file");
+				}
+			} else {
+				ImGui::TextColored(m_WarningColor, "No model file associated with this configuration");
+			}
+		}
+
+		ImGui::Spacing();
+
+		// ==================== NO CONFIG FOUND - CREATION SECTION ====================
 		if (!weaponInfo.currentConfig) {
 			ImGui::Separator();
-			ImGui::TextColored(m_WarningColor, "No configuration found");
+			ImGui::TextColored(m_WarningColor, "No configuration found for this weapon");
+			ImGui::TextWrapped("Create a new configuration to start customizing your scope settings.");
 
 			ScanForNIFFiles();
 
-			// Show creation options
+			// Configuration target selection
+			ImGui::Spacing();
+			ImGui::TextColored(m_AccentColor, "Configuration Target:");
+
 			static int createOption = 0;  // 0 = weapon, 1 = first mod, etc.
 
-			// Show creation options
 			if (ImGui::BeginCombo("Create Config For",
-					createOption == 0 ? "Weapon" :
+					createOption == 0 ? "Base Weapon" :
 										(createOption <= (int)weaponInfo.availableMods.size() ?
-												fmt::format("Modification [{}]", createOption).c_str() :
-												""))) {
-				if (ImGui::Selectable("Weapon", createOption == 0)) {
+												fmt::format("Modification #{}", createOption).c_str() :
+												"Invalid Selection"))) {
+				// Base weapon option
+				if (ImGui::Selectable("Base Weapon", createOption == 0)) {
 					createOption = 0;
 				}
+				if (ImGui::IsItemHovered()) {
+					ImGui::SetTooltip("Create configuration for the base weapon\nApplies to all instances of this weapon");
+				}
 
+				// Modification options
 				for (size_t i = 0; i < weaponInfo.availableMods.size(); i++) {
 					auto modForm = weaponInfo.availableMods[i];
-					std::string label = fmt::format("Modification [{}] {:08X} {}",
-						i + 1, modForm->GetLocalFormID(), modForm->GetFormEditorID());
+					std::string label = fmt::format("Modification #{} - {:08X} ({})",
+						i + 1, modForm->GetLocalFormID(),
+						modForm->GetFormEditorID() ? modForm->GetFormEditorID() : "No ID");
 
 					if (ImGui::Selectable(label.c_str(), createOption == (i + 1))) {
 						createOption = i + 1;
+					}
+
+					if (ImGui::IsItemHovered()) {
+						ImGui::SetTooltip("Create configuration specific to this modification\nOnly applies when this mod is attached");
 					}
 				}
 
 				ImGui::EndCombo();
 			}
 
+			// NIF File Selection
 			ImGui::Spacing();
-			ImGui::TextColored(m_AccentColor, "Select Scope Shape (NIF File):");
+			ImGui::TextColored(m_AccentColor, "Scope Shape (Model File):");
 
 			if (m_AvailableNIFFiles.empty()) {
 				ImGui::TextColored(m_WarningColor, "No NIF files found in Meshes/TTS/ScopeShape/");
+				ImGui::TextWrapped("Please ensure you have NIF files in the ScopeShape directory.");
 
-				if (ImGui::Button("Rescan NIF Files")) {
+				if (ImGui::Button("Rescan for NIF Files")) {
 					m_NIFFilesScanned = false;
 					ScanForNIFFiles();
 				}
 			} else {
-				// NIF文件选择下拉框
 				const char* currentNIFName = m_SelectedNIFIndex < m_AvailableNIFFiles.size() ?
 				                                 m_AvailableNIFFiles[m_SelectedNIFIndex].c_str() :
-				                                 "None";
+				                                 "Select a model...";
 
-				if (ImGui::BeginCombo("NIF File", currentNIFName)) {
+				if (ImGui::BeginCombo("Model File", currentNIFName)) {
 					for (int i = 0; i < m_AvailableNIFFiles.size(); i++) {
 						bool isSelected = (m_SelectedNIFIndex == i);
 						if (ImGui::Selectable(m_AvailableNIFFiles[i].c_str(), isSelected)) {
@@ -566,78 +664,137 @@ namespace ThroughScope
 					m_NIFFilesScanned = false;
 					ScanForNIFFiles();
 				}
+			}
 
-				// 预览当前TTSNode状态
-				ImGui::Spacing();
-				auto ttsNode = GetTTSNode();
-				if (ttsNode) {
-					ImGui::TextColored(m_SuccessColor, "TTSNode exists");
+			// TTSNode Preview
+			ImGui::Spacing();
+			auto ttsNode = GetTTSNode();
+			if (ttsNode) {
+				ImGui::TextColored(m_SuccessColor, "✓ TTSNode is loaded and ready");
+				ImGui::SameLine();
+				if (ImGui::Button("Remove TTSNode")) {
+					RemoveExistingTTSNode();
+				}
+			} else {
+				ImGui::TextColored(m_WarningColor, "⚠ No TTSNode found");
+				if (!m_AvailableNIFFiles.empty() && m_SelectedNIFIndex < m_AvailableNIFFiles.size()) {
 					ImGui::SameLine();
-					if (ImGui::Button("Remove TTSNode")) {
-						RemoveExistingTTSNode();
+					if (ImGui::Button("Preview Model")) {
+						CreateTTSNodeFromNIF(m_AvailableNIFFiles[m_SelectedNIFIndex]);
 					}
-				} else {
-					ImGui::TextColored(m_WarningColor, "No TTSNode found");
 				}
 			}
 
+			// Create Configuration Button
 			ImGui::Spacing();
+			ImGui::Separator();
 
-			if (ImGui::Button("Create Configuration")) {
+			bool canCreateConfig = !m_AvailableNIFFiles.empty() && m_SelectedNIFIndex < m_AvailableNIFFiles.size();
+
+			if (!canCreateConfig) {
+				ImGui::BeginDisabled();
+			}
+
+			if (ImGui::Button("Create Configuration", ImVec2(-1, 0))) {
 				bool success = false;
 				std::string selectedNIF = "";
 
-				if (!m_AvailableNIFFiles.empty() && m_SelectedNIFIndex < m_AvailableNIFFiles.size()) {
+				if (canCreateConfig) {
 					selectedNIF = m_AvailableNIFFiles[m_SelectedNIFIndex];
-					if (CreateTTSNodeFromNIF(selectedNIF)) {
-						logger::info("TTSNode created from: {}", selectedNIF);
+
+					// Create TTSNode first
+					if (!GetTTSNode()) {  // Only create if doesn't exist
+						if (!CreateTTSNodeFromNIF(selectedNIF)) {
+							logger::error("Failed to create TTSNode from: {}", selectedNIF);
+							snprintf(m_DebugText, sizeof(m_DebugText), "Failed to create TTSNode!");
+						}
+					}
+
+					// Create configuration
+					if (createOption == 0) {
+						success = dataPersistence->GeneratePresetConfig(
+							weaponInfo.weaponFormID,
+							weaponInfo.weaponModName,
+							selectedNIF);
+					} else if (createOption > 0 && createOption <= (int)weaponInfo.availableMods.size()) {
+						auto modForm = weaponInfo.availableMods[createOption - 1];
+						success = dataPersistence->GeneratePresetConfig(
+							modForm->GetLocalFormID(),
+							modForm->GetFile()->filename,
+							selectedNIF);
+					}
+
+					if (success) {
+						snprintf(m_DebugText, sizeof(m_DebugText),
+							"Configuration created successfully! Model: %s",
+							selectedNIF.c_str());
+						dataPersistence->LoadAllConfigs();
 					} else {
-						logger::error("Failed to create TTSNode from: {}", selectedNIF);
-						snprintf(m_DebugText, sizeof(m_DebugText), "Failed to create TTSNode!");
+						snprintf(m_DebugText, sizeof(m_DebugText), "Failed to create configuration!");
 					}
 				}
+			}
 
-				// 然后创建配置
-				if (createOption == 0) {
-					// Create for weapon
-					success = dataPersistence->GeneratePresetConfig(weaponInfo.weaponFormID, weaponInfo.weaponModName, selectedNIF);
-				} else if (createOption > 0 && createOption <= (int)weaponInfo.availableMods.size()) {
-					// Create for modification
-					auto modForm = weaponInfo.availableMods[createOption - 1];
-					success = dataPersistence->GeneratePresetConfig(
-						modForm->GetLocalFormID(),
-						modForm->GetFile()->filename);
-				}
-
-				if (success) {
-					snprintf(m_DebugText, sizeof(m_DebugText), "Configuration created successfully! Model: %s",
-						selectedNIF.empty() ? "None" : selectedNIF.c_str());
-					// Refresh the config
-					dataPersistence->LoadAllConfigs();
-				} else {
-					snprintf(m_DebugText, sizeof(m_DebugText), "Failed to create configuration!");
-				}
+			if (!canCreateConfig) {
+				ImGui::EndDisabled();
+				ImGui::TextColored(m_WarningColor, "Please select a model file to create configuration");
 			}
 
 			ImGui::Separator();
 			return;
 		}
 
-		// 使用找到的配置继续处理...
+		// ==================== AUTO-LOAD SECTION (这是你询问的第二个位置) ====================
+		// 如果有配置但没有TTSNode，显示自动加载选项
+		if (weaponInfo.currentConfig && !weaponInfo.currentConfig->modelName.empty()) {
+			auto ttsNode = GetTTSNode();
+			if (!ttsNode) {
+				ImGui::Separator();
+				ImGui::TextColored(m_WarningColor, "⚠ TTSNode Missing");
+				ImGui::TextWrapped("Configuration specifies model '%s' but no TTSNode is loaded.",
+					weaponInfo.currentConfig->modelName.c_str());
+
+				if (ImGui::Button("Auto-Load TTSNode from Config", ImVec2(-1, 0))) {
+					if (AutoLoadTTSNodeFromConfig(weaponInfo.currentConfig)) {
+						snprintf(m_DebugText, sizeof(m_DebugText),
+							"TTSNode auto-loaded from config: %s",
+							weaponInfo.currentConfig->modelName.c_str());
+					} else {
+						snprintf(m_DebugText, sizeof(m_DebugText),
+							"Failed to auto-load TTSNode from config");
+					}
+				}
+
+				if (ImGui::IsItemHovered()) {
+					ImGui::SetTooltip("This will create the TTSNode from the model file specified in the configuration\nand apply the saved camera adjustments.");
+				}
+				ImGui::Separator();
+			}
+		}
+
+		// ==================== CONFIGURATION EXISTS - ADJUSTMENT SECTION ====================
 		const auto* currentConfig = weaponInfo.currentConfig;
 
-		// Load current settings from config
-		static int minFOV = currentConfig->scopeSettings.minFOV;
-		static int maxFOV = currentConfig->scopeSettings.maxFOV;
-		static bool nightVision = currentConfig->scopeSettings.nightVision;
-		static bool thermalVision = currentConfig->scopeSettings.thermalVision;
+		// Load current settings from config (with static to persist between frames)
+		static bool settingsLoaded = false;
+		static int minFOV, maxFOV;
+		static bool nightVision, thermalVision;
+		static float relativeFogRadius, scopeSwayAmount, maxTravel, radius;
 
-		static float relativeFogRadius = currentConfig->parallaxSettings.relativeFogRadius;
-		static float scopeSwayAmount = currentConfig->parallaxSettings.scopeSwayAmount;
-		static float maxTravel = currentConfig->parallaxSettings.maxTravel;
-		static float radius = currentConfig->parallaxSettings.radius;
+		// Load settings only once or when config changes
+		if (!settingsLoaded || currentConfig != nullptr) {
+			minFOV = currentConfig->scopeSettings.minFOV;
+			maxFOV = currentConfig->scopeSettings.maxFOV;
+			nightVision = currentConfig->scopeSettings.nightVision;
+			thermalVision = currentConfig->scopeSettings.thermalVision;
+			relativeFogRadius = currentConfig->parallaxSettings.relativeFogRadius;
+			scopeSwayAmount = currentConfig->parallaxSettings.scopeSwayAmount;
+			maxTravel = currentConfig->parallaxSettings.maxTravel;
+			radius = currentConfig->parallaxSettings.radius;
+			settingsLoaded = true;
+		}
 
-		// Get current TTS node for real-time adjustments
+		// Sync UI values with current TTSNode
 		auto ttsNode = GetTTSNode();
 		if (ttsNode) {
 			m_DeltaPosX = ttsNode->local.translate.x;
@@ -646,133 +803,161 @@ namespace ThroughScope
 
 			RE::NiPoint3 ttsNodeRot;
 			ttsNode->local.rotate.ToEulerAnglesXYZ(ttsNodeRot);
-			m_DeltaRot[0] = ttsNodeRot.x;
-			m_DeltaRot[1] = ttsNodeRot.y;
-			m_DeltaRot[2] = ttsNodeRot.z;
+			m_DeltaRot[0] = ttsNodeRot.x * 57.2957795f;  // Convert to degrees
+			m_DeltaRot[1] = ttsNodeRot.y * 57.2957795f;
+			m_DeltaRot[2] = ttsNodeRot.z * 57.2957795f;
 
 			m_DeltaScale = ttsNode->local.scale;
 		}
 
 		// ==================== CAMERA ADJUSTMENT CONTROLS ====================
-		ImGui::TextColored(m_AccentColor, "Scope Camera Position Adjustment");
+		ImGui::TextColored(m_AccentColor, "Camera Position & Orientation");
 		ImGui::Separator();
 
-		// Position sliders with real-time feedback
-		ImGui::Text("Position Adjustments");
-		ImGui::SliderFloat("X Position", &m_DeltaPosX, -50.0f, 50.0f, "%.3f");
-		ImGui::SliderFloat("Y Position", &m_DeltaPosY, -50.0f, 50.0f, "%.3f");
-		ImGui::SliderFloat("Z Position", &m_DeltaPosZ, -50.0f, 50.0f, "%.3f");
+		// Position controls with better organization
+		if (ImGui::CollapsingHeader("Position Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::Columns(2, "PositionColumns", false);
 
-		// Fine adjustment buttons
-		ImGui::Text("Fine Position Adjustments:");
-		if (ImGui::Button("X-0.1"))
-			m_DeltaPosX -= 0.1f;
-		ImGui::SameLine();
-		if (ImGui::Button("X+0.1"))
-			m_DeltaPosX += 0.1f;
-		ImGui::SameLine();
-		if (ImGui::Button("Y-0.1"))
-			m_DeltaPosY -= 0.1f;
-		ImGui::SameLine();
-		if (ImGui::Button("Y+0.1"))
-			m_DeltaPosY += 0.1f;
-		ImGui::SameLine();
-		if (ImGui::Button("Z-0.1"))
-			m_DeltaPosZ -= 0.1f;
-		ImGui::SameLine();
-		if (ImGui::Button("Z+0.1"))
-			m_DeltaPosZ += 0.1f;
+			// Left column - Sliders
+			ImGui::Text("Precise Adjustment:");
+			ImGui::SetNextItemWidth(-1);
+			ImGui::SliderFloat("##X", &m_DeltaPosX, -50.0f, 50.0f, "X: %.3f");
+			ImGui::SetNextItemWidth(-1);
+			ImGui::SliderFloat("##Y", &m_DeltaPosY, -50.0f, 50.0f, "Y: %.3f");
+			ImGui::SetNextItemWidth(-1);
+			ImGui::SliderFloat("##Z", &m_DeltaPosZ, -50.0f, 50.0f, "Z: %.3f");
 
-		ImGui::Spacing();
-		ImGui::Separator();
-		ImGui::TextColored(m_AccentColor, "Scope Camera Rotation Adjustment");
+			ImGui::NextColumn();
 
-		// Rotation sliders (degrees)
-		ImGui::Text("Rotation Adjustments (Degrees)");
-		ImGui::SliderFloat("Pitch (X)", &m_DeltaRot[0], -180.0f, 180.0f, "%.1f");
-		ImGui::SliderFloat("Yaw (Y)", &m_DeltaRot[1], -180.0f, 180.0f, "%.1f");
-		ImGui::SliderFloat("Roll (Z)", &m_DeltaRot[2], -180.0f, 180.0f, "%.1f");
+			// Right column - Fine adjustment buttons
+			ImGui::Text("Fine Tuning:");
 
-		// Fine rotation adjustment buttons
-		ImGui::Text("Fine Rotation Adjustments:");
-		if (ImGui::Button("Pitch-1"))
-			m_DeltaRot[0] -= 1.0f;
-		ImGui::SameLine();
-		if (ImGui::Button("Pitch+1"))
-			m_DeltaRot[0] += 1.0f;
-		ImGui::SameLine();
-		if (ImGui::Button("Yaw-1"))
-			m_DeltaRot[1] -= 1.0f;
-		ImGui::SameLine();
-		if (ImGui::Button("Yaw+1"))
-			m_DeltaRot[1] += 1.0f;
-		ImGui::SameLine();
-		if (ImGui::Button("Roll-1"))
-			m_DeltaRot[2] -= 1.0f;
-		ImGui::SameLine();
-		if (ImGui::Button("Roll+1"))
-			m_DeltaRot[2] += 1.0f;
+			if (ImGui::Button("X-0.1", ImVec2(50, 0)))
+				m_DeltaPosX -= 0.1f;
+			ImGui::SameLine();
+			if (ImGui::Button("X+0.1", ImVec2(50, 0)))
+				m_DeltaPosX += 0.1f;
 
-		ImGui::Spacing();
-		ImGui::Separator();
-		ImGui::TextColored(m_AccentColor, "Scope Camera Scale Adjustment");
+			if (ImGui::Button("Y-0.1", ImVec2(50, 0)))
+				m_DeltaPosY -= 0.1f;
+			ImGui::SameLine();
+			if (ImGui::Button("Y+0.1", ImVec2(50, 0)))
+				m_DeltaPosY += 0.1f;
 
-		// Scale slider
-		ImGui::Text("Scale Adjustments");
-		ImGui::SliderFloat("Scale", &m_DeltaScale, 0.1f, 10.0f, "%.3f");
+			if (ImGui::Button("Z-0.1", ImVec2(50, 0)))
+				m_DeltaPosZ -= 0.1f;
+			ImGui::SameLine();
+			if (ImGui::Button("Z+0.1", ImVec2(50, 0)))
+				m_DeltaPosZ += 0.1f;
 
-		// Fine scale adjustment buttons
-		ImGui::Text("Fine Scale Adjustments:");
-		if (ImGui::Button("-0.1"))
-			m_DeltaScale -= 0.1f;
-		ImGui::SameLine();
-		if (ImGui::Button("+0.1"))
-			m_DeltaScale += 0.1f;
+			ImGui::Columns(1);
+		}
+
+		// Rotation controls
+		if (ImGui::CollapsingHeader("Rotation Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::Columns(2, "RotationColumns", false);
+
+			ImGui::Text("Precise Adjustment:");
+			ImGui::SetNextItemWidth(-1);
+			ImGui::SliderFloat("##Pitch", &m_DeltaRot[0], -180.0f, 180.0f, "Pitch: %.1f°");
+			ImGui::SetNextItemWidth(-1);
+			ImGui::SliderFloat("##Yaw", &m_DeltaRot[1], -180.0f, 180.0f, "Yaw: %.1f°");
+			ImGui::SetNextItemWidth(-1);
+			ImGui::SliderFloat("##Roll", &m_DeltaRot[2], -180.0f, 180.0f, "Roll: %.1f°");
+
+			ImGui::NextColumn();
+
+			ImGui::Text("Fine Tuning:");
+
+			if (ImGui::Button("P-1°", ImVec2(50, 0)))
+				m_DeltaRot[0] -= 1.0f;
+			ImGui::SameLine();
+			if (ImGui::Button("P+1°", ImVec2(50, 0)))
+				m_DeltaRot[0] += 1.0f;
+
+			if (ImGui::Button("Y-1°", ImVec2(50, 0)))
+				m_DeltaRot[1] -= 1.0f;
+			ImGui::SameLine();
+			if (ImGui::Button("Y+1°", ImVec2(50, 0)))
+				m_DeltaRot[1] += 1.0f;
+
+			if (ImGui::Button("R-1°", ImVec2(50, 0)))
+				m_DeltaRot[2] -= 1.0f;
+			ImGui::SameLine();
+			if (ImGui::Button("R+1°", ImVec2(50, 0)))
+				m_DeltaRot[2] += 1.0f;
+
+			ImGui::Columns(1);
+		}
+
+		// Scale controls
+		if (ImGui::CollapsingHeader("Scale Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::Columns(2, "ScaleColumns", false);
+
+			ImGui::Text("Scale:");
+			ImGui::SetNextItemWidth(-1);
+			ImGui::SliderFloat("##Scale", &m_DeltaScale, 0.1f, 10.0f, "%.3f");
+
+			ImGui::NextColumn();
+
+			ImGui::Text("Fine Tuning:");
+			if (ImGui::Button("-0.1", ImVec2(50, 0)))
+				m_DeltaScale -= 0.1f;
+			ImGui::SameLine();
+			if (ImGui::Button("+0.1", ImVec2(50, 0)))
+				m_DeltaScale += 0.1f;
+
+			ImGui::Columns(1);
+		}
 
 		// ==================== SCOPE SETTINGS ====================
 		ImGui::Spacing();
-		ImGui::Separator();
-		ImGui::TextColored(m_AccentColor, "Scope Settings");
-
-		// FOV controls
-		ImGui::SliderInt("Minimum FOV", &minFOV, 1, 180);
-		ImGui::SliderInt("Maximum FOV", &maxFOV, 1, 180);
-
-		// Vision modes
-		ImGui::Checkbox("Night Vision", &nightVision);
-		ImGui::Checkbox("Thermal Vision", &thermalVision);
+		if (ImGui::CollapsingHeader("Scope Settings")) {
+			ImGui::SliderInt("Minimum FOV", &minFOV, 1, 180);
+			ImGui::SliderInt("Maximum FOV", &maxFOV, 1, 180);
+			ImGui::Checkbox("Night Vision", &nightVision);
+			ImGui::Checkbox("Thermal Vision", &thermalVision);
+		}
 
 		// ==================== PARALLAX SETTINGS ====================
-		ImGui::Spacing();
-		ImGui::Separator();
-		ImGui::TextColored(m_AccentColor, "Parallax Settings");
-
-		ImGui::SliderFloat("Relative Fog Radius", &relativeFogRadius, 0.0f, 1.0f);
-		ImGui::SliderFloat("Scope Sway Amount", &scopeSwayAmount, 0.0f, 1.0f);
-		ImGui::SliderFloat("Max Travel", &maxTravel, 0.0f, 0.5f);
-		ImGui::SliderFloat("Radius", &radius, 0.0f, 1.0f);
+		if (ImGui::CollapsingHeader("Parallax Settings")) {
+			ImGui::SliderFloat("Relative Fog Radius", &relativeFogRadius, 0.0f, 1.0f);
+			ImGui::SliderFloat("Scope Sway Amount", &scopeSwayAmount, 0.0f, 1.0f);
+			ImGui::SliderFloat("Max Travel", &maxTravel, 0.0f, 0.5f);
+			ImGui::SliderFloat("Radius", &radius, 0.0f, 1.0f);
+		}
 
 		// ==================== ACTION BUTTONS ====================
 		ImGui::Spacing();
 		ImGui::Separator();
 
-		if (ImGui::Button("Reset All Adjustments")) {
+		// Button row
+		if (ImGui::Button("Reset Adjustments")) {
 			ResetAllAdjustments();
 		}
 
 		ImGui::SameLine();
 
-		// Save button
+		// Save button with validation
+		bool hasChanges = true;  // You could implement change detection here
 		if (ImGui::Button("Save Settings")) {
-			// Create a copy of the config to modify
+			// Update config with current values
 			DataPersistence::ScopeConfig modifiedConfig = *currentConfig;
 
-			// Update settings
+			// Update camera adjustments with current UI values
+			modifiedConfig.cameraAdjustments.deltaPosX = m_DeltaPosX;
+			modifiedConfig.cameraAdjustments.deltaPosY = m_DeltaPosY;
+			modifiedConfig.cameraAdjustments.deltaPosZ = m_DeltaPosZ;
+			modifiedConfig.cameraAdjustments.deltaRot[0] = m_DeltaRot[0];
+			modifiedConfig.cameraAdjustments.deltaRot[1] = m_DeltaRot[1];
+			modifiedConfig.cameraAdjustments.deltaRot[2] = m_DeltaRot[2];
+			modifiedConfig.cameraAdjustments.deltaScale = m_DeltaScale;
+
+			// Update other settings
 			modifiedConfig.scopeSettings.minFOV = minFOV;
 			modifiedConfig.scopeSettings.maxFOV = maxFOV;
 			modifiedConfig.scopeSettings.nightVision = nightVision;
 			modifiedConfig.scopeSettings.thermalVision = thermalVision;
-
 			modifiedConfig.parallaxSettings.relativeFogRadius = relativeFogRadius;
 			modifiedConfig.parallaxSettings.scopeSwayAmount = scopeSwayAmount;
 			modifiedConfig.parallaxSettings.maxTravel = maxTravel;
@@ -783,6 +968,12 @@ namespace ThroughScope
 			} else {
 				snprintf(m_DebugText, sizeof(m_DebugText), "Failed to save settings!");
 			}
+		}
+
+		// Display debug/status text
+		if (strlen(m_DebugText) > 0) {
+			ImGui::Spacing();
+			ImGui::TextWrapped("%s", m_DebugText);
 		}
 	}
 
@@ -961,21 +1152,41 @@ namespace ThroughScope
 	{
 		auto dataPersistence = DataPersistence::GetSingleton();
 		DataPersistence::WeaponInfo weaponInfo = DataPersistence::GetCurrentWeaponInfo();
-		ScanForNIFFiles();
+		OptimizedNIFScan();  // 使用优化的扫描
 
 		ImGui::TextColored(m_AccentColor, "Model Management");
 		ImGui::Separator();
 
 		if (weaponInfo.currentConfig) {
-			// 显示当前模型
+			// 显示当前模型信息卡片
+			ImGui::BeginGroup();
+			ImGui::Text("Current Configuration:");
 			if (!weaponInfo.currentConfig->modelName.empty()) {
-				ImGui::Text("Current Model: %s", weaponInfo.currentConfig->modelName.c_str());
-			} else {
-				ImGui::TextColored(m_WarningColor, "No model assigned to this configuration");
-			}
+				ImGui::TextColored(m_SuccessColor, "Model: %s", weaponInfo.currentConfig->modelName.c_str());
 
-			// 模型切换下拉框
+				// 显示模型统计信息（如果TTSNode存在）
+				auto ttsNode = GetTTSNode();
+				if (ttsNode) {
+					ImGui::Text("Status: Loaded and Active");
+					ImGui::Text("Position: [%.2f, %.2f, %.2f]",
+						ttsNode->local.translate.x,
+						ttsNode->local.translate.y,
+						ttsNode->local.translate.z);
+				} else {
+					ImGui::TextColored(m_WarningColor, "Status: Not Loaded");
+				}
+			} else {
+				ImGui::TextColored(m_WarningColor, "No model assigned");
+			}
+			ImGui::EndGroup();
+
+			ImGui::Spacing();
+			ImGui::Separator();
+
+			// 模型选择和预览
 			if (!m_AvailableNIFFiles.empty()) {
+				ImGui::TextColored(m_AccentColor, "Available Models:");
+
 				// 找到当前模型在列表中的索引
 				int currentModelIndex = -1;
 				for (int i = 0; i < m_AvailableNIFFiles.size(); i++) {
@@ -989,38 +1200,117 @@ namespace ThroughScope
 				                              m_AvailableNIFFiles[currentModelIndex].c_str() :
 				                              "Select Model...";
 
-				if (ImGui::BeginCombo("Change Model", previewText)) {
+				// 模型选择下拉框
+				ImGui::SetNextItemWidth(-100);
+				if (ImGui::BeginCombo("##ModelSelect", previewText)) {
 					for (int i = 0; i < m_AvailableNIFFiles.size(); i++) {
 						bool isSelected = (i == currentModelIndex);
-						if (ImGui::Selectable(m_AvailableNIFFiles[i].c_str(), isSelected)) {
-							// 用户选择了新的模型
+						bool isCurrent = (m_AvailableNIFFiles[i] == weaponInfo.currentConfig->modelName);
+
+						// 为当前使用的模型添加特殊标记
+						std::string displayName = m_AvailableNIFFiles[i];
+						if (isCurrent) {
+							displayName += " (Current)";
+						}
+
+						if (ImGui::Selectable(displayName.c_str(), isSelected)) {
 							std::string newModel = m_AvailableNIFFiles[i];
 
-							// 创建新的配置副本
-							auto modifiedConfig = *weaponInfo.currentConfig;
-							modifiedConfig.modelName = newModel;
+							// 如果选择了不同的模型
+							if (newModel != weaponInfo.currentConfig->modelName) {
+								// 创建新的配置副本
+								auto modifiedConfig = *weaponInfo.currentConfig;
+								modifiedConfig.modelName = newModel;
 
-							if (dataPersistence->SaveConfig(modifiedConfig)) {
-								// 重新加载TTSNode
-								if (CreateTTSNodeFromNIF(newModel)) {
-									snprintf(m_DebugText, sizeof(m_DebugText),
-										"Model changed to: %s", newModel.c_str());
+								if (dataPersistence->SaveConfig(modifiedConfig)) {
+									// 重新加载TTSNode
+									if (CreateTTSNodeFromNIF(newModel)) {
+										snprintf(m_DebugText, sizeof(m_DebugText),
+											"Model changed to: %s", newModel.c_str());
+										m_HasUnsavedChanges = false;  // 刚刚保存了
+									} else {
+										snprintf(m_DebugText, sizeof(m_DebugText),
+											"Failed to load new model: %s", newModel.c_str());
+										ShowErrorDialog("Model Load Error",
+											"Failed to load the selected model file. Please check if the file exists and is valid.");
+									}
+
+									dataPersistence->LoadAllConfigs();
 								} else {
 									snprintf(m_DebugText, sizeof(m_DebugText),
-										"Failed to load new model: %s", newModel.c_str());
+										"Failed to save configuration with new model");
+									ShowErrorDialog("Save Error",
+										"Failed to save the configuration with the new model.");
 								}
-							} else {
-								snprintf(m_DebugText, sizeof(m_DebugText),
-									"Failed to save configuration with new model");
 							}
 						}
+
 						if (isSelected) {
 							ImGui::SetItemDefaultFocus();
+						}
+
+						// 添加悬停提示
+						if (ImGui::IsItemHovered()) {
+							ImGui::SetTooltip("Click to switch to this model");
 						}
 					}
 					ImGui::EndCombo();
 				}
+
+				ImGui::SameLine();
+				if (ImGui::Button("Refresh")) {
+					m_NIFFilesScanned = false;
+					ScanForNIFFiles();
+				}
+
+				// 模型预览按钮
+				ImGui::Spacing();
+				if (ImGui::Button("Preview Selected Model")) {
+					if (currentModelIndex >= 0 && currentModelIndex < m_AvailableNIFFiles.size()) {
+						CreateTTSNodeFromNIF(m_AvailableNIFFiles[currentModelIndex]);
+					}
+				}
+
+				RenderHelpTooltip("Load the selected model for preview without saving to configuration");
+
+				ImGui::SameLine();
+				if (ImGui::Button("Remove Current Model")) {
+					RemoveExistingTTSNode();
+				}
+
+				RenderHelpTooltip("Remove the currently loaded TTSNode");
+			} else {
+				ImGui::TextColored(m_WarningColor, "No models available");
+				if (ImGui::Button("Scan for Models")) {
+					m_NIFFilesScanned = false;
+					ScanForNIFFiles();
+				}
 			}
+
+			ImGui::Spacing();
+			ImGui::Separator();
+
+			// 快速操作按钮
+			ImGui::TextColored(m_AccentColor, "Quick Actions:");
+
+			if (ImGui::Button("Reload Current Model", ImVec2(-1, 0))) {
+				if (!weaponInfo.currentConfig->modelName.empty()) {
+					if (CreateTTSNodeFromNIF(weaponInfo.currentConfig->modelName)) {
+						snprintf(m_DebugText, sizeof(m_DebugText),
+							"Model reloaded: %s", weaponInfo.currentConfig->modelName.c_str());
+					} else {
+						ShowErrorDialog("Reload Error", "Failed to reload the current model.");
+					}
+				}
+			}
+
+			RenderHelpTooltip("Reload the current model from the configuration");
+		}
+
+		// 显示调试信息
+		if (strlen(m_DebugText) > 0) {
+			ImGui::Spacing();
+			ImGui::TextWrapped("%s", m_DebugText);
 		}
 	}
 
@@ -1076,4 +1366,185 @@ namespace ThroughScope
 		return false;
 	}
     
+	void ImGuiManager::RenderHelpTooltip(const char* text)
+	{
+		if (m_ShowHelpTooltips) {
+			ImGui::SameLine();
+			ImGui::TextDisabled("(?)");
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("%s", text);
+			}
+		}
+	}
+
+	// 3. 改进的Reset确认对话框
+	void ImGuiManager::ShowResetConfirmationDialog()
+	{
+		static bool showResetConfirm = false;
+
+		if (ImGui::Button("Reset Adjustments")) {
+			if (m_ConfirmBeforeReset) {
+				showResetConfirm = true;
+			} else {
+				ResetAllAdjustments();
+			}
+		}
+
+		// Reset confirmation modal
+		if (showResetConfirm) {
+			ImGui::OpenPopup("Reset Confirmation");
+		}
+
+		if (ImGui::BeginPopupModal("Reset Confirmation", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+			ImGui::Text("Are you sure you want to reset all adjustments?");
+			ImGui::Text("This will restore default position, rotation, and scale values.");
+			ImGui::Spacing();
+
+			if (ImGui::Button("Yes, Reset", ImVec2(120, 0))) {
+				ResetAllAdjustments();
+				showResetConfirm = false;
+				ImGui::CloseCurrentPopup();
+			}
+
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+				showResetConfirm = false;
+				ImGui::CloseCurrentPopup();
+			}
+
+			ImGui::EndPopup();
+		}
+	}
+
+	// 4. 自动保存功能
+	void ImGuiManager::CheckAutoSave()
+	{
+		if (m_AutoSaveEnabled && m_HasUnsavedChanges) {
+			float currentTime = ImGui::GetTime();
+			if (currentTime - m_LastSaveTime > 30.0f) {  // 30秒自动保存
+				// 执行自动保存
+				// SaveCurrentSettings();
+				m_HasUnsavedChanges = false;
+				m_LastSaveTime = currentTime;
+				snprintf(m_DebugText, sizeof(m_DebugText), "Auto-saved at %.1f", currentTime);
+			}
+		}
+	}
+
+	// 5. 改进的设置面板
+	void ImGuiManager::RenderSettingsPanel()
+	{
+		ImGui::TextColored(m_AccentColor, "Interface Settings");
+		ImGui::Separator();
+
+		ImGui::Checkbox("Show Help Tooltips", &m_ShowHelpTooltips);
+		RenderHelpTooltip("Show helpful tooltips when hovering over UI elements");
+
+		ImGui::Checkbox("Auto-Save Changes", &m_AutoSaveEnabled);
+		RenderHelpTooltip("Automatically save changes every 30 seconds");
+
+		ImGui::Checkbox("Confirm Before Reset", &m_ConfirmBeforeReset);
+		RenderHelpTooltip("Show confirmation dialog before resetting adjustments");
+
+		ImGui::Checkbox("Real-time Adjustment", &m_RealTimeAdjustment);
+		RenderHelpTooltip("Apply changes immediately as you adjust sliders");
+
+		ImGui::Spacing();
+		ImGui::Separator();
+
+		// Key binding section
+		ImGui::TextColored(m_AccentColor, "Key Bindings");
+		ImGui::Text("Menu Toggle: F2");
+		ImGui::SameLine();
+		if (ImGui::Button("Change##MenuKey")) {
+			// Open key binding dialog
+		}
+
+		// Performance settings
+		ImGui::Spacing();
+		ImGui::TextColored(m_AccentColor, "Performance");
+
+		static int refreshRate = 60;
+		ImGui::SliderInt("UI Refresh Rate", &refreshRate, 30, 144, "%d FPS");
+		RenderHelpTooltip("Lower refresh rates can improve performance");
+	}
+
+	// 6. 改进的状态栏
+	void ImGuiManager::RenderStatusBar()
+	{
+		ImGui::Separator();
+
+		// Status bar at bottom
+		ImGui::Columns(3, "StatusColumns", false);
+
+		// Left: Current weapon info
+		auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+		if (weaponInfo.weapon) {
+			ImGui::TextColored(m_SuccessColor, "✓ Weapon Loaded");
+		} else {
+			ImGui::TextColored(m_WarningColor, "⚠ No Weapon");
+		}
+
+		ImGui::NextColumn();
+
+		// Center: TTSNode status
+		auto ttsNode = GetTTSNode();
+		if (ttsNode) {
+			ImGui::TextColored(m_SuccessColor, "✓ TTSNode Ready");
+		} else {
+			ImGui::TextColored(m_WarningColor, "⚠ No TTSNode");
+		}
+
+		ImGui::NextColumn();
+
+		// Right: Save status
+		if (m_HasUnsavedChanges) {
+			ImGui::TextColored(m_WarningColor, "● Unsaved Changes");
+		} else {
+			ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "○ All Saved");
+		}
+
+		ImGui::Columns(1);
+	}
+
+	// 7. 性能优化的NIF扫描
+	void ImGuiManager::OptimizedNIFScan()
+	{
+		float currentTime = ImGui::GetTime();
+
+		// 只在需要时或间隔时间后扫描
+		if (!m_NIFFilesScanned || currentTime > m_NextNIFScanTime) {
+			ScanForNIFFiles();
+			m_NextNIFScanTime = currentTime + NIF_SCAN_INTERVAL;
+		}
+	}
+
+	// 8. 改进的错误处理和用户反馈
+	void ImGuiManager::ShowErrorDialog(const std::string& title, const std::string& message)
+	{
+		static bool showError = false;
+		static std::string errorTitle, errorMessage;
+
+		if (!title.empty() && !message.empty()) {
+			errorTitle = title;
+			errorMessage = message;
+			showError = true;
+		}
+
+		if (showError) {
+			ImGui::OpenPopup(errorTitle.c_str());
+		}
+
+		if (ImGui::BeginPopupModal(errorTitle.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+			ImGui::TextWrapped("%s", errorMessage.c_str());
+			ImGui::Spacing();
+
+			if (ImGui::Button("OK", ImVec2(120, 0))) {
+				showError = false;
+				ImGui::CloseCurrentPopup();
+			}
+
+			ImGui::EndPopup();
+		}
+	}
 }

@@ -512,7 +512,7 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 		}
 	}
 	if (keyPgDown & 0x1)
-		Utilities::LogPlayerWeaponMods();
+		Utilities::LogPlayerWeaponNodes();
 
 	g_PCUpdateMainThread(pChar);
 }

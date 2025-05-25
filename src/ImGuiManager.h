@@ -37,6 +37,9 @@ namespace ThroughScope
         void RenderCameraAdjustmentPanel();
         void RenderRenderingPanel();
         void RenderDebugPanel();    
+		void RenderSettingsPanel();
+		void RenderModelSwitcher();
+		void RenderHelpTooltip(const char* text);
 		// Helper functions for real-time adjustments
 		void ApplyPositionAdjustment();
 		void ApplyRotationAdjustment();
@@ -48,9 +51,14 @@ namespace ThroughScope
 		bool CreateTTSNodeFromNIF(const std::string& nifFileName);
 		void RemoveExistingTTSNode();
 		bool AutoLoadTTSNodeFromConfig(const ThroughScope::DataPersistence::ScopeConfig* config);
-		void RenderModelSwitcher();
 		std::vector<std::string> GetNIFFileList() const { return m_AvailableNIFFiles; }
-        
+		void ShowResetConfirmationDialog();
+		void CheckAutoSave();
+		void RenderStatusBar();
+		void OptimizedNIFScan();
+		void ShowErrorDialog(const std::string& title, const std::string& message);
+		
+
         // State variables
         bool m_Initialized = false;
         bool m_MenuOpen = false;
@@ -77,6 +85,17 @@ namespace ThroughScope
 		std::vector<std::string> m_AvailableNIFFiles;
 		int m_SelectedNIFIndex = 0;
 		bool m_NIFFilesScanned = false;
+
+		bool m_ShowHelpTooltips = true;    // 是否显示帮助提示
+		bool m_AutoSaveEnabled = true;     // 是否启用自动保存
+		float m_LastSaveTime = 0.0f;       // 上次保存时间
+		bool m_HasUnsavedChanges = false;  // 是否有未保存的更改
+		std::string m_LastUsedNIF = "";    // 记住上次使用的NIF文件
+		bool m_ConfirmBeforeReset = true;  // 重置前确认
+
+		// 性能优化
+		float m_NextNIFScanTime = 0.0f;         // 下次扫描NIF文件的时间
+		const float NIF_SCAN_INTERVAL = 10.0f;  // NIF文件扫描间隔（秒）
         
         // Debug variables
         char m_DebugText[1024] = "";
