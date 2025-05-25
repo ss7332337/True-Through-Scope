@@ -60,7 +60,7 @@ bool NIFLoader::LoadNIFAndAttach(const char* filePath)
 	}
 
 	auto weaponnode = PlayerCharacter::GetSingleton()->Get3D(true)->GetObjectByName("Weapon")->IsNode();
-	weaponnode->AttachChild(rootNode, true);
+	weaponnode->AttachChild(rootNode, false);
 	rootNode->local.translate = NiPoint3(0, 0, 10);
 	rootNode->local.rotate.MakeIdentity();
 

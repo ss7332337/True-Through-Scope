@@ -19,12 +19,9 @@ namespace ThroughScope
 		static bool Initialize();
 		static void Shutdown();
 		static bool IsScopeActive() { return s_IsScopeActive; }
-		static RE::TESFormID GetEquippedWeaponFormID() { return s_EquippedWeaponFormID; }
 
 		virtual RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent& a_event, RE::BSTEventSource<RE::TESEquipEvent>* a_eventSource) override;
-		void SetupScopeForWeapon(const DataPersistence::WeaponInfo& weaponInfo);
-		void CleanupScopeResources();
-
+		//void SetupScopeForWeapon(const DataPersistence::WeaponInfo& weaponInfo);
 	private:
 		EquipWatcher() = default;
 		~EquipWatcher() = default;
@@ -36,16 +33,16 @@ namespace ThroughScope
 		bool HasScope(RE::TESObjectWEAP* weapon);
 		// 模型和配置相关
 		RE::NiNode* LoadScopeModel(const std::string& modelName);
-		void ApplyScopeTransform(RE::NiNode* scopeNode, const DataPersistence::CameraAdjustments& adjustments);
-		void ApplyScopeSettings(const DataPersistence::ScopeConfig& config);
+		//void ApplyScopeTransform(RE::NiNode* scopeNode, const DataPersistence::CameraAdjustments& adjustments);
+		//void ApplyScopeSettings(const DataPersistence::ScopeConfig& config);
 
 		// Static instance
 		static EquipWatcher* s_Instance;
-		static RE::NiNode* s_CurrentScopeNode;
+		//static RE::NiNode* s_CurrentScopeNode;
 
 		// State tracking
 		static bool s_IsScopeActive;
-		static RE::TESFormID s_EquippedWeaponFormID;
+		//static RE::TESFormID s_EquippedWeaponFormID;
 		static std::string s_LastAnimEvent;
 
 
@@ -56,6 +53,23 @@ namespace ThroughScope
 		inline static const std::string ANIM_EVENT_SCOPE_END = "sightedTransitionEnd";
 	};
 
-	
+	class AnimationGraphEventWatcher
+	{
+	public:
+		typedef RE::BSEventNotifyControl(AnimationGraphEventWatcher::* FnProcessEvent)(RE::BSAnimationGraphEvent& evn, RE::BSTEventSource<RE::BSAnimationGraphEvent>* dispatcher);
+		
+		// 改为静态函数
+		RE::BSEventNotifyControl hkProcessEvent(RE::BSAnimationGraphEvent& evn, RE::BSTEventSource<RE::BSAnimationGraphEvent>* src);
+		
+		static AnimationGraphEventWatcher* GetSingleton();
+		static bool Initialize();
+		static void Shutdown();
+		
+		void RegisterForEvents();
+		void UnregisterForEvents();
 
+	protected:
+		static std::unordered_map<uint64_t, FnProcessEvent> fnHash;
+		static AnimationGraphEventWatcher* s_Instance; // 添加静态实例指针
+	};
 }

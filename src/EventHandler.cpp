@@ -3,64 +3,73 @@
 #include "DataPersistence.h"
 #include <NiFLoader.h>
 
-#include "D3DHooks.h"
+#include "ScopeCamera.h"
 
 namespace ThroughScope
 {
 	using namespace RE;
+	static bool isQuerySpawnNode = false;
+
 	// Initialize static members
 	EquipWatcher* EquipWatcher::s_Instance = nullptr;
 	bool EquipWatcher::s_IsScopeActive = false;
-	TESFormID EquipWatcher::s_EquippedWeaponFormID = 0;
 	std::string EquipWatcher::s_LastAnimEvent = "";
-	RE::NiNode* EquipWatcher::s_CurrentScopeNode = nullptr;
+	
 
-	BGSKeyword* an_45;
-	BGSKeyword* AnimsXM2010_scopeKH45;
-	BGSKeyword* AnimsXM2010_scopeKM;
-	BGSKeyword* AX50_toounScope_K;
-	BGSKeyword* AnimsAX50_scopeKH45;
-	BGSKeyword* QMW_AnimsQBZ191M_on;
-	BGSKeyword* QMW_AnimsQBZ191M_off;
-	BGSKeyword* QMW_AnimsRU556M_on;
-	BGSKeyword* QMW_AnimsRU556M_off;
-	BGSKeyword* AX50_toounScope_L;
-	BGSKeyword* AnimsAX50_scopeK;
+	AnimationGraphEventWatcher* AnimationGraphEventWatcher::s_Instance = nullptr;
+	std::unordered_map<uint64_t, AnimationGraphEventWatcher::FnProcessEvent> AnimationGraphEventWatcher::fnHash;
 
 	NIFLoader* m_NIFLoader = NIFLoader::GetSington();
 
-	bool IsSideAim()
+	
+
+	template <class Ty>
+	Ty SafeWrite64Function(uintptr_t addr, Ty data)
 	{
-		static const BGSKeyword* sideAimKeywords[] = { an_45, AnimsXM2010_scopeKH45, AnimsXM2010_scopeKM,
-			AnimsAX50_scopeKH45,
-			AX50_toounScope_K, AX50_toounScope_L,
-			AnimsAX50_scopeK };
-		return PlayerCharacter::GetSingleton() && std::any_of(std::begin(sideAimKeywords), std::end(sideAimKeywords), [](const BGSKeyword* kw) { return kw && PlayerCharacter::GetSingleton()->HasKeyword(kw); });
+		DWORD oldProtect;
+		void* _d[2];
+		memcpy(_d, &data, sizeof(data));
+		size_t len = sizeof(_d[0]);
+
+		VirtualProtect((void*)addr, len, PAGE_EXECUTE_READWRITE, &oldProtect);
+		Ty olddata;
+		memset(&olddata, 0, sizeof(Ty));
+		memcpy(&olddata, (void*)addr, len);
+		memcpy((void*)addr, &_d[0], len);
+		VirtualProtect((void*)addr, len, oldProtect, &oldProtect);
+		return olddata;
 	}
 
-	BGSKeyword* IsMagnifier()
+	void CleanupScopeResources()
 	{
-		auto player = PlayerCharacter::GetSingleton();
-		if (player) {
-			if (QMW_AnimsQBZ191M_on) {
-				if (player->HasKeyword(QMW_AnimsQBZ191M_on)) {
-					logger::warn("QMW_AnimsQBZ191M_on");
-					return QMW_AnimsQBZ191M_on;
-				}
-			} else if (QMW_AnimsQBZ191M_off) {
-				if (player->HasKeyword(QMW_AnimsQBZ191M_off))
-					return QMW_AnimsQBZ191M_off;
-			} else if (QMW_AnimsRU556M_off) {
-				if (player->HasKeyword(QMW_AnimsRU556M_off))
-					return QMW_AnimsRU556M_off;
-			} else if (QMW_AnimsRU556M_on) {
-				if (player->HasKeyword(QMW_AnimsRU556M_on))
-					return QMW_AnimsRU556M_on;
-			}
+		auto playerCharacter = RE::PlayerCharacter::GetSingleton();
+		if (!playerCharacter || !playerCharacter->Get3D()) {
+			return;
 		}
-		return nullptr;
-	}
 
+		auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
+		if (!weaponNode || !weaponNode->IsNode()) {
+			return;
+		}
+
+		auto weaponNiNode = static_cast<RE::NiNode*>(weaponNode);
+		auto existingTTSNode = weaponNiNode->GetObjectByName("TTSNode");
+
+		if (existingTTSNode) {
+			logger::info("Removing existing TTSNode");
+			weaponNiNode->DetachChild(existingTTSNode);
+
+			// 更新节点
+			RE::NiUpdateData updateData{};
+			updateData.camera = ScopeCamera::GetScopeCamera();
+			if (updateData.camera) {
+				weaponNiNode->Update(updateData);
+			}
+
+			logger::info("Existing TTSNode removed");
+		}
+		logger::info("Scope resources cleaned up");
+	}
 
 
 	EquipWatcher* EquipWatcher::GetSingleton()
@@ -73,19 +82,9 @@ namespace ThroughScope
 
 	bool EquipWatcher::Initialize()
 	{
-		auto handler = GetSingleton();
-		an_45 = (RE::BGSKeyword*)RE::TESForm::GetFormByEditorID("an_45d");
-		AnimsXM2010_scopeKH45 = (RE::BGSKeyword*)RE::TESForm::GetFormByEditorID("AnimsXM2010_scopeKH45");
-		AX50_toounScope_K = (RE::BGSKeyword*)RE::TESForm::GetFormByEditorID("AX50_toounScope_K");
-		AnimsXM2010_scopeKM = (RE::BGSKeyword*)RE::TESForm::GetFormByEditorID("AnimsXM2010_scopeKM");
-		AnimsAX50_scopeKH45 = (RE::BGSKeyword*)RE::TESForm::GetFormByEditorID("AnimsAX50_scopeKH45");
-		AX50_toounScope_L = (RE::BGSKeyword*)RE::TESForm::GetFormByEditorID("AX50_toounScope_L");
-		AnimsAX50_scopeK = (RE::BGSKeyword*)RE::TESForm::GetFormByEditorID("AnimsAX50_scopeK");
+		isQuerySpawnNode = false;
 
-		QMW_AnimsQBZ191M_on = (RE::BGSKeyword*)RE::TESForm::GetFormByEditorID("QMW_AnimsQBZ191M_on");
-		QMW_AnimsQBZ191M_off = (RE::BGSKeyword*)RE::TESForm::GetFormByEditorID("QMW_AnimsQBZ191M_off");
-		QMW_AnimsRU556M_on = (RE::BGSKeyword*)RE::TESForm::GetFormByEditorID("QMW_AnimsRU556M_on");
-		QMW_AnimsRU556M_off = (RE::BGSKeyword*)RE::TESForm::GetFormByEditorID("QMW_AnimsRU556M_off");
+		auto handler = GetSingleton();
 		handler->RegisterForEvents();
 		logger::info("EventHandler initialized");
 		return true;
@@ -150,12 +149,9 @@ namespace ThroughScope
 						weaponInfo.selectedModForm->GetLocalFormID());
 				}
 
-				// Enable scope functionality
+				isQuerySpawnNode = true;
 				s_IsScopeActive = true;
-				s_EquippedWeaponFormID = weapon->formID;
-
-				// Setup scope based on configuration
-				SetupScopeForWeapon(weaponInfo);
+				ScopeCamera::s_EquippedWeaponFormID = weapon->formID;
 
 			} else {
 				// No configuration found - do nothing as requested
@@ -167,7 +163,7 @@ namespace ThroughScope
 			// Weapon unequipped, clean up resources
 			logger::info("Weapon unequipped, cleaning up scope resources");
 			s_IsScopeActive = false;
-			s_EquippedWeaponFormID = 0;
+			ScopeCamera::s_EquippedWeaponFormID = 0;
 			CleanupScopeResources();
 		}
 
@@ -182,136 +178,66 @@ namespace ThroughScope
 		return false;
 	}
 
-	void EquipWatcher::SetupScopeForWeapon(const DataPersistence::WeaponInfo& weaponInfo)
+	
+
+
+	bool AnimationGraphEventWatcher::Initialize()
 	{
-		if (!weaponInfo.currentConfig) {
-			logger::warn("No configuration provided for scope setup");
-			return;
+		((AnimationGraphEventWatcher*)((uint64_t)PlayerCharacter::GetSingleton() + 0x38))->RegisterForEvents();
+		isQuerySpawnNode = false;
+		return true;
+	}
+
+	AnimationGraphEventWatcher* AnimationGraphEventWatcher::GetSingleton()
+	{
+		if (!s_Instance) {
+			s_Instance = new AnimationGraphEventWatcher();
 		}
+		return s_Instance;
+	}
 
-		const auto& config = *weaponInfo.currentConfig;
-		logger::info("Setting up scope with model: {}", config.modelName);
 
-		// 1. 加载NIF模型（如果指定了modelName）
-		if (!config.modelName.empty()) {
+	RE::BSEventNotifyControl AnimationGraphEventWatcher::hkProcessEvent(RE::BSAnimationGraphEvent& evn, RE::BSTEventSource<RE::BSAnimationGraphEvent>* src)
+	{
+		FnProcessEvent fn = fnHash.at(*(uint64_t*)this);
+		std::string eventName = evn.tag.data();
+		// logger::info("Event Name: {}", eventName.c_str());
+		// Get current weapon info including available modifications
+		
+		if (std::strcmp(eventName.c_str(), "weaponDraw") == 0)
+		{
 			CleanupScopeResources();
-			std::string fullPath = "Meshes\\TTS\\ScopeShape\\" + config.modelName;
-			auto scopeNode = m_NIFLoader->LoadNIF(fullPath.c_str());
-			auto weaponnode = PlayerCharacter::GetSingleton()->Get3D(true)->GetObjectByName("Weapon")->IsNode();
-			weaponnode->AttachChild(scopeNode, true);
-			scopeNode->local.translate = NiPoint3(0, 0, 10);
-			scopeNode->local.rotate.MakeIdentity();
-
-			RE::NiUpdateData updateData{};
-			updateData.camera = ScopeCamera::GetScopeCamera();
-			if (updateData.camera) {
-				scopeNode->Update(updateData);
-				weaponnode->Update(updateData);
-			}
-
-			if (scopeNode) {
-				// 应用变换
-				ApplyScopeTransform(scopeNode, config.cameraAdjustments);
-				s_CurrentScopeNode = scopeNode;
-				logger::info("Successfully loaded and positioned scope model: {}", config.modelName);
+			auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+			if (weaponInfo.currentConfig) {
+				ScopeCamera::SetupScopeForWeapon(weaponInfo);
+				isQuerySpawnNode = false;
 			} else {
-				logger::error("Failed to load scope model: {}", config.modelName);
+				// No configuration found - do nothing as requested
+				logger::info("No scope configuration found for this weapon - no action taken");
 			}
 		}
+		
 
-		// 2. 应用瞄准镜设置到D3DHooks
-		ApplyScopeSettings(config);
-
-		logger::info("Scope setup completed for weapon");
+		return fn ? (this->*fn)(evn, src) : BSEventNotifyControl::kContinue;
 	}
 
-	void EquipWatcher::CleanupScopeResources()
+	void AnimationGraphEventWatcher::RegisterForEvents()
 	{
-		auto playerCharacter = RE::PlayerCharacter::GetSingleton();
-		if (!playerCharacter || !playerCharacter->Get3D()) {
-			return;
+		uint64_t vtable = *(uint64_t*)this;
+		auto it = fnHash.find(vtable);
+		if (it == fnHash.end()) {
+			AnimationGraphEventWatcher::FnProcessEvent fn = SafeWrite64Function(vtable + 0x8, &ThroughScope::AnimationGraphEventWatcher::hkProcessEvent);
+			fnHash.insert(std::pair<uint64_t, FnProcessEvent>(vtable, fn));
 		}
-
-		auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
-		if (!weaponNode || !weaponNode->IsNode()) {
-			return;
-		}
-
-		auto weaponNiNode = static_cast<RE::NiNode*>(weaponNode);
-		auto existingTTSNode = weaponNiNode->GetObjectByName("TTSNode");
-
-		if (existingTTSNode) {
-			logger::info("Removing existing TTSNode");
-			weaponNiNode->DetachChild(existingTTSNode);
-
-			// 更新节点
-			RE::NiUpdateData updateData{};
-			updateData.camera = ScopeCamera::GetScopeCamera();
-			if (updateData.camera) {
-				weaponNiNode->Update(updateData);
-			}
-
-			logger::info("Existing TTSNode removed");
-		}
-		logger::info("Scope resources cleaned up");
 	}
 
-	void EquipWatcher::ApplyScopeSettings(const DataPersistence::ScopeConfig& config)
+	void AnimationGraphEventWatcher::UnregisterForEvents()
 	{
-		// 更新D3DHooks中的瞄准镜设置
-		D3DHooks::UpdateScopeSettings(
-			config.parallaxSettings.relativeFogRadius,
-			config.parallaxSettings.scopeSwayAmount,
-			config.parallaxSettings.maxTravel,
-			config.parallaxSettings.radius);
-
-		// 设置摄像头FOV
-		ScopeCamera::SetFOVMinMax(config.scopeSettings.minFOV, config.scopeSettings.maxFOV);
-
-		logger::info("Applied scope settings - FOV: {}-{}, Parallax: relativeFogRadius={:.3f}, scopeSwayAmount={:.3f}, maxTravel={:.3f}, radius={:.3f}",
-			config.scopeSettings.minFOV, config.scopeSettings.maxFOV,
-			config.parallaxSettings.relativeFogRadius, config.parallaxSettings.scopeSwayAmount,
-			config.parallaxSettings.maxTravel, config.parallaxSettings.radius);
-	}
-
-	void EquipWatcher::ApplyScopeTransform(RE::NiNode* scopeNode, const DataPersistence::CameraAdjustments& adjustments)
-	{
-		if (!scopeNode || !ScopeCamera::GetScopeCamera()) {
-			logger::warn("No scope node to apply transform to");
+		uint64_t vtable = *(uint64_t*)this;
+		auto it = fnHash.find(vtable);
+		if (it == fnHash.end())
 			return;
-		}
-
-		// 应用位置偏移
-		scopeNode->local.translate.x = adjustments.deltaPosX;
-		scopeNode->local.translate.y = adjustments.deltaPosY;
-		scopeNode->local.translate.z = adjustments.deltaPosZ;
-
-		// 应用旋转（从度数转换为弧度并创建旋转矩阵）
-		RE::NiMatrix3 rotMatrix;
-		rotMatrix.MakeIdentity();
-
-		// 分别应用XYZ旋转
-		float pitchRad = adjustments.deltaRot[0] * 0.01745329251f;
-		float yawRad = adjustments.deltaRot[1] * 0.01745329251f;
-		float rollRad = adjustments.deltaRot[2] * 0.01745329251f;
-
-		rotMatrix.FromEulerAnglesXYZ(pitchRad, yawRad, rollRad);
-		scopeNode->local.rotate = rotMatrix;
-
-		// 应用缩放
-		scopeNode->local.scale = adjustments.deltaScale;
-
-		// 更新变换
-		RE::NiUpdateData updateData;
-		updateData.camera = ScopeCamera::GetScopeCamera();
-		updateData.time = 0.0f;
-		updateData.flags = 0;
-
-		scopeNode->Update(updateData);
-
-		logger::info("Applied transform to scope node - Pos({:.3f}, {:.3f}, {:.3f}), Rot({:.1f}, {:.1f}, {:.1f}), Scale({:.3f})",
-			adjustments.deltaPosX, adjustments.deltaPosY, adjustments.deltaPosZ,
-			adjustments.deltaRot[0], adjustments.deltaRot[1], adjustments.deltaRot[2],
-			adjustments.deltaScale);
+		SafeWrite64Function(vtable + 0x8, it->second);
+		fnHash.erase(it);
 	}
 }

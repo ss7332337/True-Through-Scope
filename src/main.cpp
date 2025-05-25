@@ -172,6 +172,8 @@ bool isImguiManagerInit = false;
 ThroughScope::D3DHooks* d3dHooks;
 NIFLoader* nifloader;
 
+PlayerCharacter* g_pchar = nullptr;
+
 static RendererShadowState* GetRendererShadowState()
 {
 	_TEB* teb = NtCurrentTeb();
@@ -295,9 +297,16 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 
 	RenderUtilities::SetRender_PreUIComplete(true);
 
-	d3dHooks->RestoreAllCachedStates(context);
-	d3dHooks->SetScopeTexture(context);
-	context->DrawIndexed(96, 0, 0);
+	int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
+	if (scopeNodeIndexCount != -1) {
+		try {
+			d3dHooks->RestoreAllCachedStates(context);
+			d3dHooks->SetScopeTexture(context);
+			context->DrawIndexed(scopeNodeIndexCount, 0, 0);
+		} catch (...) {
+			logger::error("Exception during scope quad rendering");
+		}
+	}
 
 	RenderUtilities::SetRender_PreUIComplete(false);
 
@@ -502,9 +511,9 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 		ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() - 1);
 
 	if (keyPgUp & 0x1) {
-		auto player = RE::PlayerCharacter::GetSingleton();
-		if (player && player->currentProcess && !player->currentProcess->middleHigh->equippedItems.empty()) {
-			auto& equippedItem = player->currentProcess->middleHigh->equippedItems[0];
+		
+		if (g_pchar && g_pchar->currentProcess && !g_pchar->currentProcess->middleHigh->equippedItems.empty()) {
+			auto& equippedItem = g_pchar->currentProcess->middleHigh->equippedItems[0];
 			uint32_t formID = equippedItem.item.object->GetLocalFormID();
 			std::string modName = equippedItem.item.object->GetFile()->filename;
 
@@ -513,6 +522,23 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 	}
 	if (keyPgDown & 0x1)
 		Utilities::LogPlayerWeaponNodes();
+
+
+	if (ScopeCamera::IsSideAim() 
+		|| RE::UI::GetSingleton()->GetMenuOpen("PauseMenu") 
+		|| RE::UI::GetSingleton()->GetMenuOpen("WorkshopMenu") 
+		|| RE::UI::GetSingleton()->GetMenuOpen("CursorMenu")) {
+		D3DHooks::SetEnableRender(false);
+	} else {
+		if (IsInADS(g_pchar)) 
+		{
+			D3DHooks::SetEnableRender(true);
+		}
+	}
+
+	if (!IsInADS(g_pchar)) {
+		D3DHooks::SetEnableRender(false);
+	}
 
 	g_PCUpdateMainThread(pChar);
 }
@@ -648,6 +674,12 @@ DWORD WINAPI InitThread(HMODULE hModule)
     // Initialize systems
     isScopCamReady = ThroughScope::ScopeCamera::Initialize();
 	isRenderReady = ThroughScope::RenderUtilities::Initialize();
+
+	auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+	if (weaponInfo.currentConfig) {
+		ScopeCamera::SetupScopeForWeapon(weaponInfo);
+	} 
+
     logger::info("ThroughScope initialization completed");
     return 0;
 }
@@ -655,8 +687,10 @@ DWORD WINAPI InitThread(HMODULE hModule)
 // Initialize the plugin
 void InitializePlugin()
 {
+	g_pchar = RE::PlayerCharacter::GetSingleton();
 	RegisterHooks();
 	ThroughScope::EquipWatcher::GetSingleton()->Initialize();
+	ThroughScope::AnimationGraphEventWatcher::GetSingleton()->Initialize();
 	
     // Start initialization thread for components that need the game world
     HANDLE hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)InitThread, (HMODULE)REX::W32::GetCurrentModule(), 0, NULL);

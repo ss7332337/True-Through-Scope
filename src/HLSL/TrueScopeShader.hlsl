@@ -99,5 +99,11 @@ float4 main(PS_INPUT input) : SV_TARGET
     
     // Apply final effect
     color.rgb *= parallaxValue;
+    color.rgb = pow(abs(color.rgb), 2.2);
+    // 在线性空间中提高亮度
+    color.rgb *= 105.0f;
+    // 转换回gamma空间
+    color.rgb = pow(abs(color.rgb), 1.0 / 2.2);
+    
     return color;
 }

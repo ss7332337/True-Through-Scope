@@ -48,6 +48,7 @@ namespace ThroughScope
 		RE::NiAVObject* GetTTSNode();
 
 		void ScanForNIFFiles();
+		bool CreateTTSNodeFromNIF(const ThroughScope::DataPersistence::ScopeConfig* config);
 		bool CreateTTSNodeFromNIF(const std::string& nifFileName);
 		void RemoveExistingTTSNode();
 		bool AutoLoadTTSNodeFromConfig(const ThroughScope::DataPersistence::ScopeConfig* config);

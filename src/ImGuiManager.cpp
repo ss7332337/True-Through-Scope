@@ -293,7 +293,7 @@ namespace ThroughScope
 	{
 		m_DeltaPosX = 0.0f;
 		m_DeltaPosY = 0.0f;
-		m_DeltaPosZ = 6.5f;
+		m_DeltaPosZ = 7.0f;
 		m_DeltaRot[0] = 0.0f;
 		m_DeltaRot[1] = 0.0f;
 		m_DeltaRot[2] = 0.0f;
@@ -386,7 +386,6 @@ namespace ThroughScope
 		}
 	}
 
-
 	bool ImGuiManager::CreateTTSNodeFromNIF(const std::string& nifFileName)
 	{
 		try {
@@ -408,7 +407,6 @@ namespace ThroughScope
 
 			// 移除现有的TTSNode
 			RemoveExistingTTSNode();
-
 			// 构建完整的NIF文件路径
 			std::string fullPath = "Meshes\\TTS\\ScopeShape\\" + nifFileName;
 
@@ -417,6 +415,7 @@ namespace ThroughScope
 			// 使用NIFLoader加载NIF文件
 			auto nifLoader = NIFLoader::GetSington();
 			RE::NiNode* loadedNode = nifLoader->LoadNIF(fullPath.c_str());
+			ScopeCamera::s_CurrentScopeNode = loadedNode;
 
 			if (!loadedNode) {
 				logger::error("Failed to load NIF file: {}", fullPath);
@@ -424,16 +423,13 @@ namespace ThroughScope
 				return false;
 			}
 
-			// 设置节点名称为TTSNode
-			loadedNode->name = "TTSNode";
-
 			// 设置初始变换
-			loadedNode->local.translate = RE::NiPoint3(0.0f, 0.0f, 6.5f);
+			loadedNode->local.translate = RE::NiPoint3(0,0,7);
 			loadedNode->local.rotate.MakeIdentity();
 			loadedNode->local.scale = 1.5f;
 
 			// 将加载的节点附加到武器节点
-			weaponNiNode->AttachChild(loadedNode, true);
+			weaponNiNode->AttachChild(loadedNode, false);
 
 			// 更新节点变换
 			RE::NiUpdateData updateData{};
@@ -455,6 +451,30 @@ namespace ThroughScope
 			snprintf(m_DebugText, sizeof(m_DebugText), "Exception: %s", e.what());
 			return false;
 		}
+	}
+
+	bool ImGuiManager::CreateTTSNodeFromNIF(const ThroughScope::DataPersistence::ScopeConfig* config)
+	{
+		if (CreateTTSNodeFromNIF(config->modelName))
+		{
+			auto loadedNode = ScopeCamera::s_CurrentScopeNode;
+			auto weaponNode = RE::PlayerCharacter::GetSingleton()->Get3D()->GetObjectByName("Weapon");
+			auto weaponNiNode = static_cast<RE::NiNode*>(weaponNode);
+
+			loadedNode->local.translate = RE::NiPoint3(config->cameraAdjustments.deltaPosX, config->cameraAdjustments.deltaPosY, config->cameraAdjustments.deltaPosZ);
+			loadedNode->local.rotate.FromEulerAnglesXYZ(config->cameraAdjustments.deltaRot[0], config->cameraAdjustments.deltaRot[1], config->cameraAdjustments.deltaRot[2]);
+			loadedNode->local.scale = config->cameraAdjustments.deltaScale;
+
+			RE::NiUpdateData updateData{};
+			updateData.camera = ScopeCamera::GetScopeCamera();
+			if (updateData.camera) {
+				loadedNode->Update(updateData);
+				weaponNiNode->Update(updateData);
+			}
+
+			return true;
+		}
+		return false;
 	}
 
 
@@ -552,14 +572,13 @@ namespace ThroughScope
 			ImGui::Text("Config Source: Weapon (%s)", weaponInfo.configSource.c_str());
 		}
 
-		// 显示当前模型信息（这是你询问的第一个位置）
 		if (weaponInfo.currentConfig) {
 			if (!weaponInfo.currentConfig->modelName.empty()) {
 				ImGui::Text("Current Model: %s", weaponInfo.currentConfig->modelName.c_str());
 
 				ImGui::SameLine();
 				if (ImGui::Button("Reload TTSNode")) {
-					if (CreateTTSNodeFromNIF(weaponInfo.currentConfig->modelName)) {
+					if (CreateTTSNodeFromNIF(weaponInfo.currentConfig)) {
 						snprintf(m_DebugText, sizeof(m_DebugText),
 							"TTSNode reloaded from: %s",
 							weaponInfo.currentConfig->modelName.c_str());
@@ -744,7 +763,6 @@ namespace ThroughScope
 			return;
 		}
 
-		// ==================== AUTO-LOAD SECTION (这是你询问的第二个位置) ====================
 		// 如果有配置但没有TTSNode，显示自动加载选项
 		if (weaponInfo.currentConfig && !weaponInfo.currentConfig->modelName.empty()) {
 			auto ttsNode = GetTTSNode();
@@ -780,6 +798,9 @@ namespace ThroughScope
 		static int minFOV, maxFOV;
 		static bool nightVision, thermalVision;
 		static float relativeFogRadius, scopeSwayAmount, maxTravel, radius;
+		static float m_PrevDeltaPosX = 0.0f, m_PrevDeltaPosY = 0.0f, m_PrevDeltaPosZ = 7.0f;
+		static float m_PrevDeltaRot[3] = { 0.0f, 0.0f, 0.0f };
+		static float m_PrevDeltaScale = 1.5f;
 
 		// Load settings only once or when config changes
 		if (!settingsLoaded || currentConfig != nullptr) {
@@ -791,12 +812,28 @@ namespace ThroughScope
 			scopeSwayAmount = currentConfig->parallaxSettings.scopeSwayAmount;
 			maxTravel = currentConfig->parallaxSettings.maxTravel;
 			radius = currentConfig->parallaxSettings.radius;
+			m_PrevDeltaPosX = currentConfig->cameraAdjustments.deltaPosX;
+			m_PrevDeltaPosY = currentConfig->cameraAdjustments.deltaPosY;
+			m_PrevDeltaPosZ = currentConfig->cameraAdjustments.deltaPosZ;
+			m_PrevDeltaRot[0] = currentConfig->cameraAdjustments.deltaRot[0];
+			m_PrevDeltaRot[1] = currentConfig->cameraAdjustments.deltaRot[1];
+			m_PrevDeltaRot[2] = currentConfig->cameraAdjustments.deltaRot[2];
+			m_PrevDeltaScale = currentConfig->cameraAdjustments.deltaScale;
 			settingsLoaded = true;
 		}
 
 		// Sync UI values with current TTSNode
 		auto ttsNode = GetTTSNode();
+
+
 		if (ttsNode) {
+
+			ttsNode->local.translate.x = m_PrevDeltaPosX;
+			ttsNode->local.translate.y = m_PrevDeltaPosY;
+			ttsNode->local.translate.z = m_PrevDeltaPosZ;
+			ttsNode->local.rotate.FromEulerAnglesXYZ(m_PrevDeltaRot[0], m_PrevDeltaRot[1], m_PrevDeltaRot[2]);
+			ttsNode->local.scale = m_PrevDeltaScale;
+
 			m_DeltaPosX = ttsNode->local.translate.x;
 			m_DeltaPosY = ttsNode->local.translate.y;
 			m_DeltaPosZ = ttsNode->local.translate.z;
@@ -965,6 +1002,7 @@ namespace ThroughScope
 
 			if (dataPersistence->SaveConfig(modifiedConfig)) {
 				snprintf(m_DebugText, sizeof(m_DebugText), "Settings saved successfully!");
+				dataPersistence->LoadAllConfigs();
 			} else {
 				snprintf(m_DebugText, sizeof(m_DebugText), "Failed to save settings!");
 			}
@@ -1224,7 +1262,7 @@ namespace ThroughScope
 
 								if (dataPersistence->SaveConfig(modifiedConfig)) {
 									// 重新加载TTSNode
-									if (CreateTTSNodeFromNIF(newModel)) {
+									if (CreateTTSNodeFromNIF(&modifiedConfig)) {
 										snprintf(m_DebugText, sizeof(m_DebugText),
 											"Model changed to: %s", newModel.c_str());
 										m_HasUnsavedChanges = false;  // 刚刚保存了
@@ -1295,7 +1333,7 @@ namespace ThroughScope
 
 			if (ImGui::Button("Reload Current Model", ImVec2(-1, 0))) {
 				if (!weaponInfo.currentConfig->modelName.empty()) {
-					if (CreateTTSNodeFromNIF(weaponInfo.currentConfig->modelName)) {
+					if (CreateTTSNodeFromNIF(weaponInfo.currentConfig)) {
 						snprintf(m_DebugText, sizeof(m_DebugText),
 							"Model reloaded: %s", weaponInfo.currentConfig->modelName.c_str());
 					} else {
@@ -1314,7 +1352,6 @@ namespace ThroughScope
 		}
 	}
 
-	// 更新自动加载TTSNode的方法
 	bool ImGuiManager::AutoLoadTTSNodeFromConfig(const ThroughScope::DataPersistence::ScopeConfig* config)
 	{
 		if (!config || config->modelName.empty()) {
@@ -1329,7 +1366,7 @@ namespace ThroughScope
 		}
 
 		// 创建或重新创建TTSNode
-		if (CreateTTSNodeFromNIF(config->modelName)) {
+		if (CreateTTSNodeFromNIF(config)) {
 			// 应用保存的变换设置
 			auto ttsNode = GetTTSNode();
 			if (ttsNode) {
@@ -1416,7 +1453,6 @@ namespace ThroughScope
 		}
 	}
 
-	// 4. 自动保存功能
 	void ImGuiManager::CheckAutoSave()
 	{
 		if (m_AutoSaveEnabled && m_HasUnsavedChanges) {
@@ -1431,7 +1467,6 @@ namespace ThroughScope
 		}
 	}
 
-	// 5. 改进的设置面板
 	void ImGuiManager::RenderSettingsPanel()
 	{
 		ImGui::TextColored(m_AccentColor, "Interface Settings");

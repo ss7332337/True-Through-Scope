@@ -139,7 +139,6 @@ namespace ThroughScope {
 		static void SetEnableRender(bool value) { s_EnableRender = value; }
 
 		static void UpdateScopeSettings(float relativeFogRadius, float scopeSwayAmount, float maxTravel, float radius);
-
 	private:
 		struct BufferInfo
 		{
@@ -161,7 +160,6 @@ namespace ThroughScope {
 		static VSStateCache s_CachedVSState;
 		static RSStateCache s_CachedRSState;  // 新增
 		static bool s_HasCachedState;
-
 	private:
 		static float s_CurrentRelativeFogRadius;
 		static float s_CurrentScopeSwayAmount;

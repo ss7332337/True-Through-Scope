@@ -153,33 +153,29 @@ namespace ThroughScope {
 		return true;
     }
 
-
     
-    void WINAPI D3DHooks::hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) {
-        // Check if the current draw call is for our scope quad
+    void WINAPI D3DHooks::hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation)
+	{
+		// Check if the current draw call is for our scope quad
 
-		if (!s_EnableRender || RenderUtilities::IsRender_PreUIComplete())
-		{
-			phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
-			RenderUtilities::SetRender_PreUIComplete(false);
-			return;
+		bool isScopeQuad = IsScopeQuadBeingDrawn(pContext, IndexCount);
+		if (isScopeQuad) {
+			if (s_EnableRender) {
+				CacheIAState(pContext);
+				CacheVSState(pContext);
+				CacheRSState(pContext);
+				s_HasCachedState = true;
+			}
+
+			if (ImGuiManager::GetSingleton()->IsMenuOpen()) {
+				return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
+			}
+
+			return phookD3D11DrawIndexed(pContext, 0, 0, 0);
+		} else {
+			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 		}
-
-        bool isScopeQuad = IsScopeQuadBeingDrawn(pContext, IndexCount);
-        
-        if (isScopeQuad) 
-		{
-
-			CacheIAState(pContext);
-			CacheVSState(pContext);
-			CacheRSState(pContext);
-			s_HasCachedState = true;
-			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
-            
-        } else {
-			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
-        }
-    }
+	}
 
 	void D3DHooks::RestoreAllCachedStates(ID3D11DeviceContext* pContext)
 	{
@@ -198,12 +194,11 @@ namespace ThroughScope {
 
 	bool D3DHooks::IsTargetDrawCall(const BufferInfo& vertexInfo, const BufferInfo& indexInfo, UINT indexCount)
 	{
-		return 
-			vertexInfo.stride == TARGET_STRIDE  
-			&& indexCount == TARGET_INDEX_COUNT  
-			//&& indexInfo.offset == 2133504
-			&& indexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE 
-			&& vertexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE;
+		int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
+
+		return vertexInfo.stride == TARGET_STRIDE && indexCount == scopeNodeIndexCount
+		       //&& indexInfo.offset == 2133504
+		       && indexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE && vertexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE;
 	}
 
 	bool D3DHooks::IsTargetDrawCall(std::vector<BufferInfo> vertexInfos, const BufferInfo& indexInfo, UINT indexCount)

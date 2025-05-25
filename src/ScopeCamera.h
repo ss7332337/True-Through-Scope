@@ -3,6 +3,8 @@
 #include "Constants.h"
 #include <RE/NetImmerse/NiCamera.hpp>
 
+#include "DataPersistence.h"
+
 namespace ThroughScope
 {
     class ScopeCamera
@@ -19,8 +21,10 @@ namespace ThroughScope
         static RE::NiCamera* GetScopeCamera() { return s_ScopeCamera; }
         static void SetScopeCamera(RE::NiCamera* camera) { s_ScopeCamera = camera; }
         
-        static bool IsAdjustmentMode() { return s_AdjustmentMode; }
-        static void ToggleAdjustmentMode() { s_AdjustmentMode = !s_AdjustmentMode; }
+		static void ApplyScopeTransform(RE::NiNode* scopeNode, const DataPersistence::CameraAdjustments& adjustments);
+		static void ApplyScopeSettings(const DataPersistence::ScopeConfig& config);
+		static void SetupScopeForWeapon(const DataPersistence::WeaponInfo& weaponInfo);
+		static int GetScopeNodeIndexCount();
         
         // Get target FOV
         static float GetTargetFOV() { return s_TargetFOV; }
@@ -38,6 +42,12 @@ namespace ThroughScope
         // Flag indicating if we're in scope render mode
         static bool IsRenderingForScope() { return s_IsRenderingForScope; }
         static void SetRenderingForScope(bool value) { s_IsRenderingForScope = value; }
+
+		static bool IsSideAim();
+		static RE::BGSKeyword* IsMagnifier();
+
+		static RE::TESFormID s_EquippedWeaponFormID;
+		static RE::NiNode* s_CurrentScopeNode;
         
     private:
         // Camera objects
@@ -45,19 +55,7 @@ namespace ThroughScope
         static RE::NiCamera* s_OriginalCamera;
         
         // Adjustment settings
-        static bool s_AdjustmentMode;
-        static float s_AdjustmentSpeed;
         static float s_TargetFOV;
-        static AdjustmentTarget s_CurrentAdjustmentTarget;
-        static int s_CurrentAdjustmentAxis;
-        
-        // Position/rotation deltas
-        static RE::NiPoint3 s_DeltaPos;
-        static RE::NiPoint3 s_CachedDeltaPos;
-        static RE::NiMatrix3 s_DeltaRot;
-        static RE::NiMatrix3 s_CachedDeltaRot;
-		static RE::NiPoint3 s_DeltaScale;
-		static RE::NiPoint3 s_CachedDeltaScale;
 		static float minFov;
 		static float maxFov;
         
@@ -65,6 +63,21 @@ namespace ThroughScope
         static bool s_OriginalFirstPerson;
         static bool s_OriginalRenderDecals;
         static bool s_IsRenderingForScope;
+
+		
+		
+		static RE::BGSKeyword* an_45;
+		static RE::BGSKeyword* AnimsXM2010_scopeKH45;
+		static RE::BGSKeyword* AnimsXM2010_scopeKM;
+		static RE::BGSKeyword* AX50_toounScope_K;
+		static RE::BGSKeyword* AnimsAX50_scopeKH45;
+		static RE::BGSKeyword* QMW_AnimsQBZ191M_on;
+		static RE::BGSKeyword* QMW_AnimsQBZ191M_off;
+		static RE::BGSKeyword* QMW_AnimsRU556M_on;
+		static RE::BGSKeyword* QMW_AnimsRU556M_off;
+		static RE::BGSKeyword* AX50_toounScope_L;
+		static RE::BGSKeyword* AnimsAX50_scopeK;
+
 
         static void ResetCamera();
     };

@@ -10,6 +10,9 @@
 namespace ThroughScope::Utilities
 {
 
+	using namespace RE;
+
+
     inline bool CreateAndEnableHook(void* target, void* hook, void** original, const char* hookName)
     {
         if (MH_CreateHook(target, hook, original) != MH_OK) {
