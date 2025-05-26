@@ -543,6 +543,7 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 	} else {
 		if (IsInADS(g_pchar)) 
 		{
+			D3DHooks::HandleFOVInput();
 			D3DHooks::SetEnableRender(true);
 		}
 	}

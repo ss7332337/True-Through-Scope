@@ -10,6 +10,9 @@
 #include <DDSTextureLoader11.h>
 #include "ImGuiManager.h"
 
+#include <xinput.h>
+#pragma comment(lib, "xinput.lib")
+
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 namespace ThroughScope {
@@ -29,6 +32,9 @@ namespace ThroughScope {
 	bool D3DHooks::s_HasCachedState = false;
 
 	bool D3DHooks::s_isForwardStage = false;
+	bool D3DHooks::s_EnableFOVAdjustment = true;
+	float D3DHooks::s_FOVAdjustmentSensitivity = 1.0f;
+	DWORD D3DHooks::s_LastGamepadInputTime = 0;
 
 	// 为瞄准镜创建和管理资源的静态变量
 	static ID3D11Texture2D* stagingTexture = nullptr;
@@ -43,6 +49,7 @@ namespace ThroughScope {
 	bool D3DHooks::s_EnableRender = false;
 	bool D3DHooks::s_InPresent = false;
 
+
 	constexpr UINT MAX_SRV_SLOTS = 128;
 	constexpr UINT MAX_SAMPLER_SLOTS = 16;
 	constexpr UINT MAX_CB_SLOTS = 14; 
@@ -53,10 +60,6 @@ namespace ThroughScope {
 	float D3DHooks::s_CurrentRadius = 0.3f;
 
 
-	/*static constexpr UINT TARGET_STRIDE = 12;
-	static constexpr UINT TARGET_INDEX_COUNT = 6;*/
-	//static constexpr UINT TARGET_STRIDE = 20;
-	//static constexpr UINT TARGET_INDEX_COUNT = 24;
 	static constexpr UINT TARGET_STRIDE = 28;
 	static constexpr UINT TARGET_INDEX_COUNT = 96;
 	static constexpr UINT TARGET_BUFFER_SIZE = 0x0000000008000000;
@@ -760,8 +763,77 @@ namespace ThroughScope {
 			}
 		}
 
+		auto playerChar = RE::PlayerCharacter::GetSingleton();
+		if (uMsg == WM_MOUSEWHEEL && s_EnableFOVAdjustment && playerChar && Utilities::IsInADS(playerChar)) {
+			short wheelDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+			ProcessMouseWheelFOVInput(wheelDelta);
+			return true;
+		}
+
 		// Pass to the original window procedure
 		return CallWindowProcA(s_OriginalWndProc, hWnd, uMsg, wParam, lParam);
+	}
+
+	void D3DHooks::ProcessGamepadFOVInput()
+	{
+		// 获取当前时间，防止输入过于频繁
+		DWORD currentTime = GetTickCount64();
+		if (currentTime - s_LastGamepadInputTime < 100)  // 100ms防抖
+			return;
+
+		XINPUT_STATE state;
+		ZeroMemory(&state, sizeof(XINPUT_STATE));
+
+		// 检查第一个手柄
+		if (XInputGetState(0, &state) == ERROR_SUCCESS) {
+			// 使用右摇杆Y轴或肩键来调整FOV
+			SHORT rightThumbY = state.Gamepad.sThumbRY;
+
+			// 设置死区
+			const SHORT THUMB_DEADZONE = 8000;
+
+			if (abs(rightThumbY) > THUMB_DEADZONE) {
+				// 将摇杆值转换为FOV调整量
+				float normalizedInput = (float)rightThumbY / 32767.0f;
+				float fovDelta = normalizedInput * s_FOVAdjustmentSensitivity;
+
+				ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() + fovDelta);
+				s_LastGamepadInputTime = currentTime;
+				return;
+			}
+
+			// 检查肩键 (LB/RB)
+			if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) {
+				ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() - s_FOVAdjustmentSensitivity * 2);
+				s_LastGamepadInputTime = currentTime;
+			} else if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) {
+				ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() + s_FOVAdjustmentSensitivity * 2);
+				s_LastGamepadInputTime = currentTime;
+			}
+		}
+	}
+
+	void D3DHooks::ProcessMouseWheelFOVInput(short wheelDelta)
+	{
+		auto playerChar = RE::PlayerCharacter::GetSingleton();
+
+		if (!playerChar || !s_EnableFOVAdjustment || !Utilities::IsInADS(playerChar))
+			return;
+
+		// 滚轮向上为正值，向下为负值
+		// 每个滚轮单位通常是120
+		float fovDelta = (wheelDelta / 120.0f) * s_FOVAdjustmentSensitivity;
+		ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() - fovDelta);
+	}
+
+	void D3DHooks::HandleFOVInput()
+	{
+		auto playerChar = RE::PlayerCharacter::GetSingleton();
+		if (!playerChar || !s_EnableFOVAdjustment || !Utilities::IsInADS(playerChar))
+			return;
+
+		// 处理手柄输入
+		ProcessGamepadFOVInput();
 	}
 
 	BOOL __stdcall D3DHooks::ClipCursorHook(RECT* lpRect)

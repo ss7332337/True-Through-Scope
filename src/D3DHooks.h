@@ -184,7 +184,7 @@ namespace ThroughScope {
 		static bool s_InPresent;  // 防止递归调用的标志
 		static IAStateCache s_CachedIAState;
 		static VSStateCache s_CachedVSState;
-		static RSStateCache s_CachedRSState;  // 新增
+		static RSStateCache s_CachedRSState;
 		static bool s_HasCachedState;
 	private:
 		static float s_CurrentRelativeFogRadius;
@@ -194,6 +194,12 @@ namespace ThroughScope {
 		static float s_ReticleScale;
 		static float s_ReticleOffsetX;
 		static float s_ReticleOffsetY;
+
+	private:
+		static bool s_EnableFOVAdjustment;
+		static float s_FOVAdjustmentSensitivity;
+		static DWORD s_LastGamepadInputTime;  // 防止手柄输入过于频繁
+
 
 	private:
 		static Microsoft::WRL::ComPtr<ID3D11Texture2D> s_ReticleTexture;
@@ -222,5 +228,11 @@ namespace ThroughScope {
 		static bool IsTargetDrawCall(std::vector<BufferInfo> vertexInfos, const BufferInfo& indexInfo, UINT indexCount);
 		static UINT GetVertexBuffersInfo(ID3D11DeviceContext* pContext, std::vector<BufferInfo>& outInfos, UINT maxSlotsToCheck = D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT);
 		static bool GetIndexBufferInfo(ID3D11DeviceContext* pContext, BufferInfo& outInfo);
+
+		static void ProcessGamepadFOVInput();
+		static void ProcessMouseWheelFOVInput(short wheelDelta);
+
+	public:
+		static void HandleFOVInput();
     };
 }
