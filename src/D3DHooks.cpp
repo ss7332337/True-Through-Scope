@@ -23,6 +23,9 @@ namespace ThroughScope {
 	IAStateCache D3DHooks::s_CachedIAState;
 	VSStateCache D3DHooks::s_CachedVSState;
 	RSStateCache D3DHooks::s_CachedRSState;  // 新增
+	float D3DHooks::s_ReticleScale = 1.0f;
+	float D3DHooks::s_ReticleOffsetX = 0.5f;
+	float D3DHooks::s_ReticleOffsetY = 0.5f;
 	bool D3DHooks::s_HasCachedState = false;
 
 	bool D3DHooks::s_isForwardStage = false;
@@ -169,12 +172,11 @@ namespace ThroughScope {
 
 		bool isScopeQuad = IsScopeQuadBeingDrawn(pContext, IndexCount);
 		if (isScopeQuad) {
-			if (s_EnableRender) {
-				CacheIAState(pContext);
-				CacheVSState(pContext);
-				CacheRSState(pContext);
-				s_HasCachedState = true;
-			}
+
+			CacheIAState(pContext);
+			CacheVSState(pContext);
+			CacheRSState(pContext);
+			s_HasCachedState = true;
 
 			if (ImGuiManager::GetSingleton()->IsMenuOpen()) {
 				return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
@@ -186,10 +188,10 @@ namespace ThroughScope {
 		}
 	}
 
-	void D3DHooks::LoadAimTexture(const std::string& path)
+	bool D3DHooks::LoadAimTexture(const std::string& path)
 	{
 		if (path.empty())
-			return;
+			return false;
 
 		const wchar_t* tempPath = Utilities::GetWC(path.c_str());
 		std::wstring defaultPath = L"Data/Textures/TTS/Reticle/Empty.dds";
@@ -203,7 +205,7 @@ namespace ThroughScope {
 
 		if (FAILED(hr)) {
 			logger::error("Failed to load reticle texture from path: {}", path);
-			return;
+			return false;
 		}
 
 		if (s_ReticleSRV.Get()) {
@@ -212,6 +214,38 @@ namespace ThroughScope {
 
 		if (tempPath)
 			free((void*)tempPath);
+
+		return true;
+	}
+
+	ID3D11ShaderResourceView* D3DHooks::LoadAimSRV(const std::string& path)
+	{
+		if (path.empty())
+			return nullptr;
+
+		const wchar_t* tempPath = Utilities::GetWC(path.c_str());
+		std::wstring defaultPath = L"Data/Textures/TTS/Reticle/Empty.dds";
+
+		D3DInstance->s_ReticleTexture.Reset();
+		HRESULT hr = CreateDDSTextureFromFile(
+			m_Device,
+			tempPath ? tempPath : defaultPath.c_str(),
+			nullptr,
+			D3DInstance->s_ReticleSRV.ReleaseAndGetAddressOf());
+
+		if (FAILED(hr)) {
+			logger::error("Failed to load reticle texture from path: {}", path);
+			return nullptr;
+		}
+
+		if (s_ReticleSRV.Get()) {
+			m_Context->GenerateMips(s_ReticleSRV.Get());
+		}
+
+		if (tempPath)
+			free((void*)tempPath);
+
+		return s_ReticleSRV.Get();
 	}
 
 	void D3DHooks::RestoreAllCachedStates(ID3D11DeviceContext* pContext)
@@ -232,6 +266,8 @@ namespace ThroughScope {
 	bool D3DHooks::IsTargetDrawCall(const BufferInfo& vertexInfo, const BufferInfo& indexInfo, UINT indexCount)
 	{
 		int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
+		if (scopeNodeIndexCount <= 0)
+			return false;
 
 		return vertexInfo.stride == TARGET_STRIDE && indexCount == scopeNodeIndexCount
 		       //&& indexInfo.offset == 2133504
@@ -313,7 +349,7 @@ namespace ThroughScope {
 	bool D3DHooks::IsScopeQuadBeingDrawn(ID3D11DeviceContext* pContext, UINT IndexCount)
 	{
 		// Our scope should use exactly 6 indices (2 triangles)
-		if (IndexCount != TARGET_INDEX_COUNT || !s_isForwardStage)
+		if (!s_isForwardStage)
 			return false;
 
 		// Check if player exists
@@ -341,7 +377,7 @@ namespace ThroughScope {
 	
 	bool D3DHooks::IsScopeQuadBeingDrawnShape(ID3D11DeviceContext* pContext, UINT IndexCount)
 	{
-		if (IndexCount != TARGET_INDEX_COUNT || s_isForwardStage)
+		if (s_isForwardStage)
 			return false;
 
 		auto playerCharacter = RE::PlayerCharacter::GetSingleton();
@@ -556,8 +592,6 @@ namespace ThroughScope {
 				return;
 			}
 
-			logger::info("Successfully created all scope rendering resources");
-
 			 D3D11_BLEND_DESC blendDesc = {};
 			blendDesc.AlphaToCoverageEnable = FALSE;
 			blendDesc.IndependentBlendEnable = FALSE;
@@ -586,7 +620,7 @@ namespace ThroughScope {
 				return;
 			}
 
-			logger::info("Successfully created all scope rendering resources including blend state");
+			logger::info("Successfully created all scope rendering resources");
 		}
 
 		// 复制/解析纹理内容
@@ -624,6 +658,10 @@ namespace ThroughScope {
 			cbData->lastScopePosition[0] = lastScopePos.x;
 			cbData->lastScopePosition[1] = lastScopePos.y;
 			cbData->lastScopePosition[2] = lastScopePos.z;
+
+			cbData->reticleScale = s_ReticleScale;
+			cbData->reticleOffsetX = s_ReticleOffsetX;
+			cbData->reticleOffsetY = s_ReticleOffsetY;
 
 			 DirectX::XMFLOAT4X4 rotationMatrix = {
 				1, 0, 0, 0,

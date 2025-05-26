@@ -1,0 +1,606 @@
+#include "ReticlePanel.h"
+#include "D3DHooks.h"
+#include "misc/cpp/imgui_stdlib.h"
+#include <d3d11.h>
+
+namespace ThroughScope
+{
+	ReticlePanel::ReticlePanel(PanelManagerInterface* manager) :
+		m_Manager(manager)
+	{
+		// 设置默认值
+		m_CurrentSettings.texturePath = "Test.dds";  // 默认纹理
+		m_CurrentSettings.scale = 1.0f;
+		m_CurrentSettings.offsetX = 0.5f;
+		m_CurrentSettings.offsetY = 0.5f;
+	}
+
+	bool ReticlePanel::Initialize()
+	{
+		RefreshReticleTextures();
+		LoadSettingsFromConfig();
+		return true;
+	}
+
+	bool ReticlePanel::ShouldShow() const
+	{
+		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
+		return weaponInfo.currentConfig != nullptr;
+	}
+
+	void ReticlePanel::Render()
+	{
+		OptimizedScan();
+
+		RenderCurrentReticleInfo();
+		ImGui::Spacing();
+		RenderTextureSelection();
+		ImGui::Spacing();
+		RenderReticleAdjustments();
+		ImGui::Spacing();
+
+		if (m_ShowPreview) {
+			RenderPreviewSection();
+			ImGui::Spacing();
+		}
+
+		RenderQuickActions();
+	}
+
+	void ReticlePanel::Update()
+	{
+		// 定期刷新纹理文件列表
+		float currentTime = ImGui::GetTime();
+		if (currentTime > m_NextScanTime) {
+			RefreshReticleTextures();
+			m_NextScanTime = currentTime + SCAN_INTERVAL;
+		}
+
+		// 实时更新瞄准镜设置到D3DHooks（类似CameraAdjustmentPanel的实时调整）
+		if (HasReticleChanges()) {
+			ApplyReticleSettingsRealtime();
+			UpdatePreviousSettings();
+		}
+	}
+
+	void ReticlePanel::RenderCurrentReticleInfo()
+	{
+		RenderSectionHeader("Current Reticle Information");
+
+		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
+		if (!weaponInfo.currentConfig) {
+			ImGui::TextColored(m_WarningColor, "No configuration available");
+			return;
+		}
+
+		ImGui::BeginGroup();
+
+		// 显示当前纹理信息
+		if (!m_CurrentSettings.texturePath.empty()) {
+			ImGui::TextColored(m_SuccessColor, "Texture: %s", m_CurrentSettings.texturePath.c_str());
+
+			// 显示当前设置
+			ImGui::Text("Scale: %.2f", m_CurrentSettings.scale);
+			ImGui::Text("Offset: [%.3f, %.3f]", m_CurrentSettings.offsetX, m_CurrentSettings.offsetY);
+
+			// 显示文件状态
+			std::string fullPath = GetFullTexturePath(m_CurrentSettings.texturePath);
+			if (std::filesystem::exists(fullPath)) {
+				ImGui::Text("Status: ✓ File Found");
+				try {
+					auto fileSize = std::filesystem::file_size(fullPath);
+					ImGui::Text("Size: %.2f KB", fileSize / 1024.0f);
+				} catch (...) {
+					ImGui::TextColored(m_WarningColor, "Size: Unknown");
+				}
+			} else {
+				ImGui::TextColored(m_ErrorColor, "Status: ✗ File Not Found");
+			}
+		} else {
+			ImGui::TextColored(m_WarningColor, "No reticle texture selected");
+		}
+
+		// 显示是否有未保存的更改
+		if (m_HasUnsavedChanges) {
+			ImGui::TextColored(m_WarningColor, "● Unsaved Changes");
+		}
+
+		ImGui::EndGroup();
+	}
+
+	void ReticlePanel::RenderTextureSelection()
+	{
+		RenderSectionHeader("Texture Selection");
+
+		if (m_AvailableTextures.empty()) {
+			ImGui::TextColored(m_WarningColor, "No textures found in TTS directory");
+			if (ImGui::Button("Scan for Textures")) {
+				RefreshReticleTextures();
+			}
+			return;
+		}
+
+		int currentTextureIndex = FindTextureIndex(m_CurrentSettings.texturePath);
+
+		// 搜索过滤器
+		ImGui::SetNextItemWidth(-100);
+		ImGui::InputTextWithHint("##Search", "Search textures...", &m_SearchFilter);
+		ImGui::SameLine();
+		if (ImGui::Button("Clear")) {
+			m_SearchFilter.clear();
+		}
+
+		// 纹理列表
+		ImGui::Spacing();
+		std::string previewText = currentTextureIndex >= 0 ?
+		                              GetTextureDisplayName(m_AvailableTextures[currentTextureIndex], true) :
+		                              "Select Texture...";
+
+		ImGui::SetNextItemWidth(-100);
+		if (ImGui::BeginCombo("##TextureSelect", previewText.c_str())) {
+			for (int i = 0; i < m_AvailableTextures.size(); i++) {
+				const std::string& fileName = m_AvailableTextures[i];
+
+				// 应用搜索过滤器
+				if (!m_SearchFilter.empty()) {
+					std::string lowerFileName = fileName;
+					std::string lowerFilter = m_SearchFilter;
+					std::transform(lowerFileName.begin(), lowerFileName.end(), lowerFileName.begin(), ::tolower);
+					std::transform(lowerFilter.begin(), lowerFilter.end(), lowerFilter.begin(), ::tolower);
+
+					if (lowerFileName.find(lowerFilter) == std::string::npos) {
+						continue;
+					}
+				}
+
+				bool isSelected = (i == currentTextureIndex);
+				bool isCurrent = (fileName == m_CurrentSettings.texturePath);
+
+				std::string displayName = GetTextureDisplayName(fileName, isCurrent);
+
+				if (ImGui::Selectable(displayName.c_str(), isSelected)) {
+					if (fileName != m_CurrentSettings.texturePath) {
+						m_CurrentSettings.texturePath = fileName;
+						m_HasUnsavedChanges = true;
+
+						// 加载预览
+						CreateTexturePreview(fileName);
+
+						m_Manager->SetDebugText(fmt::format("Texture selected: {}", fileName).c_str());
+					}
+				}
+
+				if (isSelected) {
+					ImGui::SetItemDefaultFocus();
+				}
+
+				// 悬停预览
+				if (ImGui::IsItemHovered()) {
+					ImGui::SetTooltip("Click to select this texture\nFile: %s", fileName.c_str());
+				}
+			}
+			ImGui::EndCombo();
+		}
+
+		ImGui::SameLine();
+		if (ImGui::Button("Refresh")) {
+			RefreshReticleTextures();
+		}
+	}
+
+	void ReticlePanel::RenderReticleAdjustments()
+	{
+		RenderSectionHeader("Reticle Adjustments");
+
+		bool settingsChanged = false;
+
+		// 缩放调整
+		ImGui::Text("Scale");
+		ImGui::SetNextItemWidth(-1);
+		if (ImGui::SliderFloat("##Scale", &m_CurrentSettings.scale, MIN_SCALE, MAX_SCALE, "%.4f")) {
+			settingsChanged = true;
+		}
+		RenderHelpTooltip("Adjust the size of the reticle (0.1 = very small, 1 = very large)");
+
+		ImGui::Spacing();
+
+		// X偏移调整
+		ImGui::Text("Horizontal Offset");
+		ImGui::SetNextItemWidth(-1);
+		if (ImGui::SliderFloat("##OffsetX", &m_CurrentSettings.offsetX, MIN_OFFSET, MAX_OFFSET, "%.3f")) {
+			settingsChanged = true;
+		}
+		RenderHelpTooltip("Horizontal position of the reticle (0.0 = left, 0.5 = center, 1.0 = right)");
+
+		ImGui::Spacing();
+
+		// Y偏移调整
+		ImGui::Text("Vertical Offset");
+		ImGui::SetNextItemWidth(-1);
+		if (ImGui::SliderFloat("##OffsetY", &m_CurrentSettings.offsetY, MIN_OFFSET, MAX_OFFSET, "%.3f")) {
+			settingsChanged = true;
+		}
+		RenderHelpTooltip("Vertical position of the reticle (0.0 = top, 0.5 = center, 1.0 = bottom)");
+
+		// 如果设置有变化，标记为未保存
+		if (settingsChanged) {
+			m_HasUnsavedChanges = true;
+		}
+
+		ImGui::Spacing();
+
+		// 快速重置按钮
+		if (ImGui::Button("Reset to Center", ImVec2(-1, 0))) {
+			m_CurrentSettings.offsetX = 0.5f;
+			m_CurrentSettings.offsetY = 0.5f;
+			m_HasUnsavedChanges = true;
+		}
+		RenderHelpTooltip("Reset position to screen center");
+	}
+
+	void ReticlePanel::RenderPreviewSection()
+	{
+		if (!ImGui::CollapsingHeader("Texture Preview", ImGuiTreeNodeFlags_DefaultOpen)) {
+			return;
+		}
+
+		if (m_PreviewTextureID && m_PreviewWidth > 0 && m_PreviewHeight > 0) {
+			// 计算预览大小，保持宽高比
+			float aspectRatio = (float)m_PreviewWidth / (float)m_PreviewHeight;
+			ImVec2 previewSize;
+
+			if (aspectRatio > 1.0f) {
+				previewSize.x = PREVIEW_SIZE;
+				previewSize.y = PREVIEW_SIZE / aspectRatio;
+			} else {
+				previewSize.x = PREVIEW_SIZE * aspectRatio;
+				previewSize.y = PREVIEW_SIZE;
+			}
+
+			// 居中显示预览
+			float windowWidth = ImGui::GetContentRegionAvail().x;
+			float offsetX = (windowWidth - previewSize.x) * 0.5f;
+			if (offsetX > 0) {
+				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
+			}
+
+			ImGui::Image((ImTextureID)m_PreviewTextureID, previewSize);
+
+			// 显示纹理信息
+			ImGui::Text("Dimensions: %dx%d", m_PreviewWidth, m_PreviewHeight);
+			ImGui::Text("Aspect Ratio: %.3f", aspectRatio);
+		} else {
+			ImGui::TextColored(m_WarningColor, "No preview available");
+			if (ImGui::Button("Load Preview")) {
+				CreateTexturePreview(m_CurrentSettings.texturePath);
+			}
+		}
+	}
+
+	void ReticlePanel::RenderQuickActions()
+	{
+		RenderSectionHeader("Quick Actions");
+
+		// 由于实时更新，Apply按钮主要用于加载纹理（如果路径改变了）
+		if (ImGui::Button("Reload Texture", ImVec2(-1, 0))) {
+			if (LoadTexture(m_CurrentSettings.texturePath)) {
+				CreateTexturePreview(m_CurrentSettings.texturePath);
+				m_Manager->SetDebugText("Reticle texture reloaded successfully");
+			} else {
+				m_Manager->ShowErrorDialog("Reload Error", "Failed to reload reticle texture.");
+			}
+		}
+		RenderHelpTooltip("Reload the current texture file");
+
+		// 保存设置
+		if (ImGui::Button("Save Settings", ImVec2(-1, 0))) {
+			SaveCurrentSettings();
+			m_HasUnsavedChanges = false;
+			m_Manager->SetDebugText("Reticle settings saved");
+		}
+		RenderHelpTooltip("Save current settings to configuration file");
+
+		// 重置为默认值
+		if (ImGui::Button("Reset to Defaults", ImVec2(-1, 0))) {
+			if (ImGui::GetIO().KeyCtrl) {
+				ResetToDefaults();
+				m_HasUnsavedChanges = true;
+				m_Manager->MarkUnsavedChanges();
+				m_Manager->SetDebugText("Settings reset to defaults");
+			} else {
+				m_Manager->SetDebugText("Hold Ctrl and click to reset to defaults");
+			}
+		}
+		RenderHelpTooltip("Hold Ctrl and click to reset all settings to defaults");
+
+		ImGui::Spacing();
+
+		// 显示实时更新状态
+		if (m_HasUnsavedChanges) {
+			ImGui::TextColored(m_WarningColor, "● Changes applied in real-time");
+			ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "  (Click 'Save Settings' to persist)");
+		} else {
+			ImGui::TextColored(m_SuccessColor, "✓ All settings saved");
+		}
+
+		ImGui::Spacing();
+
+		// 预览控制
+		ImGui::Checkbox("Show Texture Preview", &m_ShowPreview);
+		RenderHelpTooltip("Show texture preview and information");
+	}
+
+	bool ReticlePanel::LoadTexture(const std::string& texturePath)
+	{
+		std::string fullPath = GetFullTexturePath(texturePath);
+		auto srv = D3DHooks::LoadAimSRV(fullPath);
+		bool success = (srv != nullptr);
+
+		if (success) {
+			logger::info("Successfully loaded reticle texture: {}", texturePath);
+		} else {
+			logger::error("Failed to load reticle texture: {}", texturePath);
+		}
+
+		return success;
+	}
+
+	bool ReticlePanel::ApplyReticleSettings(const ReticleSettings& settings)
+	{
+		try {
+			// 加载纹理
+			if (!LoadTexture(settings.texturePath)) {
+				logger::error("Failed to load reticle texture: {}", settings.texturePath);
+				return false;
+			}
+
+			// 应用设置到D3DHooks
+			D3DHooks::UpdateReticleSettings(settings.scale, settings.offsetX, settings.offsetY);
+
+			logger::info("Applied reticle settings - Scale: {:.2f}, Offset: [{:.3f}, {:.3f}]",
+				settings.scale, settings.offsetX, settings.offsetY);
+
+			return true;
+		} catch (const std::exception& e) {
+			logger::error("Error applying reticle settings: {}", e.what());
+			return false;
+		}
+	}
+
+	void ReticlePanel::SaveCurrentSettings()
+	{
+		try {
+			auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
+			if (!weaponInfo.currentConfig) {
+				logger::warn("No configuration to save reticle settings to");
+				return;
+			}
+
+			// 创建修改后的配置
+			auto modifiedConfig = *weaponInfo.currentConfig;
+			modifiedConfig.customReticlePath = m_CurrentSettings.texturePath;
+			modifiedConfig.reticleScale = m_CurrentSettings.scale;
+			modifiedConfig.reticleOffsetX = m_CurrentSettings.offsetX;
+			modifiedConfig.reticleOffsetY = m_CurrentSettings.offsetY;
+
+			// 保存配置
+			auto dataPersistence = DataPersistence::GetSingleton();
+			if (dataPersistence->SaveConfig(modifiedConfig)) {
+				dataPersistence->LoadAllConfigs();
+				logger::info("Reticle settings saved successfully");
+			} else {
+				logger::error("Failed to save reticle settings");
+			}
+		} catch (const std::exception& e) {
+			logger::error("Error saving reticle settings: {}", e.what());
+		}
+	}
+
+	void ReticlePanel::LoadSettingsFromConfig()
+	{
+		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
+		if (weaponInfo.currentConfig) {
+			m_CurrentSettings.texturePath = weaponInfo.currentConfig->customReticlePath;
+			// 从配置加载其他设置
+			m_CurrentSettings.scale = weaponInfo.currentConfig->reticleScale;
+			m_CurrentSettings.offsetX = weaponInfo.currentConfig->reticleOffsetX;
+			m_CurrentSettings.offsetY = weaponInfo.currentConfig->reticleOffsetY;
+
+			// 创建预览
+			CreateTexturePreview(m_CurrentSettings.texturePath);
+		}
+
+		// 备份当前设置
+		m_BackupSettings = m_CurrentSettings;
+		m_PreviousSettings = m_CurrentSettings;  // 初始化前一帧设置
+		m_HasUnsavedChanges = false;
+	}
+
+	void ReticlePanel::ResetToDefaults()
+	{
+		m_CurrentSettings.texturePath = "Test.dds";
+		m_CurrentSettings.scale = 1.0f;
+		m_CurrentSettings.offsetX = 0.5f;
+		m_CurrentSettings.offsetY = 0.5f;
+
+		CreateTexturePreview(m_CurrentSettings.texturePath);
+	}
+
+	bool ReticlePanel::CreateTexturePreview(const std::string& texturePath)
+	{
+		// 释放之前的预览
+		ReleaseTexturePreview();
+
+		if (texturePath.empty()) {
+			return false;
+		}
+
+		try {
+			std::string fullPath = GetFullTexturePath(texturePath);
+			if (!std::filesystem::exists(fullPath)) {
+				logger::warn("Texture file not found: {}", fullPath);
+				return false;
+			}
+
+			// 使用现有的LoadAimSRV函数加载纹理
+			auto srv = D3DHooks::LoadAimSRV(fullPath);
+			if (!srv) {
+				logger::error("Failed to load texture SRV: {}", texturePath);
+				return false;
+			}
+
+			// 获取纹理尺寸信息
+			ID3D11Resource* resource = nullptr;
+			srv->GetResource(&resource);
+
+			if (resource) {
+				ID3D11Texture2D* texture = nullptr;
+				HRESULT hr = resource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&texture);
+
+				if (SUCCEEDED(hr) && texture) {
+					D3D11_TEXTURE2D_DESC desc;
+					texture->GetDesc(&desc);
+
+					m_PreviewWidth = static_cast<int>(desc.Width);
+					m_PreviewHeight = static_cast<int>(desc.Height);
+
+					texture->Release();
+				} else {
+					// 如果无法获取尺寸，使用默认值
+					m_PreviewWidth = 256;
+					m_PreviewHeight = 256;
+				}
+
+				resource->Release();
+			}
+
+			// 将SRV设置为ImGui纹理ID
+			m_PreviewTextureID = static_cast<void*>(srv);
+
+			// 增加引用计数，防止被自动释放
+			srv->AddRef();
+
+			logger::info("Texture preview created for: {} ({}x{})", texturePath, m_PreviewWidth, m_PreviewHeight);
+			return true;
+		} catch (const std::exception& e) {
+			logger::error("Error creating texture preview: {}", e.what());
+			return false;
+		}
+	}
+
+	void ReticlePanel::ReleaseTexturePreview()
+	{
+		if (m_PreviewTextureID) {
+			// 释放D3D11 ShaderResourceView
+			auto srv = static_cast<ID3D11ShaderResourceView*>(m_PreviewTextureID);
+			srv->Release();
+
+			m_PreviewTextureID = nullptr;
+			m_PreviewWidth = 0;
+			m_PreviewHeight = 0;
+		}
+	}
+
+	void ReticlePanel::RefreshReticleTextures()
+	{
+		ScanForTextureFiles();
+	}
+
+	void ReticlePanel::ScanForTextureFiles()
+	{
+		m_AvailableTextures.clear();
+
+		try {
+			std::filesystem::path texturePath = std::filesystem::current_path() / "Data" / "Textures" / "TTS" / "Reticle";
+
+			if (!std::filesystem::exists(texturePath)) {
+				m_Manager->SetDebugText("TTS texture directory not found!");
+				return;
+			}
+
+			for (const auto& entry : std::filesystem::directory_iterator(texturePath)) {
+				if (IsValidTextureFile(entry.path())) {
+					std::string fileName = entry.path().filename().string();
+					m_AvailableTextures.push_back(fileName);
+				}
+			}
+
+			// 按文件名排序
+			std::sort(m_AvailableTextures.begin(), m_AvailableTextures.end());
+
+			m_TexturesScanned = true;
+			m_Manager->SetDebugText(fmt::format("Found {} texture files", m_AvailableTextures.size()).c_str());
+
+		} catch (const std::exception& e) {
+			m_Manager->SetDebugText(fmt::format("Error scanning texture files: {}", e.what()).c_str());
+		}
+	}
+
+	void ReticlePanel::OptimizedScan()
+	{
+		float currentTime = ImGui::GetTime();
+		if (!m_TexturesScanned || currentTime > m_NextScanTime) {
+			ScanForTextureFiles();
+			m_NextScanTime = currentTime + SCAN_INTERVAL;
+		}
+	}
+
+	int ReticlePanel::FindTextureIndex(const std::string& texturePath) const
+	{
+		auto it = std::find(m_AvailableTextures.begin(), m_AvailableTextures.end(), texturePath);
+		return it != m_AvailableTextures.end() ? std::distance(m_AvailableTextures.begin(), it) : -1;
+	}
+
+	bool ReticlePanel::IsValidTextureFile(const std::filesystem::path& filePath) const
+	{
+		std::string extension = filePath.extension().string();
+		std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+
+		return extension == ".dds" && std::filesystem::file_size(filePath) > 0;
+	}
+
+	std::string ReticlePanel::GetTextureDisplayName(const std::string& fileName, bool isCurrent) const
+	{
+		return isCurrent ? fileName + " (Current)" : fileName;
+	}
+
+	std::string ReticlePanel::GetFullTexturePath(const std::string& relativePath) const
+	{
+		return (std::filesystem::current_path() / "Data" / "Textures" / "TTS" / "Reticle" / relativePath).string();
+	}
+
+	bool ReticlePanel::AreSettingsEqual(const ReticleSettings& a, const ReticleSettings& b) const
+	{
+		const float epsilon = 0.001f;
+		return a.texturePath == b.texturePath &&
+		       std::abs(a.scale - b.scale) < epsilon &&
+		       std::abs(a.offsetX - b.offsetX) < epsilon &&
+		       std::abs(a.offsetY - b.offsetY) < epsilon;
+	}
+
+	bool ReticlePanel::HasReticleChanges() const
+	{
+		return !AreSettingsEqual(m_CurrentSettings, m_PreviousSettings);
+	}
+
+	void ReticlePanel::UpdatePreviousSettings()
+	{
+		m_PreviousSettings = m_CurrentSettings;
+	}
+
+	void ReticlePanel::ApplyReticleSettingsRealtime()
+	{
+		// 实时应用设置到D3DHooks（类似CameraAdjustmentPanel的ApplyAllAdjustments）
+		D3DHooks::UpdateReticleSettings(m_CurrentSettings.scale,
+			m_CurrentSettings.offsetX,
+			m_CurrentSettings.offsetY);
+
+		// 如果纹理路径发生变化，也要加载新纹理
+		if (m_CurrentSettings.texturePath != m_PreviousSettings.texturePath) {
+			LoadTexture(m_CurrentSettings.texturePath);
+		}
+
+		logger::debug("Real-time applied reticle settings - Scale: {:.2f}, Offset: [{:.3f}, {:.3f}]",
+			m_CurrentSettings.scale, m_CurrentSettings.offsetX, m_CurrentSettings.offsetY);
+	}
+}

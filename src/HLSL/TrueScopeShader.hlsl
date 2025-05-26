@@ -25,6 +25,11 @@ cbuffer ScopeConstants : register(b0)
     float parallax_scopeSwayAmount;
     float parallax_maxTravel;
     float parallax_Radius;
+    
+    float reticleScale;
+    float reticleOffsetX;
+    float reticleOffsetY;
+    float padding6;
 
     float4x4 CameraRotation;
 }
@@ -56,6 +61,15 @@ float2 aspect_ratio_correction(float2 tc)
     return tc;
 }
 
+float2 transform_reticle_coords(float2 tc)
+{
+    tc -= float2(0.5, 0.5);
+    tc /= reticleScale;
+    tc += float2(reticleOffsetX, reticleOffsetY);
+    return tc;
+}
+
+
 float4 main(PS_INPUT input) : SV_TARGET
 {
     float2 texCoord = input.position.xy / float2(screenWidth, screenHeight);
@@ -83,21 +97,9 @@ float4 main(PS_INPUT input) : SV_TARGET
 
     float parallaxValue = (step(distToCenter, 2) * getparallax(distToParallax, float2(1, 1), 1));
     
-    float4 reticleColor = reticleTexture.Sample(scopeSampler, aspectCorrectTex);
-    color = reticleColor * reticleColor.a + color * (1 - reticleColor.a);
+    float2 reticleTexCoord = transform_reticle_coords(aspectCorrectTex);
+    float4 reticleColor = reticleTexture.Sample(scopeSampler, reticleTexCoord);
     
-    float2 pos = input.position.xy;
-    float2 centerPos = float2(screenWidth, screenHeight) / 2.0; // 修正屏幕中心计算
-    float lineWidth = 2.0; // 增加线条宽度
-    
-    bool isVerticalLine = abs(pos.x - centerPos.x) <= lineWidth;
-    bool isHorizontalLine = abs(pos.y - centerPos.y) <= lineWidth;
-    
-    // 如果在十字线上，设置红色
-    if (isVerticalLine || isHorizontalLine)
-    {
-        color = float4(1, 0, 0, 1); // 红色十字线
-    }
     
     // Apply final effect
     
@@ -106,6 +108,8 @@ float4 main(PS_INPUT input) : SV_TARGET
     color.rgb *= 105.0f;
     // 转换回gamma空间
     color.rgb = pow(abs(color.rgb), 1.0 / 2.2);
+    
+    color = reticleColor * reticleColor.a + color * (1 - reticleColor.a);
     color.rgb *= parallaxValue;
     
     return color;

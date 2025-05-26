@@ -117,6 +117,11 @@ namespace ThroughScope {
 			float parallax_maxTravel;
 			float parallax_Radius;
 
+			float reticleScale;    // 瞄准镜缩放
+			float reticleOffsetX;  // X轴偏移
+			float reticleOffsetY;  // Y轴偏移
+			float reticlePadding;  // 16字节对齐
+
 			XMFLOAT4X4 CameraRotation = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 		};
 
@@ -139,6 +144,27 @@ namespace ThroughScope {
 		static void SetEnableRender(bool value) { s_EnableRender = value; }
 
 		static void UpdateScopeSettings(float relativeFogRadius, float scopeSwayAmount, float maxTravel, float radius);
+		static void SetReticleScale(float scale)
+		{
+			s_ReticleScale = std::clamp(scale, 0.1f, 32.0f);
+		}
+
+		static void SetReticleOffset(float offsetX, float offsetY)
+		{
+			s_ReticleOffsetX = std::clamp(offsetX, 0.0f, 1.0f);
+			s_ReticleOffsetY = std::clamp(offsetY, 0.0f, 1.0f);
+		}
+
+		static void UpdateReticleSettings(float scale, float offsetX, float offsetY)
+		{
+			SetReticleScale(scale);
+			SetReticleOffset(offsetX, offsetY);
+		}
+
+		static float GetReticleScale() { return s_ReticleScale; }
+		static float GetReticleOffsetX() { return s_ReticleOffsetX; }
+		static float GetReticleOffsetY() { return s_ReticleOffsetY; }
+
 	private:
 		struct BufferInfo
 		{
@@ -165,6 +191,9 @@ namespace ThroughScope {
 		static float s_CurrentScopeSwayAmount;
 		static float s_CurrentMaxTravel;
 		static float s_CurrentRadius;
+		static float s_ReticleScale;
+		static float s_ReticleOffsetX;
+		static float s_ReticleOffsetY;
 
 	private:
 		static Microsoft::WRL::ComPtr<ID3D11Texture2D> s_ReticleTexture;
@@ -186,7 +215,8 @@ namespace ThroughScope {
 		static void RestoreVSState(ID3D11DeviceContext* pContext);
 		static void RestoreRSState(ID3D11DeviceContext* pContext);
 		static void RestoreAllCachedStates(ID3D11DeviceContext* pContext);
-		static void LoadAimTexture(const std::string& path);
+		static bool LoadAimTexture(const std::string& path);
+		static ID3D11ShaderResourceView* LoadAimSRV(const std::string& path);
     private:
 		static bool IsTargetDrawCall(const BufferInfo& vertexInfo, const BufferInfo& indexInfo, UINT indexCount);
 		static bool IsTargetDrawCall(std::vector<BufferInfo> vertexInfos, const BufferInfo& indexInfo, UINT indexCount);

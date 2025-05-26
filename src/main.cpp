@@ -169,6 +169,7 @@ bool isFirstCopy = false;
 bool isRenderReady = false;
 bool isScopCamReady = false;
 bool isImguiManagerInit = false;
+bool isFirstSpawnNode = false;
 ThroughScope::D3DHooks* d3dHooks;
 NIFLoader* nifloader;
 
@@ -524,6 +525,16 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 		Utilities::LogPlayerWeaponNodes();
 
 
+	if (!isFirstSpawnNode) 
+	{
+		isFirstSpawnNode = true;
+		auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+		if (weaponInfo.currentConfig) {
+			ScopeCamera::SetupScopeForWeapon(weaponInfo);
+		}
+		return g_PCUpdateMainThread(pChar);
+	}
+
 	if (ScopeCamera::IsSideAim() 
 		|| RE::UI::GetSingleton()->GetMenuOpen("PauseMenu") 
 		|| RE::UI::GetSingleton()->GetMenuOpen("WorkshopMenu") 
@@ -542,6 +553,7 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 
 	g_PCUpdateMainThread(pChar);
 }
+
 void RegisterHooks()
 {
 	logger::info("Registering hooks...");
@@ -675,10 +687,10 @@ DWORD WINAPI InitThread(HMODULE hModule)
     isScopCamReady = ThroughScope::ScopeCamera::Initialize();
 	isRenderReady = ThroughScope::RenderUtilities::Initialize();
 
-	auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
-	if (weaponInfo.currentConfig) {
-		ScopeCamera::SetupScopeForWeapon(weaponInfo);
-	} 
+	//auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+	//if (weaponInfo.currentConfig) {
+	//	ScopeCamera::SetupScopeForWeapon(weaponInfo);
+	//} 
 
     logger::info("ThroughScope initialization completed");
     return 0;
@@ -781,7 +793,13 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
         } else if (msg->type == F4SE::MessagingInterface::kGameLoaded) {
             // Game has been loaded
             logger::info("Game loaded");
-        }
+			isFirstSpawnNode = false;
+		}
+		else if (msg->type == F4SE::MessagingInterface::kNewGame)
+		{
+			logger::info("NewGame");
+			isFirstSpawnNode = false;
+		}
     });
 
     return true;

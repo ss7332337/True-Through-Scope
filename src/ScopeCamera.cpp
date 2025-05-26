@@ -204,15 +204,13 @@ namespace ThroughScope
 
 		// 2. 应用瞄准镜设置到D3DHooks
 		ApplyScopeSettings(config);
-		std::string reticleFullPath = "Data\\Textures\\TTS\\";
+		std::string reticleFullPath = "Data\\Textures\\TTS\\Reticle\\";
 		if (!config.customReticlePath.empty())
 		{
-			//std::string fullPath = "Textures\\TTS\\" + config.customReticlePath;
-			
+			reticleFullPath += config.customReticlePath;
+			D3DHooks::LoadAimTexture(reticleFullPath);
+			D3DHooks::UpdateReticleSettings(config.reticleScale, config.reticleOffsetX, config.reticleOffsetY);
 		}
-
-		reticleFullPath += "Test.dds";
-		D3DHooks::LoadAimTexture(reticleFullPath);
 		logger::info("Scope setup completed for weapon");
 	}
 
