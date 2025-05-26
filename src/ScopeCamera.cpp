@@ -211,6 +211,11 @@ namespace ThroughScope
 			D3DHooks::LoadAimTexture(reticleFullPath);
 			D3DHooks::UpdateReticleSettings(config.reticleSettings.scale, config.reticleSettings.offsetX, config.reticleSettings.offsetY);
 		}
+
+		if (weaponInfo.instanceData->flags.any(WEAPON_FLAGS::kHasScope)) {
+			weaponInfo.instanceData->flags.set(false, WEAPON_FLAGS::kHasScope);
+		}
+
 		logger::info("Scope setup completed for weapon");
 	}
 

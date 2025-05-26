@@ -149,6 +149,10 @@ namespace ThroughScope
 						weaponInfo.selectedModForm->GetLocalFormID());
 				}
 
+				if (weaponInfo.instanceData->flags.any(WEAPON_FLAGS::kHasScope)) {
+					weaponInfo.instanceData->flags.set(false, WEAPON_FLAGS::kHasScope);
+				}
+
 				isQuerySpawnNode = true;
 				s_IsScopeActive = true;
 				ScopeCamera::s_EquippedWeaponFormID = weapon->formID;

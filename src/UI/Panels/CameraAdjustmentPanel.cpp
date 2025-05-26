@@ -116,7 +116,7 @@ namespace ThroughScope
 
 		if (ImGui::BeginCombo("Create Config For",
 				createOption == 0 ? "Base Weapon" :
-									fmt::format("Modification #{}", createOption).c_str())) {
+									fmt::format("Modification #{}, {}", createOption, weaponInfo.availableMods[createOption - 1]->GetFormEditorID()).c_str())) {
 			// Base weapon option
 			if (ImGui::Selectable("Base Weapon", createOption == 0)) {
 				createOption = 0;
@@ -126,8 +126,8 @@ namespace ThroughScope
 			// Modification options
 			for (size_t i = 0; i < weaponInfo.availableMods.size(); i++) {
 				auto modForm = weaponInfo.availableMods[i];
-				std::string label = fmt::format("Modification #{} - {:08X}",
-					i + 1, modForm->GetLocalFormID());
+				std::string label = fmt::format("Modification #{} - {}",
+					i + 1, modForm->GetFormEditorID());
 
 				if (ImGui::Selectable(label.c_str(), createOption == (i + 1))) {
 					createOption = i + 1;
