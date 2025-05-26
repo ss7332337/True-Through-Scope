@@ -1,4 +1,5 @@
 Texture2D scopeTexture : register(t0);
+Texture2D reticleTexture : register(t1);
 SamplerState scopeSampler : register(s0);
             
 // Constants buffer containing screen resolution, camera position and scope position
@@ -81,14 +82,15 @@ float4 main(PS_INPUT input) : SV_TARGET
     float distToCenter = distance(aspectCorrectTex, scope_center);
 
     float parallaxValue = (step(distToCenter, 2) * getparallax(distToParallax, float2(1, 1), 1));
-   // 十字线绘制 - 修复版本
+    
+    float4 reticleColor = reticleTexture.Sample(scopeSampler, aspectCorrectTex);
+    color = reticleColor * reticleColor.a + color * (1 - reticleColor.a);
+    
     float2 pos = input.position.xy;
     float2 centerPos = float2(screenWidth, screenHeight) / 2.0; // 修正屏幕中心计算
     float lineWidth = 2.0; // 增加线条宽度
     
-    // 绘制垂直线
     bool isVerticalLine = abs(pos.x - centerPos.x) <= lineWidth;
-    // 绘制水平线  
     bool isHorizontalLine = abs(pos.y - centerPos.y) <= lineWidth;
     
     // 如果在十字线上，设置红色
@@ -98,12 +100,13 @@ float4 main(PS_INPUT input) : SV_TARGET
     }
     
     // Apply final effect
-    color.rgb *= parallaxValue;
+    
     color.rgb = pow(abs(color.rgb), 2.2);
     // 在线性空间中提高亮度
     color.rgb *= 105.0f;
     // 转换回gamma空间
     color.rgb = pow(abs(color.rgb), 1.0 / 2.2);
+    color.rgb *= parallaxValue;
     
     return color;
 }

@@ -166,6 +166,10 @@ namespace ThroughScope {
 		static float s_CurrentMaxTravel;
 		static float s_CurrentRadius;
 
+	private:
+		static Microsoft::WRL::ComPtr<ID3D11Texture2D> s_ReticleTexture;
+		static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> s_ReticleSRV;
+
 	public:
 		static void SetForwardStage(bool isForward) { s_isForwardStage = isForward; }
 		static bool GetForwardStage() { return s_isForwardStage; }
@@ -182,6 +186,7 @@ namespace ThroughScope {
 		static void RestoreVSState(ID3D11DeviceContext* pContext);
 		static void RestoreRSState(ID3D11DeviceContext* pContext);
 		static void RestoreAllCachedStates(ID3D11DeviceContext* pContext);
+		static void LoadAimTexture(const std::string& path);
     private:
 		static bool IsTargetDrawCall(const BufferInfo& vertexInfo, const BufferInfo& indexInfo, UINT indexCount);
 		static bool IsTargetDrawCall(std::vector<BufferInfo> vertexInfos, const BufferInfo& indexInfo, UINT indexCount);

@@ -7,6 +7,7 @@ set(SOURCES
 	src/ImGuiManager.cpp
 	src/EventHandler.cpp
 	src/DataPersistence.cpp
+	src/DDSTextureLoader11.cpp
 	src/HLSL/TrueScopeShader.hlsl
 )
 	

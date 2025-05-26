@@ -7,7 +7,9 @@
 #include <ScopeCamera.h>
 #include <wrl/client.h>
 
+#include <DDSTextureLoader11.h>
 #include "ImGuiManager.h"
+
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 namespace ThroughScope {
@@ -32,6 +34,9 @@ namespace ThroughScope {
 	static ID3D11SamplerState* samplerState = nullptr;
 	static ID3D11BlendState* blendState = nullptr;
 	static ID3D11Buffer* constantBuffer = nullptr;
+	Microsoft::WRL::ComPtr<ID3D11Texture2D> D3DHooks::s_ReticleTexture = nullptr;
+	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> D3DHooks::s_ReticleSRV = nullptr;
+
 	bool D3DHooks::s_EnableRender = false;
 	bool D3DHooks::s_InPresent = false;
 
@@ -59,6 +64,8 @@ namespace ThroughScope {
 	ClipCur phookClipCursor = nullptr;
 	D3DHooks* D3DInstance = D3DHooks::GetSington();
 	ImGuiManager* imguiMgr;
+	ID3D11DeviceContext* m_Context = nullptr;
+	ID3D11Device* m_Device = nullptr;
 
 	HRESULT D3DHooks::CreateShaderFromFile(const WCHAR* csoFileNameInOut, const WCHAR* hlslFileName, LPCSTR entryPoint, LPCSTR shaderModel, ID3DBlob** ppBlobOut)
 	{
@@ -100,7 +107,7 @@ namespace ThroughScope {
 		s_CurrentMaxTravel = maxTravel;
 		s_CurrentRadius = radius;
 
-		logger::info("Updated D3D scope settings - Parallax: {:.3f}, {:.3f}, {:.3f}, {:.3f}", relativeFogRadius, scopeSwayAmount, maxTravel, radius);
+		//logger::info("Updated D3D scope settings - Parallax: {:.3f}, {:.3f}, {:.3f}, {:.3f}", relativeFogRadius, scopeSwayAmount, maxTravel, radius);
 	}
 
 	D3DHooks* D3DHooks::GetSington()
@@ -127,6 +134,8 @@ namespace ThroughScope {
 			return false;
 		}
 
+		m_Device = reinterpret_cast<ID3D11Device*>(rendererData->device);
+		m_Context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 		// 获取窗口句柄并设置窗口过程
 		DXGI_SWAP_CHAIN_DESC sd;
 		s_SwapChain->GetDesc(&sd);
@@ -175,6 +184,34 @@ namespace ThroughScope {
 		} else {
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 		}
+	}
+
+	void D3DHooks::LoadAimTexture(const std::string& path)
+	{
+		if (path.empty())
+			return;
+
+		const wchar_t* tempPath = Utilities::GetWC(path.c_str());
+		std::wstring defaultPath = L"Data/Textures/TTS/Reticle/Empty.dds";
+
+		D3DInstance->s_ReticleTexture.Reset();
+		HRESULT hr = CreateDDSTextureFromFile(
+			m_Device,
+			tempPath ? tempPath : defaultPath.c_str(),
+			nullptr,
+			D3DInstance->s_ReticleSRV.ReleaseAndGetAddressOf());
+
+		if (FAILED(hr)) {
+			logger::error("Failed to load reticle texture from path: {}", path);
+			return;
+		}
+
+		if (s_ReticleSRV.Get()) {
+			m_Context->GenerateMips(s_ReticleSRV.Get());
+		}
+
+		if (tempPath)
+			free((void*)tempPath);
 	}
 
 	void D3DHooks::RestoreAllCachedStates(ID3D11DeviceContext* pContext)
@@ -625,12 +662,12 @@ namespace ThroughScope {
 		FLOAT blendFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 		pContext->OMSetBlendState(blendState, blendFactor, 0xffffffff);
 		pContext->PSSetConstantBuffers(0, 1, &constantBuffer);
-
 		// 设置我们的像素着色器
 		pContext->PSSetShader(scopePixelShader, nullptr, 0);
 
 		// 设置纹理资源和采样器
 		pContext->PSSetShaderResources(0, 1, &stagingSRV);
+		pContext->PSSetShaderResources(1, 1, s_ReticleSRV.GetAddressOf());
 		pContext->PSSetSamplers(0, 1, &samplerState);
 
 		device->Release();

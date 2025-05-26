@@ -142,6 +142,11 @@ namespace ThroughScope
 
 			auto input = (RE::BSInputDeviceManager::GetSingleton());
 			RE::ControlMap::GetSingleton()->ignoreKeyboardMouse = m_MenuOpen;
+
+			 if (m_MenuOpen) {
+				m_UIValuesInitialized = false;
+				logger::info("Menu opened - resetting UI initialization state");
+			}
 		}
 
 		// Real-time adjustment updates (只在菜单打开时更新)
@@ -169,6 +174,27 @@ namespace ThroughScope
 				m_PrevDeltaRot[2] = m_DeltaRot[2];
 				hasChanges = true;
 			}
+
+			if (std::abs(m_DeltaRelativeFogRadius - m_PrevDeltaRelativeFogRadius) > 0.001f ||
+				std::abs(m_DeltaScopeSwayAmount - m_PrevDeltaScopeSwayAmount) > 0.001f ||
+				std::abs(m_DeltaMaxTravel - m_PrevDeltaMaxTravel) > 0.001f ||
+				std::abs(m_DeltaParallaxRadius - m_PrevDeltaParallaxRadius) > 0.001f) 
+			{
+				D3DHooks::UpdateScopeSettings(
+					m_DeltaRelativeFogRadius,
+					m_DeltaScopeSwayAmount,
+					m_DeltaMaxTravel,
+					m_DeltaParallaxRadius);
+
+				m_PrevDeltaRelativeFogRadius = m_DeltaRelativeFogRadius;
+				m_PrevDeltaScopeSwayAmount = m_DeltaScopeSwayAmount;
+				m_PrevDeltaMaxTravel = m_DeltaMaxTravel;
+				m_PrevDeltaParallaxRadius = m_DeltaParallaxRadius;
+
+				hasChanges = true;
+			}
+
+			
 
 			// Check for scale changes
 			if (std::abs(m_DeltaScale - m_PrevDeltaScale) > 0.001f) {
@@ -763,9 +789,96 @@ namespace ThroughScope
 			return;
 		}
 
+		const auto* currentConfig = weaponInfo.currentConfig;
+		std::string currentConfigKey = fmt::format("{:08X}_{}",
+			weaponInfo.weaponFormID,
+			currentConfig->modelName);
+
+		bool needsReinitialize = false;
+
+		 if (!m_UIValuesInitialized || m_LastLoadedConfigKey != currentConfigKey) {
+			needsReinitialize = true;
+			m_LastLoadedConfigKey = currentConfigKey;
+			m_UIValuesInitialized = true;
+			logger::info("Initializing UI values for config: {}", currentConfigKey);
+		}
+
+
+		// ==================== CONFIGURATION EXISTS - ADJUSTMENT SECTION ====================
+		static bool settingsLoaded = false;
+		static int minFOV, maxFOV;
+		static bool nightVision, thermalVision;
+
+		
+
+		if (needsReinitialize || !settingsLoaded) {
+			// 从配置文件加载所有设置
+			minFOV = currentConfig->scopeSettings.minFOV;
+			maxFOV = currentConfig->scopeSettings.maxFOV;
+			nightVision = currentConfig->scopeSettings.nightVision;
+			thermalVision = currentConfig->scopeSettings.thermalVision;
+
+
+			m_DeltaRelativeFogRadius = currentConfig->parallaxSettings.relativeFogRadius;
+			m_DeltaScopeSwayAmount = currentConfig->parallaxSettings.scopeSwayAmount;
+			m_DeltaMaxTravel = currentConfig->parallaxSettings.maxTravel;
+			m_DeltaParallaxRadius = currentConfig->parallaxSettings.radius;
+
+			// !!!关键修复：从配置加载UI调整值，而不是从TTSNode
+			m_DeltaPosX = currentConfig->cameraAdjustments.deltaPosX;
+			m_DeltaPosY = currentConfig->cameraAdjustments.deltaPosY;
+			m_DeltaPosZ = currentConfig->cameraAdjustments.deltaPosZ;
+			m_DeltaRot[0] = currentConfig->cameraAdjustments.deltaRot[0];
+			m_DeltaRot[1] = currentConfig->cameraAdjustments.deltaRot[1];
+			m_DeltaRot[2] = currentConfig->cameraAdjustments.deltaRot[2];
+			m_DeltaScale = currentConfig->cameraAdjustments.deltaScale;
+
+			// 更新前一帧的值
+			m_PrevDeltaPosX = m_DeltaPosX;
+			m_PrevDeltaPosY = m_DeltaPosY;
+			m_PrevDeltaPosZ = m_DeltaPosZ;
+			m_PrevDeltaRot[0] = m_DeltaRot[0];
+			m_PrevDeltaRot[1] = m_DeltaRot[1];
+			m_PrevDeltaRot[2] = m_DeltaRot[2];
+			m_PrevDeltaScale = m_DeltaScale;
+			m_PrevDeltaRelativeFogRadius = m_DeltaRelativeFogRadius;
+			m_PrevDeltaScopeSwayAmount = m_DeltaScopeSwayAmount;
+			m_PrevDeltaMaxTravel = m_DeltaMaxTravel;
+			m_PrevDeltaParallaxRadius = m_DeltaParallaxRadius;
+
+			settingsLoaded = true;
+
+			// 如果TTSNode存在，应用配置中的值到TTSNode
+			auto ttsNode = GetTTSNode();
+			if (ttsNode) {
+				ApplyConfigToTTSNode(currentConfig);
+			}
+
+			logger::info("UI values loaded from config - Pos:[{:.3f},{:.3f},{:.3f}] Rot:[{:.1f},{:.1f},{:.1f}] Scale:{:.3f}",
+				m_DeltaPosX, m_DeltaPosY, m_DeltaPosZ,
+				m_DeltaRot[0], m_DeltaRot[1], m_DeltaRot[2],
+				m_DeltaScale);
+		}
+
+		// Sync UI values with current TTSNode
+		auto ttsNode = GetTTSNode();
+
+		if (ttsNode && m_RealTimeAdjustment && settingsLoaded) {
+			// 检查TTSNode值是否与UI值不同步
+			bool nodeOutOfSync =
+				std::abs(ttsNode->local.translate.x - m_DeltaPosX) > 0.001f ||
+				std::abs(ttsNode->local.translate.y - m_DeltaPosY) > 0.001f ||
+				std::abs(ttsNode->local.translate.z - m_DeltaPosZ) > 0.001f ||
+				std::abs(ttsNode->local.scale - m_DeltaScale) > 0.001f;
+
+			if (nodeOutOfSync) {
+				// 如果节点与UI不同步，优先使用UI的值（因为UI值是从配置加载的）
+				ApplyUIValuesToTTSNode();
+			}
+		}
+
 		// 如果有配置但没有TTSNode，显示自动加载选项
 		if (weaponInfo.currentConfig && !weaponInfo.currentConfig->modelName.empty()) {
-			auto ttsNode = GetTTSNode();
 			if (!ttsNode) {
 				ImGui::Separator();
 				ImGui::TextColored(m_WarningColor, "⚠ TTSNode Missing");
@@ -788,63 +901,6 @@ namespace ThroughScope
 				}
 				ImGui::Separator();
 			}
-		}
-
-		// ==================== CONFIGURATION EXISTS - ADJUSTMENT SECTION ====================
-		const auto* currentConfig = weaponInfo.currentConfig;
-
-		// Load current settings from config (with static to persist between frames)
-		static bool settingsLoaded = false;
-		static int minFOV, maxFOV;
-		static bool nightVision, thermalVision;
-		static float relativeFogRadius, scopeSwayAmount, maxTravel, radius;
-		static float m_PrevDeltaPosX = 0.0f, m_PrevDeltaPosY = 0.0f, m_PrevDeltaPosZ = 7.0f;
-		static float m_PrevDeltaRot[3] = { 0.0f, 0.0f, 0.0f };
-		static float m_PrevDeltaScale = 1.5f;
-
-		// Load settings only once or when config changes
-		if (!settingsLoaded || currentConfig != nullptr) {
-			minFOV = currentConfig->scopeSettings.minFOV;
-			maxFOV = currentConfig->scopeSettings.maxFOV;
-			nightVision = currentConfig->scopeSettings.nightVision;
-			thermalVision = currentConfig->scopeSettings.thermalVision;
-			relativeFogRadius = currentConfig->parallaxSettings.relativeFogRadius;
-			scopeSwayAmount = currentConfig->parallaxSettings.scopeSwayAmount;
-			maxTravel = currentConfig->parallaxSettings.maxTravel;
-			radius = currentConfig->parallaxSettings.radius;
-			m_PrevDeltaPosX = currentConfig->cameraAdjustments.deltaPosX;
-			m_PrevDeltaPosY = currentConfig->cameraAdjustments.deltaPosY;
-			m_PrevDeltaPosZ = currentConfig->cameraAdjustments.deltaPosZ;
-			m_PrevDeltaRot[0] = currentConfig->cameraAdjustments.deltaRot[0];
-			m_PrevDeltaRot[1] = currentConfig->cameraAdjustments.deltaRot[1];
-			m_PrevDeltaRot[2] = currentConfig->cameraAdjustments.deltaRot[2];
-			m_PrevDeltaScale = currentConfig->cameraAdjustments.deltaScale;
-			settingsLoaded = true;
-		}
-
-		// Sync UI values with current TTSNode
-		auto ttsNode = GetTTSNode();
-
-
-		if (ttsNode) {
-
-			ttsNode->local.translate.x = m_PrevDeltaPosX;
-			ttsNode->local.translate.y = m_PrevDeltaPosY;
-			ttsNode->local.translate.z = m_PrevDeltaPosZ;
-			ttsNode->local.rotate.FromEulerAnglesXYZ(m_PrevDeltaRot[0], m_PrevDeltaRot[1], m_PrevDeltaRot[2]);
-			ttsNode->local.scale = m_PrevDeltaScale;
-
-			m_DeltaPosX = ttsNode->local.translate.x;
-			m_DeltaPosY = ttsNode->local.translate.y;
-			m_DeltaPosZ = ttsNode->local.translate.z;
-
-			RE::NiPoint3 ttsNodeRot;
-			ttsNode->local.rotate.ToEulerAnglesXYZ(ttsNodeRot);
-			m_DeltaRot[0] = ttsNodeRot.x * 57.2957795f;  // Convert to degrees
-			m_DeltaRot[1] = ttsNodeRot.y * 57.2957795f;
-			m_DeltaRot[2] = ttsNodeRot.z * 57.2957795f;
-
-			m_DeltaScale = ttsNode->local.scale;
 		}
 
 		// ==================== CAMERA ADJUSTMENT CONTROLS ====================
@@ -958,10 +1014,10 @@ namespace ThroughScope
 
 		// ==================== PARALLAX SETTINGS ====================
 		if (ImGui::CollapsingHeader("Parallax Settings")) {
-			ImGui::SliderFloat("Relative Fog Radius", &relativeFogRadius, 0.0f, 1.0f);
-			ImGui::SliderFloat("Scope Sway Amount", &scopeSwayAmount, 0.0f, 1.0f);
-			ImGui::SliderFloat("Max Travel", &maxTravel, 0.0f, 0.5f);
-			ImGui::SliderFloat("Radius", &radius, 0.0f, 1.0f);
+			ImGui::SliderFloat("Relative Fog Radius", &m_DeltaRelativeFogRadius, 0.0f, 1.0f);
+			ImGui::SliderFloat("Scope Sway Amount", &m_DeltaScopeSwayAmount, 0.0f, 1.0f);
+			ImGui::SliderFloat("Max Travel", &m_DeltaMaxTravel, 0.0f, 1.0f);
+			ImGui::SliderFloat("Radius", &m_DeltaParallaxRadius, 0.0f, 1.0f);
 		}
 
 		// ==================== ACTION BUTTONS ====================
@@ -995,14 +1051,16 @@ namespace ThroughScope
 			modifiedConfig.scopeSettings.maxFOV = maxFOV;
 			modifiedConfig.scopeSettings.nightVision = nightVision;
 			modifiedConfig.scopeSettings.thermalVision = thermalVision;
-			modifiedConfig.parallaxSettings.relativeFogRadius = relativeFogRadius;
-			modifiedConfig.parallaxSettings.scopeSwayAmount = scopeSwayAmount;
-			modifiedConfig.parallaxSettings.maxTravel = maxTravel;
-			modifiedConfig.parallaxSettings.radius = radius;
+			modifiedConfig.parallaxSettings.relativeFogRadius = m_DeltaRelativeFogRadius;
+			modifiedConfig.parallaxSettings.scopeSwayAmount = m_DeltaScopeSwayAmount;
+			modifiedConfig.parallaxSettings.maxTravel = m_DeltaMaxTravel;
+			modifiedConfig.parallaxSettings.radius = m_DeltaParallaxRadius;
 
 			if (dataPersistence->SaveConfig(modifiedConfig)) {
 				snprintf(m_DebugText, sizeof(m_DebugText), "Settings saved successfully!");
 				dataPersistence->LoadAllConfigs();
+				//ScopeCamera::ApplyScopeSettings(modifiedConfig);
+
 			} else {
 				snprintf(m_DebugText, sizeof(m_DebugText), "Failed to save settings!");
 			}
@@ -1580,6 +1638,81 @@ namespace ThroughScope
 			}
 
 			ImGui::EndPopup();
+		}
+	}
+
+	void ImGuiManager::ApplyConfigToTTSNode(const ThroughScope::DataPersistence::ScopeConfig* config)
+	{
+		auto ttsNode = GetTTSNode();
+		if (!ttsNode || !config) {
+			return;
+		}
+
+		try {
+			// 应用位置
+			ttsNode->local.translate.x = config->cameraAdjustments.deltaPosX;
+			ttsNode->local.translate.y = config->cameraAdjustments.deltaPosY;
+			ttsNode->local.translate.z = config->cameraAdjustments.deltaPosZ;
+
+			// 应用旋转
+			float pitch = config->cameraAdjustments.deltaRot[0] * 0.01745329251f;
+			float yaw = config->cameraAdjustments.deltaRot[1] * 0.01745329251f;
+			float roll = config->cameraAdjustments.deltaRot[2] * 0.01745329251f;
+
+			RE::NiMatrix3 rotMat;
+			rotMat.MakeIdentity();
+			rotMat.FromEulerAnglesXYZ(pitch, yaw, roll);
+			ttsNode->local.rotate = rotMat;
+
+			// 应用缩放
+			ttsNode->local.scale = config->cameraAdjustments.deltaScale;
+
+			// 更新节点
+			RE::NiUpdateData updateData{};
+			updateData.camera = ScopeCamera::GetScopeCamera();
+			if (updateData.camera) {
+				ttsNode->Update(updateData);
+			}
+
+			logger::info("Applied config values to TTSNode");
+		} catch (const std::exception& e) {
+			logger::error("Error applying config to TTSNode: {}", e.what());
+		}
+	}
+
+	void ImGuiManager::ApplyUIValuesToTTSNode()
+	{
+		auto ttsNode = GetTTSNode();
+		if (!ttsNode) {
+			return;
+		}
+
+		try {
+			// 应用UI中的值到TTSNode
+			ttsNode->local.translate.x = m_DeltaPosX;
+			ttsNode->local.translate.y = m_DeltaPosY;
+			ttsNode->local.translate.z = m_DeltaPosZ;
+
+			// 转换度数到弧度并应用旋转
+			float pitch = m_DeltaRot[0] * 0.01745329251f;
+			float yaw = m_DeltaRot[1] * 0.01745329251f;
+			float roll = m_DeltaRot[2] * 0.01745329251f;
+
+			RE::NiMatrix3 rotMat;
+			rotMat.MakeIdentity();
+			rotMat.FromEulerAnglesXYZ(pitch, yaw, roll);
+			ttsNode->local.rotate = rotMat;
+
+			ttsNode->local.scale = m_DeltaScale;
+
+			// 更新节点
+			RE::NiUpdateData updateData{};
+			updateData.camera = ScopeCamera::GetScopeCamera();
+			if (updateData.camera) {
+				ttsNode->Update(updateData);
+			}
+		} catch (const std::exception& e) {
+			logger::error("Error applying UI values to TTSNode: {}", e.what());
 		}
 	}
 }

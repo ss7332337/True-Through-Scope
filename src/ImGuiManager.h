@@ -59,10 +59,16 @@ namespace ThroughScope
 		void OptimizedNIFScan();
 		void ShowErrorDialog(const std::string& title, const std::string& message);
 		
+		void ApplyConfigToTTSNode(const ThroughScope::DataPersistence::ScopeConfig* config);
+		void ApplyUIValuesToTTSNode();
 
         // State variables
         bool m_Initialized = false;
         bool m_MenuOpen = false;
+
+		bool m_ConfigLoaded = false;             // 标记配置是否已加载
+		bool m_UIValuesInitialized = false;      // 标记UI值是否已初始化
+		std::string m_LastLoadedConfigKey = "";  // 上次加载的配置标识
         
 		// Camera adjustment settings
 		float m_DeltaPosX = 0.0f;
@@ -70,14 +76,26 @@ namespace ThroughScope
 		float m_DeltaPosZ = 6.5f;
 		float m_DeltaRot[3] = { 0.0f, 0.0f, 0.0f };    // Pitch, Yaw, Roll in degrees
 		float m_DeltaScale = 1.5f;                   // X, Y, Z scale factors
+
+		float m_DeltaRelativeFogRadius = 0.5f;
+		float m_DeltaScopeSwayAmount = 0.1f;
+		float m_DeltaMaxTravel = 0.05f;
+		float m_DeltaParallaxRadius = 0.3f;
+
+
 		float m_AdjustmentSpeed = DEFAULT_ADJUSTMENT_SPEED;
 
 		// Previous values for change detection
 		float m_PrevDeltaPosX = 0.0f;
 		float m_PrevDeltaPosY = 0.0f;
-		float m_PrevDeltaPosZ = 0.0f;
+		float m_PrevDeltaPosZ = 6.5f;
 		float m_PrevDeltaRot[3] = { 0.0f, 0.0f, 0.0f };
-		float m_PrevDeltaScale = 1.0f;
+		float m_PrevDeltaScale = 1.5f;
+
+		float m_PrevDeltaRelativeFogRadius = 0.5f;
+		float m_PrevDeltaScopeSwayAmount = 0.1f;
+		float m_PrevDeltaMaxTravel = 0.05f;
+		float m_PrevDeltaParallaxRadius = 0.3f;
 
         bool m_EnableRendering = false;
 		bool m_RealTimeAdjustment = true;

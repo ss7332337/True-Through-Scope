@@ -146,6 +146,16 @@ namespace ThroughScope::Utilities
 		return RE::TESForm::GetFormByID(id);
 	}
 
+	inline const wchar_t* GetWC(const char* c)
+	{
+		size_t len = strlen(c) + 1;
+		size_t converted = 0;
+		wchar_t* WStr;
+		WStr = (wchar_t*)std::malloc(len * sizeof(wchar_t));
+		mbstowcs_s(&converted, WStr, len, c, _TRUNCATE);
+		return WStr;
+	}
+
 
 	inline void LogNodeHierarchy(RE::NiAVObject* parentNode, const std::string& nodeName = "Node", bool recursive = true, int maxDepth = 3)
 	{
