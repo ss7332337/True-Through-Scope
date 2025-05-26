@@ -99,7 +99,7 @@ namespace ThroughScope
 
         // 常量
         static constexpr float MIN_SCALE = 0.001f;
-        static constexpr float MAX_SCALE = 1.000f;
+        static constexpr float MAX_SCALE = 2.000f;
         static constexpr float MIN_OFFSET = 0.0f;
         static constexpr float MAX_OFFSET = 1.0f;
         static constexpr int PREVIEW_SIZE = 256;  // 预览图像大小

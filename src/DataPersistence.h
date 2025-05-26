@@ -59,6 +59,14 @@ namespace ThroughScope
 			bool thermalVision = false;
 		};
 
+		struct ReticleSettings
+		{
+			std::string customReticlePath;
+			float scale = 1.0f;    // 瞄准镜缩放 (0.1 - 32.0)
+			float offsetX = 0.5f;
+			float offsetY = 0.5f;
+		};
+
 		
 		struct ScopeConfig
 		{
@@ -66,14 +74,10 @@ namespace ThroughScope
 			CameraAdjustments cameraAdjustments;
 			ParallaxSettings parallaxSettings;
 			ScopeSettings scopeSettings;
-			int reticleIndex = -1;
-			std::string customReticlePath;
+			ReticleSettings reticleSettings;
+			
 			std::string modelName;
 			std::string nifFileName;
-
-			float reticleScale = 1.0f;    // 瞄准镜缩放 (0.1 - 32.0)
-			float reticleOffsetX = 0.5f;  // X轴偏移 (0.0 - 1.0)
-			float reticleOffsetY = 0.5f;  // Y轴偏移 (0.0 - 1.0)
 		};
 
 

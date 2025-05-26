@@ -114,7 +114,7 @@ namespace ThroughScope::Utilities
 
 	inline bool IsInADS(RE::Actor* a)
 	{
-		return (a->gunState == RE::GUN_STATE::kSighted || a->gunState == RE::GUN_STATE::kFireSighted);
+		return ((a->gunState == RE::GUN_STATE::kSighted || a->gunState == RE::GUN_STATE::kFireSighted) && !RE::UI::GetSingleton()->GetMenuOpen("ScopeMenu"));
 	}
 
 

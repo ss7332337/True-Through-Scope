@@ -186,8 +186,10 @@ namespace ThroughScope
 
 			// Load reticle settings
 			const auto& reticleJson = configJson["reticle"];
-			config.reticleIndex = reticleJson["index"];
-			config.customReticlePath = reticleJson.value("customPath", "");
+			config.reticleSettings.customReticlePath = reticleJson.value("customPath", "");
+			config.reticleSettings.offsetX = reticleJson.value("offsetX", 0.5f);
+			config.reticleSettings.offsetY = reticleJson.value("offsetY", 0.5f);
+			config.reticleSettings.scale = reticleJson.value("scale", 1.0f);
 
 			config.modelName = configJson.value("modelName", "");
 
@@ -244,8 +246,10 @@ namespace ThroughScope
 
 			// Reticle settings
 			configJson["reticle"] = {
-				{ "index", config.reticleIndex },
-				{ "customPath", config.customReticlePath }
+				{ "customPath", config.reticleSettings.customReticlePath },
+				{ "offsetX", config.reticleSettings.offsetX },
+				{ "offsetY", config.reticleSettings.offsetY },
+				{ "scale", config.reticleSettings.scale }
 			};
 
 			configJson["modelName"] = config.modelName;
@@ -301,8 +305,10 @@ namespace ThroughScope
 		};
 
 		// Default reticle settings
-		presetConfig.reticleIndex = 0;
-		presetConfig.customReticlePath = "";
+		presetConfig.reticleSettings.customReticlePath = "";
+		presetConfig.reticleSettings.offsetX = 0.5f;
+		presetConfig.reticleSettings.offsetX = 0.5f;
+		presetConfig.reticleSettings.scale = 1;
 
 		return SaveConfig(presetConfig);
 	}

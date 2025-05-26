@@ -378,10 +378,10 @@ namespace ThroughScope
 
 			// 创建修改后的配置
 			auto modifiedConfig = *weaponInfo.currentConfig;
-			modifiedConfig.customReticlePath = m_CurrentSettings.texturePath;
-			modifiedConfig.reticleScale = m_CurrentSettings.scale;
-			modifiedConfig.reticleOffsetX = m_CurrentSettings.offsetX;
-			modifiedConfig.reticleOffsetY = m_CurrentSettings.offsetY;
+			modifiedConfig.reticleSettings.customReticlePath = m_CurrentSettings.texturePath;
+			modifiedConfig.reticleSettings.scale = m_CurrentSettings.scale;
+			modifiedConfig.reticleSettings.offsetX = m_CurrentSettings.offsetX;
+			modifiedConfig.reticleSettings.offsetY = m_CurrentSettings.offsetY;
 
 			// 保存配置
 			auto dataPersistence = DataPersistence::GetSingleton();
@@ -400,11 +400,11 @@ namespace ThroughScope
 	{
 		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 		if (weaponInfo.currentConfig) {
-			m_CurrentSettings.texturePath = weaponInfo.currentConfig->customReticlePath;
+			m_CurrentSettings.texturePath = weaponInfo.currentConfig->reticleSettings.customReticlePath;
 			// 从配置加载其他设置
-			m_CurrentSettings.scale = weaponInfo.currentConfig->reticleScale;
-			m_CurrentSettings.offsetX = weaponInfo.currentConfig->reticleOffsetX;
-			m_CurrentSettings.offsetY = weaponInfo.currentConfig->reticleOffsetY;
+			m_CurrentSettings.scale = weaponInfo.currentConfig->reticleSettings.scale;
+			m_CurrentSettings.offsetX = weaponInfo.currentConfig->reticleSettings.offsetX;
+			m_CurrentSettings.offsetY = weaponInfo.currentConfig->reticleSettings.offsetY;
 
 			// 创建预览
 			CreateTexturePreview(m_CurrentSettings.texturePath);

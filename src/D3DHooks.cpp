@@ -34,7 +34,7 @@ namespace ThroughScope {
 	bool D3DHooks::s_isForwardStage = false;
 	bool D3DHooks::s_EnableFOVAdjustment = true;
 	float D3DHooks::s_FOVAdjustmentSensitivity = 1.0f;
-	DWORD D3DHooks::s_LastGamepadInputTime = 0;
+	DWORD64 D3DHooks::s_LastGamepadInputTime = 0;
 
 	// 为瞄准镜创建和管理资源的静态变量
 	static ID3D11Texture2D* stagingTexture = nullptr;
@@ -777,7 +777,7 @@ namespace ThroughScope {
 	void D3DHooks::ProcessGamepadFOVInput()
 	{
 		// 获取当前时间，防止输入过于频繁
-		DWORD currentTime = GetTickCount64();
+		DWORD64 currentTime = GetTickCount64();
 		if (currentTime - s_LastGamepadInputTime < 100)  // 100ms防抖
 			return;
 

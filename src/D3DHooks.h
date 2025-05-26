@@ -198,7 +198,7 @@ namespace ThroughScope {
 	private:
 		static bool s_EnableFOVAdjustment;
 		static float s_FOVAdjustmentSensitivity;
-		static DWORD s_LastGamepadInputTime;  // 防止手柄输入过于频繁
+		static DWORD64 s_LastGamepadInputTime;  // 防止手柄输入过于频繁
 
 
 	private:

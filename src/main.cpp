@@ -535,10 +535,21 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 		return g_PCUpdateMainThread(pChar);
 	}
 
+	auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+
+	if (!weaponInfo.currentConfig)
+	{
+		D3DHooks::SetEnableRender(false);
+		return g_PCUpdateMainThread(pChar);
+	}
+
 	if (ScopeCamera::IsSideAim() 
-		|| RE::UI::GetSingleton()->GetMenuOpen("PauseMenu") 
-		|| RE::UI::GetSingleton()->GetMenuOpen("WorkshopMenu") 
-		|| RE::UI::GetSingleton()->GetMenuOpen("CursorMenu")) {
+		|| UI::GetSingleton()->GetMenuOpen("PauseMenu") 
+		|| UI::GetSingleton()->GetMenuOpen("WorkshopMenu") 
+		|| UI::GetSingleton()->GetMenuOpen("CursorMenu") 
+		|| UI::GetSingleton()->GetMenuOpen("ScopeMenu")
+		|| UI::GetSingleton()->GetMenuOpen("LooksMenu")
+		) {
 		D3DHooks::SetEnableRender(false);
 	} else {
 		if (IsInADS(g_pchar)) 
