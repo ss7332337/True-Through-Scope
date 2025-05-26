@@ -38,9 +38,9 @@ namespace ThroughScope
 		{
 			float deltaPosX = 0.0f;
 			float deltaPosY = 0.0f;
-			float deltaPosZ = 0.0f;
+			float deltaPosZ = 7.0f;
 			float deltaRot[3] = { 0.0f, 0.0f, 0.0f };  // Pitch, Yaw, Roll
-			float deltaScale = 1.0f;
+			float deltaScale = 1.25f;
 		};
 
 		struct ParallaxSettings
@@ -67,6 +67,14 @@ namespace ThroughScope
 			float offsetY = 0.5f;
 		};
 
+		struct ZoomDataSettings
+		{
+			float fovMult = 1.0f; 
+			float offsetX = 0.0f;
+			float offsetY = 0.0f;
+			float offsetZ = 0.0f;
+		};
+
 		
 		struct ScopeConfig
 		{
@@ -75,7 +83,8 @@ namespace ThroughScope
 			ParallaxSettings parallaxSettings;
 			ScopeSettings scopeSettings;
 			ReticleSettings reticleSettings;
-			
+			ZoomDataSettings zoomDataSettings;
+
 			std::string modelName;
 			std::string nifFileName;
 		};

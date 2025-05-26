@@ -26,9 +26,9 @@ namespace ThroughScope
 		}
 
 		// 检查是否需要重新初始化UI值
-		std::string currentConfigKey = fmt::format("{:08X}_{}",
-			weaponInfo.weaponFormID,
-			weaponInfo.currentConfig->modelName);
+		std::string currentConfigKey = fmt::format("{}_{:08X}",
+			weaponInfo.currentConfig->weaponConfig.modFileName.c_str(),
+			weaponInfo.currentConfig->weaponConfig.localFormID);
 
 		if (!m_UIValuesInitialized || m_LastLoadedConfigKey != currentConfigKey) {
 			LoadFromConfig(weaponInfo.currentConfig);
@@ -112,11 +112,28 @@ namespace ThroughScope
 		ImGui::Spacing();
 		ImGui::TextColored(m_AccentColor, "Configuration Target:");
 
-		static int createOption = 0;
+		// Store createOption per weapon to prevent cross-weapon contamination
+		static std::unordered_map<uint32_t, int> weaponCreateOptions;
+		int& createOption = weaponCreateOptions[weaponInfo.weaponFormID];
 
-		if (ImGui::BeginCombo("Create Config For",
-				createOption == 0 ? "Base Weapon" :
-									fmt::format("Modification #{}, {}", createOption, weaponInfo.availableMods[createOption - 1]->GetFormEditorID()).c_str())) {
+		// Ensure createOption is always valid for current weapon
+		if (createOption < 0 || createOption > static_cast<int>(weaponInfo.availableMods.size())) {
+			createOption = 0;  // Reset to base weapon if invalid
+		}
+
+		// Build combo label safely
+		std::string comboLabel;
+		if (createOption == 0) {
+			comboLabel = "Base Weapon";
+		} else if (createOption <= static_cast<int>(weaponInfo.availableMods.size())) {
+			auto modForm = weaponInfo.availableMods[createOption - 1];
+			comboLabel = fmt::format("Modification #{}, {}", createOption, modForm->GetFormEditorID());
+		} else {
+			comboLabel = "Invalid Selection";
+			createOption = 0;  // Force reset to base weapon
+		}
+
+		if (ImGui::BeginCombo("Create Config For", comboLabel.c_str())) {
 			// Base weapon option
 			if (ImGui::Selectable("Base Weapon", createOption == 0)) {
 				createOption = 0;
@@ -129,8 +146,8 @@ namespace ThroughScope
 				std::string label = fmt::format("Modification #{} - {}",
 					i + 1, modForm->GetFormEditorID());
 
-				if (ImGui::Selectable(label.c_str(), createOption == (i + 1))) {
-					createOption = i + 1;
+				if (ImGui::Selectable(label.c_str(), createOption == static_cast<int>(i + 1))) {
+					createOption = static_cast<int>(i + 1);
 				}
 				RenderHelpTooltip("Create configuration specific to this modification");
 			}
@@ -188,7 +205,7 @@ namespace ThroughScope
 						weaponInfo.weaponFormID,
 						weaponInfo.weaponModName,
 						selectedNIF);
-				} else if (createOption > 0 && createOption <= (int)weaponInfo.availableMods.size()) {
+				} else if (createOption > 0 && createOption <= static_cast<int>(weaponInfo.availableMods.size())) {
 					auto modForm = weaponInfo.availableMods[createOption - 1];
 					success = dataPersistence->GeneratePresetConfig(
 						modForm->GetLocalFormID(),
@@ -201,6 +218,8 @@ namespace ThroughScope
 						selectedNIF)
 							.c_str());
 					dataPersistence->LoadAllConfigs();
+					weaponInfo = m_Manager->GetCurrentWeaponInfo();
+					ScopeCamera::SetupScopeForWeapon(weaponInfo);
 				} else {
 					m_Manager->SetDebugText("Failed to create configuration!");
 				}

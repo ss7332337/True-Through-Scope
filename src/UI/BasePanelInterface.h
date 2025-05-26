@@ -78,5 +78,6 @@ namespace ThroughScope
         
         // 标记有未保存的更改
         virtual void MarkUnsavedChanges() = 0;
+        virtual void MarkSaved() = 0;
     };
 }

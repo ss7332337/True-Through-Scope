@@ -212,8 +212,18 @@ namespace ThroughScope
 			D3DHooks::UpdateReticleSettings(config.reticleSettings.scale, config.reticleSettings.offsetX, config.reticleSettings.offsetY);
 		}
 
-		if (weaponInfo.instanceData->flags.any(WEAPON_FLAGS::kHasScope)) {
-			weaponInfo.instanceData->flags.set(false, WEAPON_FLAGS::kHasScope);
+
+		auto weaponIns = weaponInfo.instanceData;
+		if (weaponIns->flags.any(WEAPON_FLAGS::kHasScope)) {
+			weaponIns->flags.set(false, WEAPON_FLAGS::kHasScope);
+		}
+		
+		if (weaponIns->zoomData)
+		{
+			weaponIns->zoomData->zoomData.fovMult = config.zoomDataSettings.fovMult;
+			weaponIns->zoomData->zoomData.cameraOffset.x = config.zoomDataSettings.offsetX;
+			weaponIns->zoomData->zoomData.cameraOffset.y = config.zoomDataSettings.offsetY;
+			weaponIns->zoomData->zoomData.cameraOffset.z = config.zoomDataSettings.offsetZ;
 		}
 
 		logger::info("Scope setup completed for weapon");

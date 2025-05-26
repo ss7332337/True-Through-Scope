@@ -12,6 +12,7 @@
 #include "ModelSwitcherPanel.h"
 #include "ReticlePanel.h"
 #include "SettingsPanel.h"
+#include "ZoomDataPanel.h"
 
 #include "Constants.h"
 #include "D3DHooks.h"
@@ -43,6 +44,7 @@ namespace ThroughScope
 		DataPersistence::WeaponInfo GetCurrentWeaponInfo() override;
 		void ShowErrorDialog(const std::string& title, const std::string& message) override;
 		void MarkUnsavedChanges() override { m_HasUnsavedChanges = true; }
+		void MarkSaved() override { m_HasUnsavedChanges = false; }
 
 	private:
 		ImGuiManager() = default;
@@ -72,6 +74,7 @@ namespace ThroughScope
 		std::unique_ptr<ReticlePanel> m_ReticlePanel;
 		std::unique_ptr<DebugPanel> m_DebugPanel;
 		std::unique_ptr<SettingsPanel> m_SettingsPanel;
+		std::unique_ptr<ZoomDataPanel> m_ZoomDataPanel;
 
 		// 状态变量
 		bool m_Initialized = false;

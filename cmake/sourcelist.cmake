@@ -10,6 +10,7 @@ set(SOURCES
 	src/UI/Panels/ModelSwitcherPanel.cpp
 	src/UI/Panels/SettingsPanel.cpp
 	src/UI/Panels/ReticlePanel.cpp
+	src/UI/Panels/ZoomDataPanel.cpp
 	src/EventHandler.cpp
 	src/DataPersistence.cpp
 	src/DDSTextureLoader11.cpp

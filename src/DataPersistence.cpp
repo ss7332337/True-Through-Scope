@@ -153,48 +153,80 @@ namespace ThroughScope
 
 			ScopeConfig config;
 
-			// Load weapon config
-			std::string formIDStr = configJson["weapon"]["localFormID"];
-			config.weaponConfig.localFormID = WeaponConfig::ParseFormID(formIDStr);
-			config.weaponConfig.modFileName = configJson["weapon"]["modFileName"];
+			// Helper function to get value or default
+			auto getValue = [](const nlohmann::json& json, const char* key, auto defaultValue) {
+				return json.value(key, defaultValue);
+			};
 
-			// Load camera adjustments
-			const auto& cameraJson = configJson["camera"];
-			config.cameraAdjustments.deltaPosX = cameraJson["deltaPosX"];
-			config.cameraAdjustments.deltaPosY = cameraJson["deltaPosY"];
-			config.cameraAdjustments.deltaPosZ = cameraJson["deltaPosZ"];
-			config.cameraAdjustments.deltaRot[0] = cameraJson["deltaRot"][0];
-			config.cameraAdjustments.deltaRot[1] = cameraJson["deltaRot"][1];
-			config.cameraAdjustments.deltaRot[2] = cameraJson["deltaRot"][2];
-			config.cameraAdjustments.deltaScale = cameraJson["deltaScale"];
-
-			// Load parallax settings
-			const auto& parallaxJson = configJson["parallax"];
-			config.parallaxSettings.relativeFogRadius = parallaxJson["relativeFogRadius"];
-			config.parallaxSettings.scopeSwayAmount = parallaxJson["scopeSwayAmount"];
-			config.parallaxSettings.maxTravel = parallaxJson["maxTravel"];
-			config.parallaxSettings.radius = parallaxJson["radius"];
-
-			// Load scope settings
-			if (configJson.contains("scopeSettings")) {
-				const auto& scopeJson = configJson["scopeSettings"];
-				config.scopeSettings.minFOV = scopeJson["minFOV"];
-				config.scopeSettings.maxFOV = scopeJson["maxFOV"];
-				config.scopeSettings.nightVision = scopeJson["nightVision"];
-				config.scopeSettings.thermalVision = scopeJson["thermalVision"];
+			// Load weapon config with validation
+			if (configJson.contains("weapon")) {
+				const auto& weaponJson = configJson["weapon"];
+				std::string formIDStr = getValue(weaponJson, "localFormID", "00000000");
+				config.weaponConfig.localFormID = WeaponConfig::ParseFormID(formIDStr);
+				config.weaponConfig.modFileName = getValue(weaponJson, "modFileName", "");
+			} else {
+				logger::warn("Config file missing weapon section: {}", filePath);
+				config.weaponConfig.localFormID = 0;
+				config.weaponConfig.modFileName = "";
 			}
 
-			// Load reticle settings
-			const auto& reticleJson = configJson["reticle"];
-			config.reticleSettings.customReticlePath = reticleJson.value("customPath", "");
-			config.reticleSettings.offsetX = reticleJson.value("offsetX", 0.5f);
-			config.reticleSettings.offsetY = reticleJson.value("offsetY", 0.5f);
-			config.reticleSettings.scale = reticleJson.value("scale", 1.0f);
+			// Load camera adjustments with defaults
+			const auto& cameraJson = configJson.value("camera", nlohmann::json::object());
+			config.cameraAdjustments.deltaPosX = getValue(cameraJson, "deltaPosX", 0.0f);
+			config.cameraAdjustments.deltaPosY = getValue(cameraJson, "deltaPosY", 0.0f);
+			config.cameraAdjustments.deltaPosZ = getValue(cameraJson, "deltaPosZ", 0.0f);
 
-			config.modelName = configJson.value("modelName", "");
+			// Handle rotation array
+			if (cameraJson.contains("deltaRot") && cameraJson["deltaRot"].is_array() && cameraJson["deltaRot"].size() == 3) {
+				config.cameraAdjustments.deltaRot[0] = cameraJson["deltaRot"][0];
+				config.cameraAdjustments.deltaRot[1] = cameraJson["deltaRot"][1];
+				config.cameraAdjustments.deltaRot[2] = cameraJson["deltaRot"][2];
+			} else {
+				config.cameraAdjustments.deltaRot[0] = 0.0f;
+				config.cameraAdjustments.deltaRot[1] = 0.0f;
+				config.cameraAdjustments.deltaRot[2] = 0.0f;
+			}
+
+			config.cameraAdjustments.deltaScale = getValue(cameraJson, "deltaScale", 1.0f);
+
+			// Load parallax settings with defaults
+			const auto& parallaxJson = configJson.value("parallax", nlohmann::json::object());
+			config.parallaxSettings.relativeFogRadius = getValue(parallaxJson, "relativeFogRadius", 0.5f);
+			config.parallaxSettings.scopeSwayAmount = getValue(parallaxJson, "scopeSwayAmount", 0.1f);
+			config.parallaxSettings.maxTravel = getValue(parallaxJson, "maxTravel", 0.05f);
+			config.parallaxSettings.radius = getValue(parallaxJson, "radius", 0.3f);
+
+			// Load scope settings with defaults
+			const auto& scopeJson = configJson.value("scopeSettings", nlohmann::json::object());
+			config.scopeSettings.minFOV = getValue(scopeJson, "minFOV", 5);
+			config.scopeSettings.maxFOV = getValue(scopeJson, "maxFOV", 90);
+			config.scopeSettings.nightVision = getValue(scopeJson, "nightVision", false);
+			config.scopeSettings.thermalVision = getValue(scopeJson, "thermalVision", false);
+
+			// Load reticle settings with defaults
+			const auto& reticleJson = configJson.value("reticle", nlohmann::json::object());
+			config.reticleSettings.customReticlePath = getValue(reticleJson, "customPath", "");
+			config.reticleSettings.offsetX = getValue(reticleJson, "offsetX", 0.5f);
+			config.reticleSettings.offsetY = getValue(reticleJson, "offsetY", 0.5f);
+			config.reticleSettings.scale = getValue(reticleJson, "scale", 1.0f);
+
+			// Load zoom data settings with defaults
+			const auto& zoomDataJson = configJson.value("zoomData", nlohmann::json::object());
+			config.zoomDataSettings.fovMult = getValue(zoomDataJson, "fovMult", 1.0f);
+			config.zoomDataSettings.offsetX = getValue(zoomDataJson, "offsetX", 0.0f);
+			config.zoomDataSettings.offsetY = getValue(zoomDataJson, "offsetY", 0.0f);
+			config.zoomDataSettings.offsetZ = getValue(zoomDataJson, "offsetZ", 0.0f);
+
+			// Model name
+			config.modelName = getValue(configJson, "modelName", "");
 
 			// Add to multimap
 			m_Configurations.emplace(config.weaponConfig.GetKey(), config);
+
+			if (configJson.size() < 7) {  // Arbitrary threshold for detecting incomplete configs
+				logger::info("Fixed incomplete config file: {}", filePath);
+				SaveConfig(config);
+			}
 
 			return true;
 		} catch (const std::exception& e) {
@@ -250,6 +282,14 @@ namespace ThroughScope
 				{ "offsetX", config.reticleSettings.offsetX },
 				{ "offsetY", config.reticleSettings.offsetY },
 				{ "scale", config.reticleSettings.scale }
+			};
+
+
+			configJson["zoomData"] = {
+				{ "fovMult", config.zoomDataSettings.fovMult },
+				{ "offsetX", config.zoomDataSettings.offsetX },
+				{ "offsetY", config.zoomDataSettings.offsetY },
+				{ "offsetZ", config.zoomDataSettings.offsetZ }
 			};
 
 			configJson["modelName"] = config.modelName;
@@ -309,6 +349,11 @@ namespace ThroughScope
 		presetConfig.reticleSettings.offsetX = 0.5f;
 		presetConfig.reticleSettings.offsetX = 0.5f;
 		presetConfig.reticleSettings.scale = 1;
+
+		presetConfig.zoomDataSettings.fovMult = 1.0f;
+		presetConfig.zoomDataSettings.offsetX = 0.0f;
+		presetConfig.zoomDataSettings.offsetY = 0.0f;
+		presetConfig.zoomDataSettings.offsetZ = 0.0f;
 
 		return SaveConfig(presetConfig);
 	}

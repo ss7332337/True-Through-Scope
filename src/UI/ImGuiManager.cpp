@@ -99,6 +99,7 @@ namespace ThroughScope
 		// 创建面板实例
 		m_CameraAdjustmentPanel = std::make_unique<CameraAdjustmentPanel>(this);
 		m_ModelSwitcherPanel = std::make_unique<ModelSwitcherPanel>(this);
+		m_ZoomDataPanel = std::make_unique<ZoomDataPanel>(this);
 		m_DebugPanel = std::make_unique<DebugPanel>(this);
 		m_SettingsPanel = std::make_unique<SettingsPanel>(this);
 		m_ReticlePanel = std::make_unique<ReticlePanel>(this);
@@ -108,6 +109,8 @@ namespace ThroughScope
 			static_cast<BasePanelInterface*>(m_CameraAdjustmentPanel.get())));
 		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
 			static_cast<BasePanelInterface*>(m_ModelSwitcherPanel.get())));
+		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
+			static_cast<BasePanelInterface*>(m_ZoomDataPanel.get())));
 		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
 			static_cast<BasePanelInterface*>(m_ReticlePanel.get())));
 		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
@@ -134,9 +137,9 @@ namespace ThroughScope
 
 		m_Panels.clear();
 
-		// 释放面板智能指针（虽然已经在vector中管理了）
 		m_CameraAdjustmentPanel.reset();
 		m_ModelSwitcherPanel.reset();
+		m_ZoomDataPanel.reset();
 		m_ReticlePanel.reset();
 		m_DebugPanel.reset();
 		m_SettingsPanel.reset();
