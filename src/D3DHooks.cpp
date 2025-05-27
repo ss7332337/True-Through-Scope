@@ -30,6 +30,7 @@ namespace ThroughScope {
 	float D3DHooks::s_ReticleOffsetX = 0.5f;
 	float D3DHooks::s_ReticleOffsetY = 0.5f;
 	bool D3DHooks::s_HasCachedState = false;
+	bool D3DHooks::isFirstSpawnNode = false;
 
 	bool D3DHooks::s_isForwardStage = false;
 	bool D3DHooks::s_EnableFOVAdjustment = true;
@@ -185,7 +186,7 @@ namespace ThroughScope {
 				return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 			}
 
-			return phookD3D11DrawIndexed(pContext, 0, 0, 0);
+			return;
 		} else {
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 		}
@@ -448,6 +449,131 @@ namespace ThroughScope {
 		return foundTargetTextures;
 	}
     
+	void D3DHooks::ReCreateResource(ID3D11Device* device, D3D11_TEXTURE2D_DESC srcTexDesc)
+	{
+		// 创建中间纹理
+		D3D11_TEXTURE2D_DESC stagingDesc = srcTexDesc;
+		stagingDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		stagingDesc.MiscFlags = 0;
+		stagingDesc.SampleDesc.Count = 1;
+		stagingDesc.SampleDesc.Quality = 0;
+		stagingDesc.Usage = D3D11_USAGE_DEFAULT;
+		stagingDesc.CPUAccessFlags = 0;
+
+		HRESULT hr = device->CreateTexture2D(&stagingDesc, nullptr, &stagingTexture);
+		if (FAILED(hr)) {
+			logger::error("Failed to create staging texture: 0x{:X}", hr);
+			device->Release();
+			return;
+		}
+
+		// 创建着色器资源视图(SRV)
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = stagingDesc.Format;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MostDetailedMip = 0;
+		srvDesc.Texture2D.MipLevels = 1;
+
+		hr = device->CreateShaderResourceView(stagingTexture, &srvDesc, &stagingSRV);
+		if (FAILED(hr)) {
+			logger::error("Failed to create staging SRV: 0x{:X}", hr);
+			stagingTexture->Release();
+			stagingTexture = nullptr;
+			device->Release();
+			return;
+		}
+
+		// 创建常量缓冲区
+		D3D11_BUFFER_DESC cbDesc;
+		ZeroMemory(&cbDesc, sizeof(cbDesc));
+		cbDesc.ByteWidth = sizeof(ScopeConstantBuffer);
+		cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		cbDesc.MiscFlags = 0;
+		cbDesc.StructureByteStride = 0;
+
+		hr = device->CreateBuffer(&cbDesc, nullptr, &constantBuffer);
+		if (FAILED(hr)) {
+			logger::error("Failed to create constant buffer: 0x{:X}", hr);
+			stagingSRV->Release();
+			stagingTexture->Release();
+			stagingTexture = nullptr;
+			stagingSRV = nullptr;
+			device->Release();
+			return;
+		}
+
+		ID3DBlob* psBlob = nullptr;
+
+		hr = CreateShaderFromFile(L"Data\\Shaders\\XiFeiLi\\TrueScopeShader.cso", L"HLSL\\TrueScopeShader.hlsl", "main", "ps_5_0", &psBlob);
+
+		// 创建像素着色器
+		hr = device->CreatePixelShader(
+			psBlob->GetBufferPointer(),
+			psBlob->GetBufferSize(),
+			nullptr,
+			&scopePixelShader);
+
+		if (FAILED(hr)) {
+			logger::error("Failed to create pixel shader: 0x{:X}", hr);
+			psBlob->Release();
+			device->Release();
+			return;
+		}
+
+		psBlob->Release();
+
+		// 创建采样器状态
+		D3D11_SAMPLER_DESC samplerDesc = {};
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+		samplerDesc.MinLOD = 0;
+		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+
+		hr = device->CreateSamplerState(&samplerDesc, &samplerState);
+		if (FAILED(hr)) {
+			logger::error("Failed to create sampler state: 0x{:X}", hr);
+			scopePixelShader->Release();
+			scopePixelShader = nullptr;
+			device->Release();
+			return;
+		}
+
+		D3D11_BLEND_DESC blendDesc = {};
+		blendDesc.AlphaToCoverageEnable = FALSE;
+		blendDesc.IndependentBlendEnable = FALSE;
+
+		// 设置第一个渲染目标的混合状态
+		blendDesc.RenderTarget[0].BlendEnable = TRUE;
+
+		// 源混合因子：使用源颜色的Alpha
+		blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+		blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+		blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+
+		// Alpha混合：直接使用源Alpha覆盖
+		blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+		blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+		blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+
+		// 写入所有颜色通道
+		blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+		hr = device->CreateBlendState(&blendDesc, &blendState);
+		if (FAILED(hr)) {
+			logger::error("Failed to create blend state: 0x{:X}", hr);
+			// 清理其他已创建的资源...
+			device->Release();
+			return;
+		}
+
+		logger::info("Successfully created all scope rendering resources");
+	}
+
     void D3DHooks::SetScopeTexture(ID3D11DeviceContext* pContext)
 	{
 		// 确保我们有有效的纹理
@@ -495,135 +621,13 @@ namespace ThroughScope {
 			}
 		}
 
-		
-
 		// 获取纹理描述
 		D3D11_TEXTURE2D_DESC srcTexDesc;
 		RenderUtilities::GetSecondPassColorTexture()->GetDesc(&srcTexDesc);
 
 		// 创建或重新创建资源(如果需要)
 		if (!stagingTexture) {
-			// 创建中间纹理
-			D3D11_TEXTURE2D_DESC stagingDesc = srcTexDesc;
-			stagingDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-			stagingDesc.MiscFlags = 0;
-			stagingDesc.SampleDesc.Count = 1;
-			stagingDesc.SampleDesc.Quality = 0;
-			stagingDesc.Usage = D3D11_USAGE_DEFAULT;
-			stagingDesc.CPUAccessFlags = 0;
-
-			HRESULT hr = device->CreateTexture2D(&stagingDesc, nullptr, &stagingTexture);
-			if (FAILED(hr)) {
-				logger::error("Failed to create staging texture: 0x{:X}", hr);
-				device->Release();
-				return;
-			}
-
-			// 创建着色器资源视图(SRV)
-			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-			srvDesc.Format = stagingDesc.Format;
-			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-			srvDesc.Texture2D.MostDetailedMip = 0;
-			srvDesc.Texture2D.MipLevels = 1;
-
-			hr = device->CreateShaderResourceView(stagingTexture, &srvDesc, &stagingSRV);
-			if (FAILED(hr)) {
-				logger::error("Failed to create staging SRV: 0x{:X}", hr);
-				stagingTexture->Release();
-				stagingTexture = nullptr;
-				device->Release();
-				return;
-			}
-
-			 // 创建常量缓冲区
-			D3D11_BUFFER_DESC cbDesc;
-			ZeroMemory(&cbDesc, sizeof(cbDesc));
-			cbDesc.ByteWidth = sizeof(ScopeConstantBuffer);
-			cbDesc.Usage = D3D11_USAGE_DYNAMIC;
-			cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-			cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-			cbDesc.MiscFlags = 0;
-			cbDesc.StructureByteStride = 0;
-
-			hr = device->CreateBuffer(&cbDesc, nullptr, &constantBuffer);
-			if (FAILED(hr)) {
-				logger::error("Failed to create constant buffer: 0x{:X}", hr);
-				stagingSRV->Release();
-				stagingTexture->Release();
-				stagingTexture = nullptr;
-				stagingSRV = nullptr;
-				device->Release();
-				return;
-			}
-
-			ID3DBlob* psBlob = nullptr;
-
-			hr = CreateShaderFromFile(L"Data\\Shaders\\XiFeiLi\\TrueScopeShader.cso", L"HLSL\\TrueScopeShader.hlsl", "main", "ps_5_0", &psBlob);
-
-			// 创建像素着色器
-			hr = device->CreatePixelShader(
-				psBlob->GetBufferPointer(),
-				psBlob->GetBufferSize(),
-				nullptr,
-				&scopePixelShader);
-
-			if (FAILED(hr)) {
-				logger::error("Failed to create pixel shader: 0x{:X}", hr);
-				psBlob->Release();
-				device->Release();
-				return;
-			}
-
-			psBlob->Release();
-
-			// 创建采样器状态
-			D3D11_SAMPLER_DESC samplerDesc = {};
-			samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-			samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-			samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-			samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-			samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
-			samplerDesc.MinLOD = 0;
-			samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-
-			hr = device->CreateSamplerState(&samplerDesc, &samplerState);
-			if (FAILED(hr)) {
-				logger::error("Failed to create sampler state: 0x{:X}", hr);
-				scopePixelShader->Release();
-				scopePixelShader = nullptr;
-				device->Release();
-				return;
-			}
-
-			 D3D11_BLEND_DESC blendDesc = {};
-			blendDesc.AlphaToCoverageEnable = FALSE;
-			blendDesc.IndependentBlendEnable = FALSE;
-
-			// 设置第一个渲染目标的混合状态
-			blendDesc.RenderTarget[0].BlendEnable = TRUE;
-
-			// 源混合因子：使用源颜色的Alpha
-			blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-			blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-			blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-
-			// Alpha混合：直接使用源Alpha覆盖
-			blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-			blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
-			blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-
-			// 写入所有颜色通道
-			blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-
-			hr = device->CreateBlendState(&blendDesc, &blendState);
-			if (FAILED(hr)) {
-				logger::error("Failed to create blend state: 0x{:X}", hr);
-				// 清理其他已创建的资源...
-				device->Release();
-				return;
-			}
-
-			logger::info("Successfully created all scope rendering resources");
+			ReCreateResource(device, srcTexDesc);
 		}
 
 		// 复制/解析纹理内容

@@ -14,7 +14,8 @@ namespace ThroughScope
         void Render() override;
         void Update() override;
         const char* GetPanelName() const override { return "Settings"; }
-        
+		bool GetSaved() const override { return isSaved; }
+
         // 设置管理
         struct UISettings
         {
@@ -57,7 +58,8 @@ namespace ThroughScope
         
     private:
         PanelManagerInterface* m_Manager;
-        
+		bool isSaved = true;
+
         UISettings m_UISettings;
         PerformanceSettings m_PerformanceSettings;
         KeyBindingSettings m_KeyBindingSettings;

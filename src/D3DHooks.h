@@ -165,6 +165,8 @@ namespace ThroughScope {
 		static float GetReticleOffsetX() { return s_ReticleOffsetX; }
 		static float GetReticleOffsetY() { return s_ReticleOffsetY; }
 
+		static bool isFirstSpawnNode;
+
 	private:
 		struct BufferInfo
 		{
@@ -231,6 +233,7 @@ namespace ThroughScope {
 
 		static void ProcessGamepadFOVInput();
 		static void ProcessMouseWheelFOVInput(short wheelDelta);
+		static void ReCreateResource(ID3D11Device* device, D3D11_TEXTURE2D_DESC srcTexDesc);
 
 	public:
 		static void HandleFOVInput();

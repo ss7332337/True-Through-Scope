@@ -17,6 +17,7 @@ namespace ThroughScope
         void Update() override;
         bool Initialize() override;
         const char* GetPanelName() const override { return "Camera Adjustment"; }
+		bool GetSaved() const override { return isSaved; }
         
         // 获取当前调整值
         struct AdjustmentValues
@@ -48,6 +49,7 @@ namespace ThroughScope
         
     private:
         PanelManagerInterface* m_Manager;
+		bool isSaved = true;
         AdjustmentValues m_CurrentValues;
         AdjustmentValues m_PreviousValues;  // 用于变化检测
         

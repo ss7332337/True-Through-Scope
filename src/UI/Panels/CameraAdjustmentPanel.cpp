@@ -50,7 +50,7 @@ namespace ThroughScope
 		if (HasChanges()) {
 			ApplyAllAdjustments();
 			UpdatePreviousValues();
-			m_Manager->MarkUnsavedChanges();
+			isSaved = false;
 		}
 	}
 
@@ -406,7 +406,7 @@ namespace ThroughScope
 				if (dataPersistence->SaveConfig(modifiedConfig)) {
 					m_Manager->SetDebugText("Settings saved successfully!");
 					dataPersistence->LoadAllConfigs();
-					m_Manager->MarkSaved();
+					isSaved = true;
 				} else {
 					m_Manager->SetDebugText("Failed to save settings!");
 				}

@@ -28,6 +28,8 @@ namespace ThroughScope
         
         // 是否显示该面板
         virtual bool ShouldShow() const { return true; }
+
+		virtual bool GetSaved() const { return true; }
         
     protected:
         // 通用颜色定义

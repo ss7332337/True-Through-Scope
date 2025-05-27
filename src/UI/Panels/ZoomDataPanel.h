@@ -17,7 +17,8 @@ namespace ThroughScope
         void Update() override;
         bool Initialize() override;
         const char* GetPanelName() const override { return "Zoom Data Settings"; }
-        
+		bool GetSaved() const override { return isSaved; }
+
         // Current values access
         struct ZoomDataValues
         {
@@ -37,6 +38,8 @@ namespace ThroughScope
         
     private:
         PanelManagerInterface* m_Manager;
+		bool isSaved = true;
+
         ZoomDataValues m_CurrentValues;
         ZoomDataValues m_PreviousValues;  // For change detection
         

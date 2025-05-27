@@ -2,6 +2,8 @@
 
 namespace ThroughScope
 {
+	UINT ImGuiManager::s_unsavedChangeCount = 0;
+
 	ImGuiManager* ImGuiManager::GetSingleton()
 	{
 		static ImGuiManager instance;
@@ -114,9 +116,10 @@ namespace ThroughScope
 		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
 			static_cast<BasePanelInterface*>(m_ReticlePanel.get())));
 		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
-			static_cast<BasePanelInterface*>(m_DebugPanel.get())));
-		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
 			static_cast<BasePanelInterface*>(m_SettingsPanel.get())));
+		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
+			static_cast<BasePanelInterface*>(m_DebugPanel.get())));
+		
 
 		// 初始化所有面板
 		for (auto& panel : m_Panels) {
@@ -223,7 +226,13 @@ namespace ThroughScope
 
 		// 设置窗口标志
 		ImGuiWindowFlags windowFlags = ImGuiWindowFlags_None;
-		if (s_unsavedChangeCount > 0) {
+		bool saveResult = true;
+		for (auto& i : m_Panels)
+		{
+			saveResult &= i->GetSaved();
+		}
+
+		if (!saveResult) {
 			windowFlags |= ImGuiWindowFlags_UnsavedDocument;
 		}
 
@@ -286,8 +295,11 @@ namespace ThroughScope
 
 		ImGui::NextColumn();
 
-		// 右侧：保存状态
-		if (s_unsavedChangeCount > 0) {
+		bool saveResult = true;
+		for (auto& i : m_Panels) {
+			saveResult &= i->GetSaved();
+		}
+		if (!saveResult) {
 			ImGui::TextColored(m_WarningColor, "● Unsaved Changes");
 		} else {
 			ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "○ All Saved");

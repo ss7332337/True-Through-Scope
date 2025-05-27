@@ -43,7 +43,7 @@ namespace ThroughScope
         if (HasChanges()) {
             ApplyAllSettings();
             UpdatePreviousValues();
-            m_Manager->MarkUnsavedChanges();
+            isSaved = false;
         }
     }
 
@@ -144,6 +144,8 @@ namespace ThroughScope
                     m_Manager->SetDebugText("Failed to save zoom data settings!");
                 }
             }
+
+			isSaved = true;
         }
     }
 

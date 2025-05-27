@@ -17,6 +17,7 @@ namespace ThroughScope
         void Render() override;
         void Update() override;
         const char* GetPanelName() const override { return "Debug"; }
+		bool GetSaved() const override { return isSaved; }
         
         // 调试功能
         void PrintNodeHierarchy();
@@ -25,7 +26,8 @@ namespace ThroughScope
         
     private:
         PanelManagerInterface* m_Manager;
-        
+		bool isSaved = true;
+
         // 调试状态
         bool m_VerboseLogging = false;
         bool m_ShowAdvancedInfo = false;

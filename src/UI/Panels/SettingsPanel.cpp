@@ -157,62 +157,9 @@ namespace ThroughScope
 			StartKeyCapture(&m_KeyBindingSettings.menuToggleKey, "Menu Toggle");
 		}
 
-		ImGui::NextColumn();
-
-		// Quick Save
-		ImGui::Text("Quick Save:");
-		ImGui::NextColumn();
-
-		std::string saveKeyText = m_CapturingKey && m_KeyBeingCaptured == &m_KeyBindingSettings.quickSaveKey ?
-		                              "Press key..." :
-		                              GetKeyName(m_KeyBindingSettings.quickSaveKey);
-
-		if (ImGui::Button(saveKeyText.c_str(), ImVec2(100, 0))) {
-			StartKeyCapture(&m_KeyBindingSettings.quickSaveKey, "Quick Save");
-		}
-
-		ImGui::NextColumn();
-
-		// Quick Load
-		ImGui::Text("Quick Load:");
-		ImGui::NextColumn();
-
-		std::string loadKeyText = m_CapturingKey && m_KeyBeingCaptured == &m_KeyBindingSettings.quickLoadKey ?
-		                              "Press key..." :
-		                              GetKeyName(m_KeyBindingSettings.quickLoadKey);
-
-		if (ImGui::Button(loadKeyText.c_str(), ImVec2(100, 0))) {
-			StartKeyCapture(&m_KeyBindingSettings.quickLoadKey, "Quick Load");
-		}
-
-		ImGui::NextColumn();
-
-		// Reset
-		ImGui::Text("Reset All:");
-		ImGui::NextColumn();
-
-		std::string resetKeyText = m_CapturingKey && m_KeyBeingCaptured == &m_KeyBindingSettings.resetKey ?
-		                               "Press key..." :
-		                               GetKeyName(m_KeyBindingSettings.resetKey);
-
-		if (ImGui::Button(resetKeyText.c_str(), ImVec2(100, 0))) {
-			StartKeyCapture(&m_KeyBindingSettings.resetKey, "Reset All");
-		}
-
-		ImGui::Columns(1);
-
-		if (m_CapturingKey) {
-			ImGui::Spacing();
-			ImGui::TextColored(m_AccentColor, "Capturing key for: %s", m_KeyCaptureName.c_str());
-			ImGui::Text("Press ESC to cancel");
-		}
-
 		ImGui::Spacing();
 		if (ImGui::Button("Reset to Defaults")) {
 			m_KeyBindingSettings.menuToggleKey = VK_F2;
-			m_KeyBindingSettings.quickSaveKey = VK_F5;
-			m_KeyBindingSettings.quickLoadKey = VK_F9;
-			m_KeyBindingSettings.resetKey = VK_F12;
 			MarkSettingsChanged();
 		}
 	}
@@ -289,7 +236,7 @@ namespace ThroughScope
 				ApplyUISettings();
 				ApplyPerformanceSettings();
 				ApplyKeyBindingSettings();
-				m_SettingsChanged = false;
+				isSaved = true;
 				m_Manager->SetDebugText("Settings saved successfully!");
 			} else {
 				m_Manager->SetDebugText("Failed to save settings!");

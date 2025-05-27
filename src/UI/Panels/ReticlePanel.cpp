@@ -5,6 +5,7 @@
 
 namespace ThroughScope
 {
+
 	ReticlePanel::ReticlePanel(PanelManagerInterface* manager) :
 		m_Manager(manager)
 	{
@@ -101,7 +102,7 @@ namespace ThroughScope
 		}
 
 		// 显示是否有未保存的更改
-		if (m_HasUnsavedChanges) {
+		if (!isSaved) {
 			ImGui::TextColored(m_WarningColor, "● Unsaved Changes");
 		}
 
@@ -161,8 +162,7 @@ namespace ThroughScope
 				if (ImGui::Selectable(displayName.c_str(), isSelected)) {
 					if (fileName != m_CurrentSettings.texturePath) {
 						m_CurrentSettings.texturePath = fileName;
-						m_HasUnsavedChanges = true;
-						m_Manager->MarkUnsavedChanges();
+						isSaved = false;
 						// 加载预览
 						CreateTexturePreview(fileName);
 
@@ -224,8 +224,7 @@ namespace ThroughScope
 
 		// 如果设置有变化，标记为未保存
 		if (settingsChanged) {
-			m_HasUnsavedChanges = true;
-			m_Manager->MarkUnsavedChanges();
+			isSaved = false;
 		}
 
 		ImGui::Spacing();
@@ -234,8 +233,7 @@ namespace ThroughScope
 		if (ImGui::Button("Reset to Center", ImVec2(-1, 0))) {
 			m_CurrentSettings.offsetX = 0.5f;
 			m_CurrentSettings.offsetY = 0.5f;
-			m_HasUnsavedChanges = true;
-			m_Manager->MarkUnsavedChanges();
+			isSaved = false;
 		}
 		RenderHelpTooltip("Reset position to screen center");
 	}
@@ -297,8 +295,7 @@ namespace ThroughScope
 		// 保存设置
 		if (ImGui::Button("Save Settings", ImVec2(-1, 0))) {
 			SaveCurrentSettings();
-			m_HasUnsavedChanges = false;
-			m_Manager->MarkSaved();
+			isSaved = true;
 			m_Manager->SetDebugText("Reticle settings saved");
 		}
 		RenderHelpTooltip("Save current settings to configuration file");
@@ -307,8 +304,7 @@ namespace ThroughScope
 		if (ImGui::Button("Reset to Defaults", ImVec2(-1, 0))) {
 			if (ImGui::GetIO().KeyCtrl) {
 				ResetToDefaults();
-				m_HasUnsavedChanges = true;
-				m_Manager->MarkUnsavedChanges();
+				isSaved = false;
 				m_Manager->SetDebugText("Settings reset to defaults");
 			} else {
 				m_Manager->SetDebugText("Hold Ctrl and click to reset to defaults");
@@ -319,7 +315,7 @@ namespace ThroughScope
 		ImGui::Spacing();
 
 		// 显示实时更新状态
-		if (m_HasUnsavedChanges) {
+		if (!isSaved) {
 			ImGui::TextColored(m_WarningColor, "● Changes applied in real-time");
 			ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "  (Click 'Save Settings' to persist)");
 		} else {
@@ -390,6 +386,7 @@ namespace ThroughScope
 			auto dataPersistence = DataPersistence::GetSingleton();
 			if (dataPersistence->SaveConfig(modifiedConfig)) {
 				dataPersistence->LoadAllConfigs();
+				isSaved = true;
 				logger::info("Reticle settings saved successfully");
 			} else {
 				logger::error("Failed to save reticle settings");
@@ -416,7 +413,7 @@ namespace ThroughScope
 		// 备份当前设置
 		m_BackupSettings = m_CurrentSettings;
 		m_PreviousSettings = m_CurrentSettings;  // 初始化前一帧设置
-		m_HasUnsavedChanges = false;
+		isSaved = true;
 	}
 
 	void ReticlePanel::ResetToDefaults()

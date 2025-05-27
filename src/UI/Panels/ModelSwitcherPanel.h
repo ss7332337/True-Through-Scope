@@ -17,7 +17,8 @@ namespace ThroughScope
         bool Initialize() override;
         const char* GetPanelName() const override { return "Scope Shape"; }
         bool ShouldShow() const override;
-        
+		bool GetSaved() const override { return isSaved; }
+
         // 刷新NIF文件列表
         void RefreshNIFFiles();
         
@@ -26,7 +27,8 @@ namespace ThroughScope
         
     private:
         PanelManagerInterface* m_Manager;
-        
+		bool isSaved = true;
+
         // NIF文件管理
         std::vector<std::string> m_AvailableNIFFiles;
         bool m_NIFFilesScanned = false;

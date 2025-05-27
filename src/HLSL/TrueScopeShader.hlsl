@@ -98,6 +98,7 @@ float4 main(PS_INPUT input) : SV_TARGET
     float parallaxValue = (step(distToCenter, 2) * getparallax(distToParallax, float2(1, 1), 1));
     
     float2 reticleTexCoord = transform_reticle_coords(aspectCorrectTex);
+    reticleTexCoord = float2(1.0 - reticleTexCoord.x, reticleTexCoord.y);
     float4 reticleColor = reticleTexture.Sample(scopeSampler, reticleTexCoord);
     
     

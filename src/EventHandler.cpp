@@ -2,7 +2,7 @@
 #include "EventHandler.h"
 #include "DataPersistence.h"
 #include <NiFLoader.h>
-
+#include "D3DHooks.h"
 #include "ScopeCamera.h"
 
 namespace ThroughScope
@@ -155,6 +155,13 @@ namespace ThroughScope
 
 				isQuerySpawnNode = true;
 				s_IsScopeActive = true;
+
+				if (D3DHooks::isFirstSpawnNode)
+				{
+					D3DHooks::isFirstSpawnNode = true;
+					logger::warn("FirstSpawn Finish: EquipWatcher");
+				}
+				
 				ScopeCamera::s_EquippedWeaponFormID = weapon->formID;
 
 			} else {
@@ -215,6 +222,11 @@ namespace ThroughScope
 			if (weaponInfo.currentConfig) {
 				ScopeCamera::SetupScopeForWeapon(weaponInfo);
 				isQuerySpawnNode = false;
+				if (D3DHooks::isFirstSpawnNode) {
+					D3DHooks::isFirstSpawnNode = true;
+					logger::warn("FirstSpawn Finish: AnimationGraphEventWatcher");
+				}
+				
 			} else {
 				// No configuration found - do nothing as requested
 				logger::info("No scope configuration found for this weapon - no action taken");

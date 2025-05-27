@@ -19,6 +19,7 @@ namespace ThroughScope
         bool Initialize() override;
         const char* GetPanelName() const override { return "Reticle Settings"; }
         bool ShouldShow() const override;
+		bool GetSaved() const override { return isSaved; }
         
         // 刷新纹理文件列表
         void RefreshReticleTextures();
@@ -37,9 +38,11 @@ namespace ThroughScope
         
         // 获取当前设置
         const ReticleSettings& GetCurrentSettings() const { return m_CurrentSettings; }
+		
         
     private:
         PanelManagerInterface* m_Manager;
+		bool isSaved = true;
         
         // 纹理文件管理
         std::vector<std::string> m_AvailableTextures;

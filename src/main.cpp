@@ -524,17 +524,6 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 	if (keyPgDown & 0x1)
 		Utilities::LogPlayerWeaponNodes();
 
-
-	if (!isFirstSpawnNode) 
-	{
-		isFirstSpawnNode = true;
-		auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
-		if (weaponInfo.currentConfig) {
-			ScopeCamera::SetupScopeForWeapon(weaponInfo);
-		}
-		return g_PCUpdateMainThread(pChar);
-	}
-
 	auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
 
 	if (!weaponInfo.currentConfig)
@@ -571,10 +560,10 @@ void RegisterHooks()
 	logger::info("Registering hooks...");
 	using namespace Utilities;
 
+	auto mhInit = MH_Initialize();
 	 // 初始化MinHook
-	if (MH_Initialize() != MH_OK) {
-		logger::info("MH_Initialize Failed!");
-		return;
+	if (mhInit != MH_OK) {
+		logger::info("MH_Initialize Not Ok, Reason: {}", (int)mhInit);
 	}
 
 
@@ -699,10 +688,17 @@ DWORD WINAPI InitThread(HMODULE hModule)
     isScopCamReady = ThroughScope::ScopeCamera::Initialize();
 	isRenderReady = ThroughScope::RenderUtilities::Initialize();
 
-	//auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
-	//if (weaponInfo.currentConfig) {
-	//	ScopeCamera::SetupScopeForWeapon(weaponInfo);
-	//} 
+	Sleep(350);
+	if (!D3DHooks::isFirstSpawnNode) {
+		auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+		if (weaponInfo.currentConfig) {
+			ScopeCamera::SetupScopeForWeapon(weaponInfo);
+			d3dHooks->SetScopeTexture((ID3D11DeviceContext*)RE::BSGraphics::RendererData::GetSingleton()->context);
+			D3DHooks::isFirstSpawnNode = true;
+			logger::warn("FirstSpawn Finish");
+		}
+	}
+
 
     logger::info("ThroughScope initialization completed");
     return 0;
@@ -804,13 +800,11 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
             InitializePlugin();
         } else if (msg->type == F4SE::MessagingInterface::kGameLoaded) {
             // Game has been loaded
-            logger::info("Game loaded");
-			isFirstSpawnNode = false;
+			D3DHooks::isFirstSpawnNode = false;
 		}
 		else if (msg->type == F4SE::MessagingInterface::kNewGame)
 		{
-			logger::info("NewGame");
-			isFirstSpawnNode = false;
+			D3DHooks::isFirstSpawnNode = false;
 		}
     });
 
