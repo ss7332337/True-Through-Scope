@@ -43,8 +43,8 @@ namespace ThroughScope
 		void SetDebugText(const char* text) override;
 		DataPersistence::WeaponInfo GetCurrentWeaponInfo() override;
 		void ShowErrorDialog(const std::string& title, const std::string& message) override;
-		void MarkUnsavedChanges() override { m_HasUnsavedChanges = true; }
-		void MarkSaved() override { m_HasUnsavedChanges = false; }
+		void MarkUnsavedChanges() override { s_unsavedChangeCount++; }
+		void MarkSaved() override { s_unsavedChangeCount--; }
 
 	private:
 		ImGuiManager() = default;
@@ -81,6 +81,7 @@ namespace ThroughScope
 		bool m_MenuOpen = false;
 		bool m_HasUnsavedChanges = false;
 
+		static UINT s_unsavedChangeCount;
 		// 调试信息
 		char m_DebugText[1024] = "";
 

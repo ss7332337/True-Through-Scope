@@ -162,7 +162,7 @@ namespace ThroughScope
 					if (fileName != m_CurrentSettings.texturePath) {
 						m_CurrentSettings.texturePath = fileName;
 						m_HasUnsavedChanges = true;
-
+						m_Manager->MarkUnsavedChanges();
 						// 加载预览
 						CreateTexturePreview(fileName);
 
@@ -225,6 +225,7 @@ namespace ThroughScope
 		// 如果设置有变化，标记为未保存
 		if (settingsChanged) {
 			m_HasUnsavedChanges = true;
+			m_Manager->MarkUnsavedChanges();
 		}
 
 		ImGui::Spacing();
@@ -234,6 +235,7 @@ namespace ThroughScope
 			m_CurrentSettings.offsetX = 0.5f;
 			m_CurrentSettings.offsetY = 0.5f;
 			m_HasUnsavedChanges = true;
+			m_Manager->MarkUnsavedChanges();
 		}
 		RenderHelpTooltip("Reset position to screen center");
 	}
@@ -296,6 +298,7 @@ namespace ThroughScope
 		if (ImGui::Button("Save Settings", ImVec2(-1, 0))) {
 			SaveCurrentSettings();
 			m_HasUnsavedChanges = false;
+			m_Manager->MarkSaved();
 			m_Manager->SetDebugText("Reticle settings saved");
 		}
 		RenderHelpTooltip("Save current settings to configuration file");

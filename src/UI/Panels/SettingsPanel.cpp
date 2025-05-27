@@ -32,12 +32,12 @@ namespace ThroughScope
 				ImGui::EndTabItem();
 			}
 
-			if (m_ShowAdvancedSettings) {
-				if (ImGui::BeginTabItem("Advanced")) {
-					RenderAdvancedSettings();
-					ImGui::EndTabItem();
-				}
-			}
+			//if (m_ShowAdvancedSettings) {
+			//	if (ImGui::BeginTabItem("Advanced")) {
+			//		RenderAdvancedSettings();
+			//		ImGui::EndTabItem();
+			//	}
+			//}
 
 			ImGui::EndTabBar();
 		}

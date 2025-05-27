@@ -406,6 +406,7 @@ namespace ThroughScope
 				if (dataPersistence->SaveConfig(modifiedConfig)) {
 					m_Manager->SetDebugText("Settings saved successfully!");
 					dataPersistence->LoadAllConfigs();
+					m_Manager->MarkSaved();
 				} else {
 					m_Manager->SetDebugText("Failed to save settings!");
 				}

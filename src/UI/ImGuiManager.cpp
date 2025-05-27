@@ -223,7 +223,7 @@ namespace ThroughScope
 
 		// 设置窗口标志
 		ImGuiWindowFlags windowFlags = ImGuiWindowFlags_None;
-		if (m_HasUnsavedChanges) {
+		if (s_unsavedChangeCount > 0) {
 			windowFlags |= ImGuiWindowFlags_UnsavedDocument;
 		}
 
@@ -287,7 +287,7 @@ namespace ThroughScope
 		ImGui::NextColumn();
 
 		// 右侧：保存状态
-		if (m_HasUnsavedChanges) {
+		if (s_unsavedChangeCount > 0) {
 			ImGui::TextColored(m_WarningColor, "● Unsaved Changes");
 		} else {
 			ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "○ All Saved");
