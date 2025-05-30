@@ -11,6 +11,7 @@ set(SOURCES
 	src/UI/Panels/SettingsPanel.cpp
 	src/UI/Panels/ReticlePanel.cpp
 	src/UI/Panels/ZoomDataPanel.cpp
+	src/UI/Localization/LocalizationManager.cpp
 	src/EventHandler.cpp
 	src/DataPersistence.cpp
 	src/DDSTextureLoader11.cpp

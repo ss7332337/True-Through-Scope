@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <vector>
 #include <string>
+#include "../Localization/LocalizationManager.h"
 
 namespace ThroughScope
 {
@@ -17,7 +18,7 @@ namespace ThroughScope
         void Render() override;
         void Update() override;
         bool Initialize() override;
-        const char* GetPanelName() const override { return "Reticle Settings"; }
+        const char* GetPanelName() const override { return LOC("ui.menu.reticle"); }
         bool ShouldShow() const override;
 		bool GetSaved() const override { return isSaved; }
         

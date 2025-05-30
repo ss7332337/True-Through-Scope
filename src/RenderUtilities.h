@@ -46,6 +46,13 @@ namespace ThroughScope
         static void SetScopeBSTexture(RE::BSGraphics::Texture* texture) { s_ScopeBSTexture = texture; }
         static RE::NiTexture* GetScopeNiTexture() { return s_ScopeNiTexture; }
         static void SetScopeNiTexture(RE::NiTexture* texture) { s_ScopeNiTexture = texture; }
+		static float GetScreenWidth() { return s_ScreenWidth; }
+		static float GetScreenHeight() { return s_ScreenHeight; }
+
+	public:
+	/*	static bool isInMainRenderSetup;
+		static bool isInDoZPrePass;
+		static bool isInDoZPrePass;*/
 
     private:
         static ID3D11Texture2D* s_FirstPassColorTexture;
@@ -61,5 +68,7 @@ namespace ThroughScope
         static bool s_FirstPassComplete;
         static bool s_SecondPassComplete;
 		static bool s_Render_PreUIComplete;
+		static int s_ScreenWidth;
+		static int s_ScreenHeight;
     };
 }

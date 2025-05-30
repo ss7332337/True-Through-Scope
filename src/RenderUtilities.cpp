@@ -15,11 +15,14 @@ namespace ThroughScope
     bool RenderUtilities::s_FirstPassComplete = false;
     bool RenderUtilities::s_SecondPassComplete = false;
 	bool RenderUtilities::s_Render_PreUIComplete = false;
+	int RenderUtilities::s_ScreenWidth = 1920;
+	int RenderUtilities::s_ScreenHeight = 1080;
 
 
     bool RenderUtilities::Initialize()
     {
         bool result = CreateTemporaryTextures();
+
         if (!result) {
             logger::error("Failed to create temporary textures");
             return false;
@@ -39,6 +42,8 @@ namespace ThroughScope
         ID3D11Device* device = (ID3D11Device*)rendererData->device;
 
         // Get screen dimensions
+
+
         unsigned int width = rendererData->renderWindow[0].windowWidth;
         unsigned int height = rendererData->renderWindow[0].windowHeight;
 

@@ -158,6 +158,7 @@ target_include_directories(
 		${CMAKE_CURRENT_SOURCE_DIR}/src
 		${CMAKE_CURRENT_SOURCE_DIR}/include
 		${CMAKE_CURRENT_SOURCE_DIR}/src/UI
+		${CMAKE_CURRENT_SOURCE_DIR}/src/UI/Localization
 		${CMAKE_CURRENT_SOURCE_DIR}/src/UI/Panels
 		#${IMGUI_INCLUDE_DIRS}
 
@@ -189,7 +190,7 @@ if (MSVC)
 		${PROJECT_NAME}
 		PRIVATE
 			/sdl	# Enable Additional Security Checks
-			#/utf-8	# Set Source and Executable character sets to UTF-8
+			/utf-8	# Set Source and Executable character sets to UTF-8
 			/Zi	# Debug Information Format
 
 			/permissive-	# Standards conformance
@@ -220,6 +221,8 @@ add_custom_command(
 		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:${PROJECT_NAME}> "${Fallout4Path}/Data/F4SE/Plugins/"
 		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> "G:/Games/FO4_SO/mods/Fake Through Scope testing/F4SE/Plugins/"
 		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:${PROJECT_NAME}> "G:/Games/FO4_SO/mods/Fake Through Scope testing/F4SE/Plugins/"
+		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> "G:/Games/Fallout 4 ori/Fallout 4/Mo2/mods/TTS/F4SE/Plugins/"
+		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:${PROJECT_NAME}> "G:/Games/Fallout 4 ori/Fallout 4/Mo2/mods/TTS/F4SE/Plugins/"
 	)
 
 # ---- Build artifacts ----

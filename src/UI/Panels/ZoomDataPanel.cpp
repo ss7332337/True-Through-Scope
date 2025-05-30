@@ -51,22 +51,22 @@ namespace ThroughScope
     {
         auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 
-        RenderSectionHeader("Current Weapon Information");
+        RenderSectionHeader(LOC("zoom.weapon_info"));
 
         if (!weaponInfo.weapon || !weaponInfo.instanceData) {
-            ImGui::TextColored(m_WarningColor, "No valid weapon equipped");
+            ImGui::TextColored(m_WarningColor, LOC("zoom.no_weapon"));
             return;
         }
 
-        ImGui::Text("Weapon: [%08X] %s", weaponInfo.weaponFormID, weaponInfo.weaponModName.c_str());
+        ImGui::Text(LOC("zoom.weapon_label"), weaponInfo.weaponFormID, weaponInfo.weaponModName.c_str());
 
         if (weaponInfo.selectedModForm) {
-            ImGui::Text("Config Source: [%08X] %s (%s)",
+            ImGui::Text(LOC("zoom.config_source_mod"),
                 weaponInfo.selectedModForm->GetLocalFormID(),
                 weaponInfo.selectedModForm->GetFile()->filename,
                 weaponInfo.configSource.c_str());
         } else if (weaponInfo.currentConfig) {
-            ImGui::Text("Config Source: Weapon (%s)", weaponInfo.configSource.c_str());
+            ImGui::Text(LOC("zoom.config_source_weapon"), weaponInfo.configSource.c_str());
         }
 
         ImGui::Spacing();
@@ -74,18 +74,18 @@ namespace ThroughScope
 
     void ZoomDataPanel::RenderZoomDataControls()
     {
-        RenderSectionHeader("Zoom Data Settings");
+        RenderSectionHeader(LOC("zoom.settings_title"));
 
         // FOV Multiplier
-        ImGui::SliderFloat("FOV Multiplier", &m_CurrentValues.fovMult, 0.1f, 5.0f, "%.2f");
-        RenderHelpTooltip("Multiplier applied to the field of view when zooming");
+        ImGui::SliderFloat(LOC("zoom.fov_multiplier"), &m_CurrentValues.fovMult, 0.1f, 5.0f, "%.2f");
+        RenderHelpTooltip(LOC("tooltip.fov_multiplier"));
 
         // Position Offsets
-        if (ImGui::CollapsingHeader("Position Offsets", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader(LOC("zoom.position_offsets"), ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Columns(2, "OffsetColumns", false);
 
             // Left column - Sliders
-            ImGui::Text("Precise Adjustment:");
+            ImGui::Text(LOC("zoom.precise_adjustment"));
             ImGui::SetNextItemWidth(-1);
             ImGui::SliderFloat("##X", &m_CurrentValues.offsetX, -50.0f, 50.0f, "X: %.3f");
             ImGui::SetNextItemWidth(-1);
@@ -96,7 +96,7 @@ namespace ThroughScope
             ImGui::NextColumn();
 
             // Right column - Fine adjustment buttons
-            ImGui::Text("Fine Tuning:");
+            ImGui::Text(LOC("zoom.fine_tuning"));
             if (ImGui::Button("X-0.1", ImVec2(50, 0)))
                 m_CurrentValues.offsetX -= 0.1f;
             ImGui::SameLine();
@@ -124,13 +124,13 @@ namespace ThroughScope
         ImGui::Spacing();
         ImGui::Separator();
 
-        if (ImGui::Button("Reset Settings", ImVec2(120, 0))) {
+        if (ImGui::Button(LOC("zoom.reset_settings"), ImVec2(120, 0))) {
             ResetAllSettings();
         }
 
         ImGui::SameLine();
 
-        if (ImGui::Button("Save Settings", ImVec2(120, 0))) {
+        if (ImGui::Button(LOC("button.save"), ImVec2(120, 0))) {
             auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
             if (weaponInfo.currentConfig) {
                 DataPersistence::ScopeConfig modifiedConfig = *weaponInfo.currentConfig;
@@ -138,10 +138,10 @@ namespace ThroughScope
 
                 auto dataPersistence = DataPersistence::GetSingleton();
                 if (dataPersistence->SaveConfig(modifiedConfig)) {
-                    m_Manager->SetDebugText("Zoom data settings saved successfully!");
+                    m_Manager->SetDebugText(LOC("zoom.settings_saved"));
                     dataPersistence->LoadAllConfigs();
                 } else {
-                    m_Manager->SetDebugText("Failed to save zoom data settings!");
+                    m_Manager->SetDebugText(LOC("zoom.settings_failed"));
                 }
             }
 
@@ -185,7 +185,7 @@ namespace ThroughScope
 
         ApplyAllSettings();
         UpdatePreviousValues();
-        m_Manager->SetDebugText("Zoom data settings reset to defaults!");
+        m_Manager->SetDebugText(LOC("zoom.settings_reset"));
     }
 
     bool ZoomDataPanel::HasChanges() const
@@ -206,7 +206,7 @@ namespace ThroughScope
     {
 		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 		if (!weaponInfo.currentConfig) {
-			m_Manager->SetDebugText("No configuration loaded to apply zoom data settings.");
+			m_Manager->SetDebugText(LOC("zoom.no_config_loaded"));
 			return;
 		}
 

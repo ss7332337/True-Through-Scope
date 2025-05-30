@@ -2,6 +2,7 @@
 
 #include "BasePanelInterface.h"
 #include <filesystem>
+#include "../Localization/LocalizationManager.h"
 
 namespace ThroughScope
 {
@@ -15,7 +16,7 @@ namespace ThroughScope
         void Render() override;
         void Update() override;
         bool Initialize() override;
-        const char* GetPanelName() const override { return "Scope Shape"; }
+        const char* GetPanelName() const override { return LOC("ui.menu.models"); }
         bool ShouldShow() const override;
 		bool GetSaved() const override { return isSaved; }
 
@@ -46,7 +47,6 @@ namespace ThroughScope
         void RenderCurrentModelInfo();
         void RenderModelSelection();
         void RenderQuickActions();
-        void RenderModelPreview();
         
         // 模型操作
         bool SwitchToModel(const std::string& modelName);

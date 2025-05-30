@@ -36,6 +36,13 @@ namespace ThroughScope
     bool ScopeCamera::s_OriginalRenderDecals = false;
     bool ScopeCamera::s_IsRenderingForScope = false;
 
+	bool ScopeCamera::isFirstSpawnNode = false;
+	bool ScopeCamera::isDelayStarted = false;
+	bool ScopeCamera::isFirstScopeRender = true;
+
+	int ScopeCamera::s_enableThermalVision = 0;
+	int ScopeCamera::s_enableNightVision = 0;
+
     bool ScopeCamera::Initialize()
     {
         CreateScopeCamera();
@@ -91,6 +98,38 @@ namespace ThroughScope
         }
     }
 
+
+	void ScopeCamera::CleanupScopeResources()
+	{
+		auto playerCharacter = RE::PlayerCharacter::GetSingleton();
+		if (!playerCharacter || !playerCharacter->Get3D()) {
+			return;
+		}
+
+		auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
+		if (!weaponNode || !weaponNode->IsNode()) {
+			return;
+		}
+
+		auto weaponNiNode = static_cast<RE::NiNode*>(weaponNode);
+		auto existingTTSNode = weaponNiNode->GetObjectByName("TTSNode");
+
+		if (existingTTSNode) {
+			logger::info("Removing existing TTSNode");
+			weaponNiNode->DetachChild(existingTTSNode);
+
+			// 更新节点
+			RE::NiUpdateData updateData{};
+			updateData.camera = ScopeCamera::GetScopeCamera();
+			if (updateData.camera) {
+				weaponNiNode->Update(updateData);
+			}
+
+			logger::info("Existing TTSNode removed");
+		}
+		logger::info("Scope resources cleaned up");
+	}
+
     void ScopeCamera::ResetCamera()
     {
         if (!s_ScopeCamera)
@@ -106,22 +145,43 @@ namespace ThroughScope
         logger::info("Camera position/rotation reset");
     }
 
-	void ScopeCamera::ApplyScopeSettings(const DataPersistence::ScopeConfig& config)
+	void ScopeCamera::ApplyScopeSettings(const DataPersistence::ScopeConfig* config)
 	{
-		// 更新D3DHooks中的瞄准镜设置
-		D3DHooks::UpdateScopeSettings(
-			config.parallaxSettings.relativeFogRadius,
-			config.parallaxSettings.scopeSwayAmount,
-			config.parallaxSettings.maxTravel,
-			config.parallaxSettings.radius);
+		if (!config) return;
+
+		// 应用视差设置
+		D3DHooks::UpdateScopeParallaxSettings(
+			config->parallaxSettings.relativeFogRadius,
+			config->parallaxSettings.scopeSwayAmount,
+			config->parallaxSettings.maxTravel,
+			config->parallaxSettings.radius
+		);
+
+		// 应用夜视效果设置
+		D3DHooks::UpdateNightVisionSettings(
+			config->scopeSettings.nightVisionIntensity,
+			config->scopeSettings.nightVisionNoiseScale,
+			config->scopeSettings.nightVisionNoiseAmount,
+			config->scopeSettings.nightVisionGreenTint,
+			s_enableNightVision
+		);
+
+		// 应用热成像效果设置
+		D3DHooks::UpdateThermalVisionSettings(
+			config->scopeSettings.thermalIntensity,
+			config->scopeSettings.thermalThreshold,
+			config->scopeSettings.thermalContrast,
+			config->scopeSettings.thermalNoiseAmount,
+			s_enableThermalVision
+		);
 
 		// 设置摄像头FOV
-		ScopeCamera::SetFOVMinMax(config.scopeSettings.minFOV, config.scopeSettings.maxFOV);
+		ScopeCamera::SetFOVMinMax(config->scopeSettings.minFOV, config->scopeSettings.maxFOV);
 
 		logger::info("Applied scope settings - FOV: {}-{}, Parallax: relativeFogRadius={:.3f}, scopeSwayAmount={:.3f}, maxTravel={:.3f}, radius={:.3f}",
-			config.scopeSettings.minFOV, config.scopeSettings.maxFOV,
-			config.parallaxSettings.relativeFogRadius, config.parallaxSettings.scopeSwayAmount,
-			config.parallaxSettings.maxTravel, config.parallaxSettings.radius);
+			config->scopeSettings.minFOV, config->scopeSettings.maxFOV,
+			config->parallaxSettings.relativeFogRadius, config->parallaxSettings.scopeSwayAmount,
+			config->parallaxSettings.maxTravel, config->parallaxSettings.radius);
 	}
 
 	void ScopeCamera::ApplyScopeTransform(RE::NiNode* scopeNode, const DataPersistence::CameraAdjustments& adjustments)
@@ -203,7 +263,7 @@ namespace ThroughScope
 		}
 
 		// 2. 应用瞄准镜设置到D3DHooks
-		ApplyScopeSettings(config);
+		ApplyScopeSettings(&config);
 		std::string reticleFullPath = "Data\\Textures\\TTS\\Reticle\\";
 		if (!config.reticleSettings.customReticlePath.empty())
 		{

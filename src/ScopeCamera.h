@@ -22,10 +22,10 @@ namespace ThroughScope
         static void SetScopeCamera(RE::NiCamera* camera) { s_ScopeCamera = camera; }
         
 		static void ApplyScopeTransform(RE::NiNode* scopeNode, const DataPersistence::CameraAdjustments& adjustments);
-		static void ApplyScopeSettings(const DataPersistence::ScopeConfig& config);
+		static void ApplyScopeSettings(const DataPersistence::ScopeConfig* config);
 		static void SetupScopeForWeapon(const DataPersistence::WeaponInfo& weaponInfo);
 		static int GetScopeNodeIndexCount();
-        
+		static void CleanupScopeResources();
         // Get target FOV
         static float GetTargetFOV() { return s_TargetFOV; }
 		static void SetTargetFOV(float fov)
@@ -48,6 +48,12 @@ namespace ThroughScope
 
 		static RE::TESFormID s_EquippedWeaponFormID;
 		static RE::NiNode* s_CurrentScopeNode;
+
+		static bool isFirstSpawnNode;
+		static bool isDelayStarted;
+		static bool isFirstScopeRender;
+		static int s_enableThermalVision;
+		static int s_enableNightVision;
         
     private:
         // Camera objects
@@ -64,7 +70,6 @@ namespace ThroughScope
         static bool s_OriginalRenderDecals;
         static bool s_IsRenderingForScope;
 
-		
 		
 		static RE::BGSKeyword* an_45;
 		static RE::BGSKeyword* AnimsXM2010_scopeKH45;

@@ -57,6 +57,18 @@ namespace ThroughScope
 			int maxFOV = 90;
 			bool nightVision = false;
 			bool thermalVision = false;
+
+			// 夜视效果参数
+			float nightVisionIntensity = 1.0f;
+			float nightVisionNoiseScale = 0.05f;
+			float nightVisionNoiseAmount = 0.05f;
+			float nightVisionGreenTint = 1.2f;
+
+			// 热成像效果参数
+			float thermalIntensity = 1.0f;
+			float thermalThreshold = 0.5f;
+			float thermalContrast = 1.2f;
+			float thermalNoiseAmount = 0.03f;
 		};
 
 		struct ReticleSettings
@@ -92,13 +104,16 @@ namespace ThroughScope
 
 		struct GlobalSettings
 		{
-			static constexpr std::array<int, 3> DEFAULT_MENU_KEYS = { 123, 0, 0 };          // F12
+			static constexpr std::array<int, 3> DEFAULT_MENU_KEYS = { 113, 0, 0 };          // 2
 			static constexpr std::array<int, 3> DEFAULT_NIGHTVISION_KEYS = { 78, 0, 0 };    // N
 			static constexpr std::array<int, 3> DEFAULT_THERMALVISION_KEYS = { 84, 0, 0 };  // T
 
 			std::array<int, 3> menuKeyBindings = DEFAULT_MENU_KEYS;
 			std::array<int, 3> nightVisionKeyBindings = DEFAULT_NIGHTVISION_KEYS;
 			std::array<int, 3> thermalVisionKeyBindings = DEFAULT_THERMALVISION_KEYS;
+			
+			// 语言设置
+			int selectedLanguage = 0;  // 0 = English (Language::English)
 		};
 
 		struct WeaponInfo

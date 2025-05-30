@@ -66,11 +66,11 @@ namespace ThroughScope
 
 	void ReticlePanel::RenderCurrentReticleInfo()
 	{
-		RenderSectionHeader("Current Reticle Information");
+		RenderSectionHeader(LOC("reticle.current_info"));
 
 		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 		if (!weaponInfo.currentConfig) {
-			ImGui::TextColored(m_WarningColor, "No configuration available");
+			ImGui::TextColored(m_WarningColor, LOC("reticle.no_config_available"));
 			return;
 		}
 
@@ -78,32 +78,32 @@ namespace ThroughScope
 
 		// 显示当前纹理信息
 		if (!m_CurrentSettings.texturePath.empty()) {
-			ImGui::TextColored(m_SuccessColor, "Texture: %s", m_CurrentSettings.texturePath.c_str());
+			ImGui::TextColored(m_SuccessColor, LOC("reticle.current_texture"), m_CurrentSettings.texturePath.c_str());
 
 			// 显示当前设置
-			ImGui::Text("Scale: %.2f", m_CurrentSettings.scale);
-			ImGui::Text("Offset: [%.3f, %.3f]", m_CurrentSettings.offsetX, m_CurrentSettings.offsetY);
+			ImGui::Text(LOC("reticle.current_scale"), m_CurrentSettings.scale);
+			ImGui::Text(LOC("reticle.current_offset"), m_CurrentSettings.offsetX, m_CurrentSettings.offsetY);
 
 			// 显示文件状态
 			std::string fullPath = GetFullTexturePath(m_CurrentSettings.texturePath);
 			if (std::filesystem::exists(fullPath)) {
-				ImGui::Text("Status: ✓ File Found");
+				ImGui::Text(LOC("reticle.status_found"));
 				try {
 					auto fileSize = std::filesystem::file_size(fullPath);
-					ImGui::Text("Size: %.2f KB", fileSize / 1024.0f);
+					ImGui::Text(LOC("reticle.file_size"), fileSize / 1024.0f);
 				} catch (...) {
-					ImGui::TextColored(m_WarningColor, "Size: Unknown");
+					ImGui::TextColored(m_WarningColor, LOC("reticle.size_unknown"));
 				}
 			} else {
-				ImGui::TextColored(m_ErrorColor, "Status: ✗ File Not Found");
+				ImGui::TextColored(m_ErrorColor, LOC("reticle.status_not_found"));
 			}
 		} else {
-			ImGui::TextColored(m_WarningColor, "No reticle texture selected");
+			ImGui::TextColored(m_WarningColor, LOC("reticle.no_texture_selected"));
 		}
 
 		// 显示是否有未保存的更改
 		if (!isSaved) {
-			ImGui::TextColored(m_WarningColor, "● Unsaved Changes");
+			ImGui::TextColored(m_WarningColor, LOC("status.unsaved_changes"));
 		}
 
 		ImGui::EndGroup();
@@ -111,11 +111,11 @@ namespace ThroughScope
 
 	void ReticlePanel::RenderTextureSelection()
 	{
-		RenderSectionHeader("Texture Selection");
+		RenderSectionHeader(LOC("reticle.texture_selection"));
 
 		if (m_AvailableTextures.empty()) {
-			ImGui::TextColored(m_WarningColor, "No textures found in TTS directory");
-			if (ImGui::Button("Scan for Textures")) {
+			ImGui::TextColored(m_WarningColor, LOC("reticle.no_textures_found"));
+			if (ImGui::Button(LOC("reticle.scan_textures"))) {
 				RefreshReticleTextures();
 			}
 			return;
@@ -125,9 +125,9 @@ namespace ThroughScope
 
 		// 搜索过滤器
 		ImGui::SetNextItemWidth(-100);
-		ImGui::InputTextWithHint("##Search", "Search textures...", &m_SearchFilter);
+		ImGui::InputTextWithHint("##Search", LOC("reticle.search_placeholder"), &m_SearchFilter);
 		ImGui::SameLine();
-		if (ImGui::Button("Clear")) {
+		if (ImGui::Button(LOC("button.clear"))) {
 			m_SearchFilter.clear();
 		}
 
@@ -135,7 +135,7 @@ namespace ThroughScope
 		ImGui::Spacing();
 		std::string previewText = currentTextureIndex >= 0 ?
 		                              GetTextureDisplayName(m_AvailableTextures[currentTextureIndex], true) :
-		                              "Select Texture...";
+		                              LOC("reticle.select_texture");
 
 		ImGui::SetNextItemWidth(-100);
 		if (ImGui::BeginCombo("##TextureSelect", previewText.c_str())) {
@@ -166,7 +166,7 @@ namespace ThroughScope
 						// 加载预览
 						CreateTexturePreview(fileName);
 
-						m_Manager->SetDebugText(fmt::format("Texture selected: {}", fileName).c_str());
+						m_Manager->SetDebugText(fmt::format(fmt::runtime(LOC("reticle.texture_selected")), fileName).c_str());
 					}
 				}
 
@@ -176,51 +176,51 @@ namespace ThroughScope
 
 				// 悬停预览
 				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("Click to select this texture\nFile: %s", fileName.c_str());
+					ImGui::SetTooltip(LOC("tooltip.click_to_select_texture"), fileName.c_str());
 				}
 			}
 			ImGui::EndCombo();
 		}
 
 		ImGui::SameLine();
-		if (ImGui::Button("Refresh")) {
+		if (ImGui::Button(LOC("button.refresh"))) {
 			RefreshReticleTextures();
 		}
 	}
 
 	void ReticlePanel::RenderReticleAdjustments()
 	{
-		RenderSectionHeader("Reticle Adjustments");
+		RenderSectionHeader(LOC("reticle.adjustments"));
 
 		bool settingsChanged = false;
 
 		// 缩放调整
-		ImGui::Text("Scale");
+		ImGui::Text(LOC("reticle.scale"));
 		ImGui::SetNextItemWidth(-1);
 		if (ImGui::SliderFloat("##Scale", &m_CurrentSettings.scale, MIN_SCALE, MAX_SCALE, "%.4f")) {
 			settingsChanged = true;
 		}
-		RenderHelpTooltip("Adjust the size of the reticle (0.1 = very small, 1 = very large)");
+		RenderHelpTooltip(LOC("tooltip.reticle_scale"));
 
 		ImGui::Spacing();
 
 		// X偏移调整
-		ImGui::Text("Horizontal Offset");
+		ImGui::Text(LOC("reticle.horizontal_offset"));
 		ImGui::SetNextItemWidth(-1);
 		if (ImGui::SliderFloat("##OffsetX", &m_CurrentSettings.offsetX, MIN_OFFSET, MAX_OFFSET, "%.3f")) {
 			settingsChanged = true;
 		}
-		RenderHelpTooltip("Horizontal position of the reticle (0.0 = left, 0.5 = center, 1.0 = right)");
+		RenderHelpTooltip(LOC("tooltip.horizontal_offset"));
 
 		ImGui::Spacing();
 
 		// Y偏移调整
-		ImGui::Text("Vertical Offset");
+		ImGui::Text(LOC("reticle.vertical_offset"));
 		ImGui::SetNextItemWidth(-1);
 		if (ImGui::SliderFloat("##OffsetY", &m_CurrentSettings.offsetY, MIN_OFFSET, MAX_OFFSET, "%.3f")) {
 			settingsChanged = true;
 		}
-		RenderHelpTooltip("Vertical position of the reticle (0.0 = top, 0.5 = center, 1.0 = bottom)");
+		RenderHelpTooltip(LOC("tooltip.vertical_offset"));
 
 		// 如果设置有变化，标记为未保存
 		if (settingsChanged) {
@@ -230,17 +230,17 @@ namespace ThroughScope
 		ImGui::Spacing();
 
 		// 快速重置按钮
-		if (ImGui::Button("Reset to Center", ImVec2(-1, 0))) {
+		if (ImGui::Button(LOC("reticle.reset_to_center"), ImVec2(-1, 0))) {
 			m_CurrentSettings.offsetX = 0.5f;
 			m_CurrentSettings.offsetY = 0.5f;
 			isSaved = false;
 		}
-		RenderHelpTooltip("Reset position to screen center");
+		RenderHelpTooltip(LOC("tooltip.reset_to_center"));
 	}
 
 	void ReticlePanel::RenderPreviewSection()
 	{
-		if (!ImGui::CollapsingHeader("Texture Preview", ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (!ImGui::CollapsingHeader(LOC("reticle.texture_preview"), ImGuiTreeNodeFlags_DefaultOpen)) {
 			return;
 		}
 
@@ -267,11 +267,11 @@ namespace ThroughScope
 			ImGui::Image((ImTextureID)m_PreviewTextureID, previewSize);
 
 			// 显示纹理信息
-			ImGui::Text("Dimensions: %dx%d", m_PreviewWidth, m_PreviewHeight);
-			ImGui::Text("Aspect Ratio: %.3f", aspectRatio);
+			ImGui::Text(LOC("reticle.dimensions"), m_PreviewWidth, m_PreviewHeight);
+			ImGui::Text(LOC("reticle.aspect_ratio"), aspectRatio);
 		} else {
-			ImGui::TextColored(m_WarningColor, "No preview available");
-			if (ImGui::Button("Load Preview")) {
+			ImGui::TextColored(m_WarningColor, LOC("reticle.no_preview"));
+			if (ImGui::Button(LOC("reticle.load_preview"))) {
 				CreateTexturePreview(m_CurrentSettings.texturePath);
 			}
 		}
@@ -279,54 +279,54 @@ namespace ThroughScope
 
 	void ReticlePanel::RenderQuickActions()
 	{
-		RenderSectionHeader("Quick Actions");
+		RenderSectionHeader(LOC("reticle.quick_actions"));
 
 		// 由于实时更新，Apply按钮主要用于加载纹理（如果路径改变了）
-		if (ImGui::Button("Reload Texture", ImVec2(-1, 0))) {
+		if (ImGui::Button(LOC("reticle.reload_texture"), ImVec2(-1, 0))) {
 			if (LoadTexture(m_CurrentSettings.texturePath)) {
 				CreateTexturePreview(m_CurrentSettings.texturePath);
-				m_Manager->SetDebugText("Reticle texture reloaded successfully");
+				m_Manager->SetDebugText(LOC("reticle.reload_success"));
 			} else {
-				m_Manager->ShowErrorDialog("Reload Error", "Failed to reload reticle texture.");
+				m_Manager->ShowErrorDialog(LOC("reticle.reload_error_title"), LOC("reticle.reload_error_desc"));
 			}
 		}
-		RenderHelpTooltip("Reload the current texture file");
+		RenderHelpTooltip(LOC("tooltip.reload_texture"));
 
 		// 保存设置
-		if (ImGui::Button("Save Settings", ImVec2(-1, 0))) {
+		if (ImGui::Button(LOC("button.save"), ImVec2(-1, 0))) {
 			SaveCurrentSettings();
 			isSaved = true;
-			m_Manager->SetDebugText("Reticle settings saved");
+			m_Manager->SetDebugText(LOC("reticle.settings_saved"));
 		}
-		RenderHelpTooltip("Save current settings to configuration file");
+		RenderHelpTooltip(LOC("tooltip.save_settings"));
 
 		// 重置为默认值
-		if (ImGui::Button("Reset to Defaults", ImVec2(-1, 0))) {
+		if (ImGui::Button(LOC("reticle.reset_defaults"), ImVec2(-1, 0))) {
 			if (ImGui::GetIO().KeyCtrl) {
 				ResetToDefaults();
 				isSaved = false;
-				m_Manager->SetDebugText("Settings reset to defaults");
+				m_Manager->SetDebugText(LOC("reticle.reset_success"));
 			} else {
-				m_Manager->SetDebugText("Hold Ctrl and click to reset to defaults");
+				m_Manager->SetDebugText(LOC("reticle.reset_instruction"));
 			}
 		}
-		RenderHelpTooltip("Hold Ctrl and click to reset all settings to defaults");
+		RenderHelpTooltip(LOC("tooltip.reset_defaults"));
 
 		ImGui::Spacing();
 
 		// 显示实时更新状态
 		if (!isSaved) {
-			ImGui::TextColored(m_WarningColor, "● Changes applied in real-time");
-			ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "  (Click 'Save Settings' to persist)");
+			ImGui::TextColored(m_WarningColor, LOC("reticle.realtime_changes"));
+			ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), LOC("reticle.save_instruction"));
 		} else {
-			ImGui::TextColored(m_SuccessColor, "✓ All settings saved");
+			ImGui::TextColored(m_SuccessColor, LOC("reticle.all_saved"));
 		}
 
 		ImGui::Spacing();
 
 		// 预览控制
-		ImGui::Checkbox("Show Texture Preview", &m_ShowPreview);
-		RenderHelpTooltip("Show texture preview and information");
+		ImGui::Checkbox(LOC("reticle.show_preview"), &m_ShowPreview);
+		RenderHelpTooltip(LOC("tooltip.show_preview"));
 	}
 
 	bool ReticlePanel::LoadTexture(const std::string& texturePath)
@@ -514,7 +514,7 @@ namespace ThroughScope
 			std::filesystem::path texturePath = std::filesystem::current_path() / "Data" / "Textures" / "TTS" / "Reticle";
 
 			if (!std::filesystem::exists(texturePath)) {
-				m_Manager->SetDebugText("TTS texture directory not found!");
+				m_Manager->SetDebugText(LOC("reticle.directory_not_found"));
 				return;
 			}
 
@@ -529,10 +529,10 @@ namespace ThroughScope
 			std::sort(m_AvailableTextures.begin(), m_AvailableTextures.end());
 
 			m_TexturesScanned = true;
-			m_Manager->SetDebugText(fmt::format("Found {} texture files", m_AvailableTextures.size()).c_str());
+			m_Manager->SetDebugText(fmt::format(fmt::runtime(LOC("reticle.textures_found")), m_AvailableTextures.size()).c_str());
 
 		} catch (const std::exception& e) {
-			m_Manager->SetDebugText(fmt::format("Error scanning texture files: {}", e.what()).c_str());
+			m_Manager->SetDebugText(fmt::format(fmt::runtime(LOC("reticle.error_scanning")), e.what()).c_str());
 		}
 	}
 
@@ -561,7 +561,7 @@ namespace ThroughScope
 
 	std::string ReticlePanel::GetTextureDisplayName(const std::string& fileName, bool isCurrent) const
 	{
-		return isCurrent ? fileName + " (Current)" : fileName;
+		return isCurrent ? fileName + " " + LOC("reticle.current_suffix") : fileName;
 	}
 
 	std::string ReticlePanel::GetFullTexturePath(const std::string& relativePath) const

@@ -39,6 +39,8 @@ namespace ThroughScope
 		RenderAdjustmentControls();
 		RenderScopeSettings();
 		RenderParallaxSettings();
+		RenderNightVisionSettings();
+		RenderThermalVisionSettings();
 		RenderActionButtons();
 	}
 
@@ -58,41 +60,39 @@ namespace ThroughScope
 	{
 		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 
-		RenderSectionHeader("Current Weapon Information");
+		RenderSectionHeader(LOC("camera.weapon_info"));
 
 		if (!weaponInfo.weapon || !weaponInfo.instanceData) {
-			ImGui::TextColored(m_WarningColor, "No valid weapon equipped");
-			ImGui::TextWrapped("Please equip a weapon with scope capabilities to configure settings.");
+			ImGui::TextColored(m_WarningColor, LOC("camera.no_weapon"));
+			ImGui::TextWrapped(LOC("camera.equip_weapon"));
 			return;
 		}
 
-		ImGui::Text("Weapon: [%08X] %s", weaponInfo.weaponFormID, weaponInfo.weaponModName.c_str());
+		ImGui::Text(LOCF("camera.weapon_label", weaponInfo.weaponFormID, weaponInfo.weaponModName.c_str()));
 
 		if (weaponInfo.selectedModForm) {
-			ImGui::Text("Config Source: [%08X] %s (%s)",
+			ImGui::Text(LOCF("camera.config_source",
 				weaponInfo.selectedModForm->GetLocalFormID(),
 				weaponInfo.selectedModForm->GetFile()->filename,
-				weaponInfo.configSource.c_str());
+				weaponInfo.configSource.c_str()));
 		} else if (weaponInfo.currentConfig) {
-			ImGui::Text("Config Source: Weapon (%s)", weaponInfo.configSource.c_str());
+			ImGui::Text(LOCF("camera.config_source", 0, "Weapon", weaponInfo.configSource.c_str()));
 		}
 
 		if (weaponInfo.currentConfig && !weaponInfo.currentConfig->modelName.empty()) {
-			ImGui::Text("Current Model: %s", weaponInfo.currentConfig->modelName.c_str());
+			ImGui::Text(LOCF("camera.current_model", weaponInfo.currentConfig->modelName.c_str()));
 
 			ImGui::SameLine();
-			if (ImGui::Button("Reload TTSNode")) {
+			if (ImGui::Button(LOC("camera.reload_tts"))) {
 				if (CreateTTSNodeFromConfig(weaponInfo.currentConfig)) {
-					m_Manager->SetDebugText(fmt::format("TTSNode reloaded from: {}",
-						weaponInfo.currentConfig->modelName)
-							.c_str());
+					m_Manager->SetDebugText(LOCF("status.tts_reloaded",
+						weaponInfo.currentConfig->modelName.c_str()));
 				} else {
-					m_Manager->SetDebugText(fmt::format("Failed to reload TTSNode from: {}",
-						weaponInfo.currentConfig->modelName)
-							.c_str());
+					m_Manager->SetDebugText(LOCF("status.tts_reload_failed",
+						weaponInfo.currentConfig->modelName.c_str()));
 				}
 			}
-			RenderHelpTooltip("Click to recreate the TTSNode from the saved model file");
+			RenderHelpTooltip(LOC("camera.reload_tooltip"));
 		}
 
 		ImGui::Spacing();
@@ -103,14 +103,14 @@ namespace ThroughScope
 		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 
 		ImGui::Separator();
-		ImGui::TextColored(m_WarningColor, "No configuration found for this weapon");
-		ImGui::TextWrapped("Create a new configuration to start customizing your scope settings.");
+		ImGui::TextColored(m_WarningColor, LOC("camera.config.no_config"));
+		ImGui::TextWrapped(LOC("camera.config.create_desc"));
 
 		ScanForNIFFiles();
 
 		// Configuration target selection
 		ImGui::Spacing();
-		ImGui::TextColored(m_AccentColor, "Configuration Target:");
+		ImGui::TextColored(m_AccentColor, LOC("camera.config.target"));
 
 		// Store createOption per weapon to prevent cross-weapon contamination
 		static std::unordered_map<uint32_t, int> weaponCreateOptions;
@@ -124,10 +124,10 @@ namespace ThroughScope
 		// Build combo label safely
 		std::string comboLabel;
 		if (createOption == 0) {
-			comboLabel = "Base Weapon";
+			comboLabel = LOC("camera.config.base_weapon");
 		} else if (createOption <= static_cast<int>(weaponInfo.availableMods.size())) {
 			auto modForm = weaponInfo.availableMods[createOption - 1];
-			comboLabel = fmt::format("Modification #{}, {}", createOption, modForm->GetFormEditorID());
+			comboLabel = fmt::format(fmt::runtime(LOC("camera.config.modification")), createOption, modForm->GetFormEditorID());
 		} else {
 			comboLabel = "Invalid Selection";
 			createOption = 0;  // Force reset to base weapon
@@ -135,21 +135,21 @@ namespace ThroughScope
 
 		if (ImGui::BeginCombo("Create Config For", comboLabel.c_str())) {
 			// Base weapon option
-			if (ImGui::Selectable("Base Weapon", createOption == 0)) {
+			if (ImGui::Selectable(LOC("camera.config.base_weapon"), createOption == 0)) {
 				createOption = 0;
 			}
-			RenderHelpTooltip("Create configuration for the base weapon");
+			RenderHelpTooltip(LOC("tooltip.base_weapon"));
 
 			// Modification options
 			for (size_t i = 0; i < weaponInfo.availableMods.size(); i++) {
 				auto modForm = weaponInfo.availableMods[i];
-				std::string label = fmt::format("Modification #{} - {}",
+				std::string label = fmt::format(fmt::runtime(LOC("camera.config.modification")),
 					i + 1, modForm->GetFormEditorID());
 
 				if (ImGui::Selectable(label.c_str(), createOption == static_cast<int>(i + 1))) {
 					createOption = static_cast<int>(i + 1);
 				}
-				RenderHelpTooltip("Create configuration specific to this modification");
+				RenderHelpTooltip(LOC("tooltip.modification"));
 			}
 
 			ImGui::EndCombo();
@@ -157,18 +157,18 @@ namespace ThroughScope
 
 		// NIF File Selection
 		ImGui::Spacing();
-		ImGui::TextColored(m_AccentColor, "Scope Shape (Model File):");
+		ImGui::TextColored(m_AccentColor, LOC("camera.config.scope_shape"));
 
 		if (m_AvailableNIFFiles.empty()) {
-			ImGui::TextColored(m_WarningColor, "No NIF files found in Meshes/TTS/ScopeShape/");
-			if (ImGui::Button("Rescan for NIF Files")) {
+			ImGui::TextColored(m_WarningColor, LOC("camera.config.no_nif_files"));
+			if (ImGui::Button(LOC("button.rescan"))) {
 				m_NIFFilesScanned = false;
 				ScanForNIFFiles();
 			}
 		} else {
 			const char* currentNIFName = m_SelectedNIFIndex < m_AvailableNIFFiles.size() ?
 			                                 m_AvailableNIFFiles[m_SelectedNIFIndex].c_str() :
-			                                 "Select a model...";
+			                                 LOC("camera.config.select_model");
 
 			if (ImGui::BeginCombo("Model File", currentNIFName)) {
 				for (int i = 0; i < m_AvailableNIFFiles.size(); i++) {
@@ -194,7 +194,7 @@ namespace ThroughScope
 			ImGui::BeginDisabled();
 		}
 
-		if (ImGui::Button("Create Configuration", ImVec2(-1, 0))) {
+		if (ImGui::Button(LOC("button.create"), ImVec2(-1, 0))) {
 			if (canCreateConfig) {
 				std::string selectedNIF = m_AvailableNIFFiles[m_SelectedNIFIndex];
 				auto dataPersistence = DataPersistence::GetSingleton();
@@ -234,14 +234,14 @@ namespace ThroughScope
 
 	void CameraAdjustmentPanel::RenderAdjustmentControls()
 	{
-		RenderSectionHeader("Camera Position & Orientation");
+		RenderSectionHeader(LOC("camera.position"));
 
 		// Position controls
-		if (ImGui::CollapsingHeader("Position Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (ImGui::CollapsingHeader(LOC("camera.position_controls"), ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::Columns(2, "PositionColumns", false);
 
 			// Left column - Sliders
-			ImGui::Text("Precise Adjustment:");
+			ImGui::Text(LOC("camera.precise_adjustment"));
 			ImGui::SetNextItemWidth(-1);
 			ImGui::SliderFloat("##X", &m_CurrentValues.deltaPosX, -50.0f, 50.0f, "X: %.3f");
 			ImGui::SetNextItemWidth(-1);
@@ -252,7 +252,7 @@ namespace ThroughScope
 			ImGui::NextColumn();
 
 			// Right column - Fine adjustment buttons
-			ImGui::Text("Fine Tuning:");
+			ImGui::Text(LOC("camera.fine_tuning"));
 
 			if (ImGui::Button("X-0.1", ImVec2(50, 0)))
 				m_CurrentValues.deltaPosX -= 0.1f;
@@ -276,10 +276,10 @@ namespace ThroughScope
 		}
 
 		// Rotation controls
-		if (ImGui::CollapsingHeader("Rotation Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (ImGui::CollapsingHeader(LOC("camera.rotation_controls"), ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::Columns(2, "RotationColumns", false);
 
-			ImGui::Text("Precise Adjustment:");
+			ImGui::Text(LOC("camera.precise_adjustment"));
 			ImGui::SetNextItemWidth(-1);
 			ImGui::SliderFloat("##Pitch", &m_CurrentValues.deltaRot[0], -180.0f, 180.0f, "Pitch: %.1f°");
 			ImGui::SetNextItemWidth(-1);
@@ -289,7 +289,7 @@ namespace ThroughScope
 
 			ImGui::NextColumn();
 
-			ImGui::Text("Fine Tuning:");
+			ImGui::Text(LOC("camera.fine_tuning"));
 
 			if (ImGui::Button("P-1°", ImVec2(50, 0)))
 				m_CurrentValues.deltaRot[0] -= 1.0f;
@@ -313,16 +313,16 @@ namespace ThroughScope
 		}
 
 		// Scale controls
-		if (ImGui::CollapsingHeader("Scale Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (ImGui::CollapsingHeader(LOC("camera.scale_controls"), ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::Columns(2, "ScaleColumns", false);
 
-			ImGui::Text("Scale:");
+			ImGui::Text(LOC("camera.scale"));
 			ImGui::SetNextItemWidth(-1);
 			ImGui::SliderFloat("##Scale", &m_CurrentValues.deltaScale, 0.1f, 10.0f, "%.3f");
 
 			ImGui::NextColumn();
 
-			ImGui::Text("Fine Tuning:");
+			ImGui::Text(LOC("camera.fine_tuning"));
 			if (ImGui::Button("-0.1", ImVec2(50, 0)))
 				m_CurrentValues.deltaScale -= 0.1f;
 			ImGui::SameLine();
@@ -335,7 +335,7 @@ namespace ThroughScope
 
 	void CameraAdjustmentPanel::RenderScopeSettings()
 	{
-		if (ImGui::CollapsingHeader("Scope Settings")) {
+		if (ImGui::CollapsingHeader(LOC("camera.scope_settings"))) {
 			auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 			if (weaponInfo.currentConfig) {
 				static int minFOV = weaponInfo.currentConfig->scopeSettings.minFOV;
@@ -343,21 +343,55 @@ namespace ThroughScope
 				static bool nightVision = weaponInfo.currentConfig->scopeSettings.nightVision;
 				static bool thermalVision = weaponInfo.currentConfig->scopeSettings.thermalVision;
 
-				ImGui::SliderInt("Minimum FOV", &minFOV, 1, 180);
-				ImGui::SliderInt("Maximum FOV", &maxFOV, 1, 180);
-				ImGui::Checkbox("Night Vision", &nightVision);
-				ImGui::Checkbox("Thermal Vision", &thermalVision);
+				ImGui::SliderInt(LOC("camera.min_fov"), &minFOV, 1, 180);
+				ImGui::SliderInt(LOC("camera.max_fov"), &maxFOV, 1, 180);
+				ImGui::Checkbox(LOC("camera.night_vision"), &nightVision);
+				ImGui::Checkbox(LOC("camera.thermal_vision"), &thermalVision);
 			}
 		}
 	}
 
 	void CameraAdjustmentPanel::RenderParallaxSettings()
 	{
-		if (ImGui::CollapsingHeader("Parallax Settings")) {
-			ImGui::SliderFloat("Relative Fog Radius", &m_CurrentValues.relativeFogRadius, 0.0f, 1.0f);
-			ImGui::SliderFloat("Scope Sway Amount", &m_CurrentValues.scopeSwayAmount, 0.0f, 1.0f);
-			ImGui::SliderFloat("Max Travel", &m_CurrentValues.maxTravel, 0.0f, 1.0f);
-			ImGui::SliderFloat("Radius", &m_CurrentValues.parallaxRadius, 0.0f, 1.0f);
+		if (ImGui::CollapsingHeader(LOC("camera.parallax"))) {
+			ImGui::SliderFloat(LOC("camera.relative_fog_radius"), &m_CurrentValues.relativeFogRadius, 0.0f, 1.0f);
+			ImGui::SliderFloat(LOC("camera.scope_sway_amount"), &m_CurrentValues.scopeSwayAmount, 0.0f, 1.0f);
+			ImGui::SliderFloat(LOC("camera.max_travel"), &m_CurrentValues.maxTravel, 0.0f, 1.0f);
+			ImGui::SliderFloat(LOC("camera.parallax_radius"), &m_CurrentValues.parallaxRadius, 0.0f, 1.0f);
+		}
+	}
+
+	void CameraAdjustmentPanel::RenderNightVisionSettings()
+	{
+		if (ImGui::CollapsingHeader(LOC("camera.night_vision_settings"), ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			ImGui::Checkbox(LOC("camera.enable_night_vision"), &m_EnableNightVision);
+			ImGui::PushID("NightVision");
+			if (m_EnableNightVision)
+			{
+				ImGui::SliderFloat(LOC("camera.intensity"), &m_NightVisionIntensity, 0.0f, 2.0f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.noise_scale"), &m_NightVisionNoiseScale, 0.01f, 0.2f, "%.3f");
+				ImGui::SliderFloat(LOC("camera.noise_amount"), &m_NightVisionNoiseAmount, 0.0f, 0.2f, "%.3f");
+				ImGui::SliderFloat(LOC("camera.green_tint"), &m_NightVisionGreenTint, 0.0f, 2.0f, "%.2f");
+			}
+			ImGui::PopID();
+		}
+	}
+
+	void CameraAdjustmentPanel::RenderThermalVisionSettings()
+	{
+		if (ImGui::CollapsingHeader(LOC("camera.thermal_vision_settings"), ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			ImGui::Checkbox(LOC("camera.enable_thermal_vision"), &m_EnableThermalVision);
+			ImGui::PushID("Thermal");
+			if (m_EnableThermalVision)
+			{
+				ImGui::SliderFloat(LOC("camera.intensity"), &m_ThermalIntensity, 0.0f, 2.0f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.threshold"), &m_ThermalThreshold, 0.0f, 1.0f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.contrast"), &m_ThermalContrast, 0.5f, 2.0f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.noise_amount"), &m_ThermalNoiseAmount, 0.0f, 0.2f, "%.3f");
+			}
+			ImGui::PopID();
 		}
 	}
 
@@ -366,28 +400,28 @@ namespace ThroughScope
 		ImGui::Spacing();
 		ImGui::Separator();
 
-		if (ImGui::Button("Reset Adjustments")) {
+		if (ImGui::Button(LOC("camera.reset_adjustments"))) {
 			if (m_ConfirmBeforeReset) {
 				// Show confirmation dialog
-				ImGui::OpenPopup("Reset Confirmation");
+				ImGui::OpenPopup(LOC("camera.reset_confirm_title"));
 			} else {
 				ResetAllAdjustments();
 			}
 		}
 
 		// Reset confirmation modal
-		if (ImGui::BeginPopupModal("Reset Confirmation", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-			ImGui::Text("Are you sure you want to reset all adjustments?");
-			ImGui::Text("This will restore default position, rotation, and scale values.");
+		if (ImGui::BeginPopupModal(LOC("camera.reset_confirm_title"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+			ImGui::Text(LOC("camera.reset_confirm_text"));
+			ImGui::Text(LOC("camera.reset_confirm_desc"));
 			ImGui::Spacing();
 
-			if (ImGui::Button("Yes, Reset", ImVec2(120, 0))) {
+			if (ImGui::Button(LOC("camera.yes_reset"), ImVec2(120, 0))) {
 				ResetAllAdjustments();
 				ImGui::CloseCurrentPopup();
 			}
 
 			ImGui::SameLine();
-			if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+			if (ImGui::Button(LOC("button.cancel"), ImVec2(120, 0))) {
 				ImGui::CloseCurrentPopup();
 			}
 
@@ -396,7 +430,7 @@ namespace ThroughScope
 
 		ImGui::SameLine();
 
-		if (ImGui::Button("Save Settings")) {
+		if (ImGui::Button(LOC("button.save"))) {
 			auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 			if (weaponInfo.currentConfig) {
 				DataPersistence::ScopeConfig modifiedConfig = *weaponInfo.currentConfig;
@@ -404,11 +438,11 @@ namespace ThroughScope
 
 				auto dataPersistence = DataPersistence::GetSingleton();
 				if (dataPersistence->SaveConfig(modifiedConfig)) {
-					m_Manager->SetDebugText("Settings saved successfully!");
+					m_Manager->SetDebugText(LOC("status.settings_saved"));
 					dataPersistence->LoadAllConfigs();
 					isSaved = true;
 				} else {
-					m_Manager->SetDebugText("Failed to save settings!");
+					m_Manager->SetDebugText(LOC("status.settings_failed"));
 				}
 			}
 		}
@@ -418,6 +452,36 @@ namespace ThroughScope
 	{
 		m_CurrentValues = values;
 		UpdatePreviousValues();
+	}
+
+	void CameraAdjustmentPanel::SaveToConfig(DataPersistence::ScopeConfig& config) const
+	{
+		config.cameraAdjustments.deltaPosX = m_CurrentValues.deltaPosX;
+		config.cameraAdjustments.deltaPosY = m_CurrentValues.deltaPosY;
+		config.cameraAdjustments.deltaPosZ = m_CurrentValues.deltaPosZ;
+		config.cameraAdjustments.deltaRot[0] = m_CurrentValues.deltaRot[0];
+		config.cameraAdjustments.deltaRot[1] = m_CurrentValues.deltaRot[1];
+		config.cameraAdjustments.deltaRot[2] = m_CurrentValues.deltaRot[2];
+		config.cameraAdjustments.deltaScale = m_CurrentValues.deltaScale;
+
+		config.parallaxSettings.relativeFogRadius = m_CurrentValues.relativeFogRadius;
+		config.parallaxSettings.scopeSwayAmount = m_CurrentValues.scopeSwayAmount;
+		config.parallaxSettings.maxTravel = m_CurrentValues.maxTravel;
+		config.parallaxSettings.radius = m_CurrentValues.parallaxRadius;
+
+		// 保存夜视设置
+		config.scopeSettings.nightVision = m_EnableNightVision;
+		config.scopeSettings.nightVisionIntensity = m_NightVisionIntensity;
+		config.scopeSettings.nightVisionNoiseScale = m_NightVisionNoiseScale;
+		config.scopeSettings.nightVisionNoiseAmount = m_NightVisionNoiseAmount;
+		config.scopeSettings.nightVisionGreenTint = m_NightVisionGreenTint;
+
+		// 保存热成像设置
+		config.scopeSettings.thermalVision = m_EnableThermalVision;
+		config.scopeSettings.thermalIntensity = m_ThermalIntensity;
+		config.scopeSettings.thermalThreshold = m_ThermalThreshold;
+		config.scopeSettings.thermalContrast = m_ThermalContrast;
+		config.scopeSettings.thermalNoiseAmount = m_ThermalNoiseAmount;
 	}
 
 	void CameraAdjustmentPanel::LoadFromConfig(const DataPersistence::ScopeConfig* config)
@@ -438,6 +502,22 @@ namespace ThroughScope
 		m_CurrentValues.maxTravel = config->parallaxSettings.maxTravel;
 		m_CurrentValues.parallaxRadius = config->parallaxSettings.radius;
 
+		// 加载夜视设置
+		m_EnableNightVision = config->scopeSettings.nightVision;
+		m_NightVisionIntensity = config->scopeSettings.nightVisionIntensity;
+		m_NightVisionNoiseScale = config->scopeSettings.nightVisionNoiseScale;
+		m_NightVisionNoiseAmount = config->scopeSettings.nightVisionNoiseAmount;
+		m_NightVisionGreenTint = config->scopeSettings.nightVisionGreenTint;
+
+		// 加载热成像设置
+		m_EnableThermalVision = config->scopeSettings.thermalVision;
+		m_ThermalIntensity = config->scopeSettings.thermalIntensity;
+		m_ThermalThreshold = config->scopeSettings.thermalThreshold;
+		m_ThermalContrast = config->scopeSettings.thermalContrast;
+		m_ThermalNoiseAmount = config->scopeSettings.thermalNoiseAmount;
+
+		ApplySettings();
+
 		UpdatePreviousValues();
 
 		// 应用到TTSNode
@@ -445,22 +525,6 @@ namespace ThroughScope
 		if (ttsNode) {
 			ApplyAllAdjustments();
 		}
-	}
-
-	void CameraAdjustmentPanel::SaveToConfig(DataPersistence::ScopeConfig& config) const
-	{
-		config.cameraAdjustments.deltaPosX = m_CurrentValues.deltaPosX;
-		config.cameraAdjustments.deltaPosY = m_CurrentValues.deltaPosY;
-		config.cameraAdjustments.deltaPosZ = m_CurrentValues.deltaPosZ;
-		config.cameraAdjustments.deltaRot[0] = m_CurrentValues.deltaRot[0];
-		config.cameraAdjustments.deltaRot[1] = m_CurrentValues.deltaRot[1];
-		config.cameraAdjustments.deltaRot[2] = m_CurrentValues.deltaRot[2];
-		config.cameraAdjustments.deltaScale = m_CurrentValues.deltaScale;
-
-		config.parallaxSettings.relativeFogRadius = m_CurrentValues.relativeFogRadius;
-		config.parallaxSettings.scopeSwayAmount = m_CurrentValues.scopeSwayAmount;
-		config.parallaxSettings.maxTravel = m_CurrentValues.maxTravel;
-		config.parallaxSettings.radius = m_CurrentValues.parallaxRadius;
 	}
 
 	void CameraAdjustmentPanel::ResetAllAdjustments()
@@ -561,7 +625,7 @@ namespace ThroughScope
 		ApplyScaleAdjustment();
 
 		// 应用视差设置
-		D3DHooks::UpdateScopeSettings(
+		D3DHooks::UpdateScopeParallaxSettings(
 			m_CurrentValues.relativeFogRadius,
 			m_CurrentValues.scopeSwayAmount,
 			m_CurrentValues.maxTravel,
@@ -697,4 +761,36 @@ namespace ThroughScope
 
 		return false;
 	}
+
+	void CameraAdjustmentPanel::ApplySettings()
+	{
+		// 应用视差设置
+		D3DHooks::UpdateScopeParallaxSettings(
+			m_CurrentValues.relativeFogRadius,
+			m_CurrentValues.scopeSwayAmount,
+			m_CurrentValues.maxTravel,
+			m_CurrentValues.parallaxRadius
+		);
+
+		// 应用夜视设置
+		D3DHooks::UpdateNightVisionSettings(
+			m_NightVisionIntensity,
+			m_NightVisionNoiseScale,
+			m_NightVisionNoiseAmount,
+			m_NightVisionGreenTint,
+			m_EnableNightVision
+		);
+
+		// 应用热成像设置
+		D3DHooks::UpdateThermalVisionSettings(
+			m_ThermalIntensity,
+			m_ThermalThreshold,
+			m_ThermalContrast,
+			m_ThermalNoiseAmount,
+			m_EnableThermalVision
+		);
+	}
+
+	
+
 }

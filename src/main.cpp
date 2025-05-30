@@ -100,6 +100,11 @@ static REL::Relocation<uint32_t*> MergeInstancedZPrePassDrawDataCount{ REL::ID(1
 static REL::Relocation<uint32_t*> FPAlphaTestZPrePassDrawDataCount{ REL::ID(382658) };
 static REL::Relocation<uint32_t*> AlphaTestZPrePassDrawDataCount{ REL::ID(1064092) };
 static REL::Relocation<uint32_t*> AlphaTestMergeInstancedZPrePassDrawDataCount{ REL::ID(602241) };
+
+static REL::Relocation<NiCullingProcess**> DrawWorldGeomListCullProc0{ REL::ID(865470) };
+static REL::Relocation<NiCullingProcess**> DrawWorldGeomListCullProc1{ REL::ID(1084947) };
+
+
 #pragma endregion
 
 typedef void (*DoZPrePassOriginalFuncType)(uint64_t, NiCamera*, NiCamera*, float, float, float, float);
@@ -172,6 +177,7 @@ bool isImguiManagerInit = false;
 bool isFirstSpawnNode = false;
 ThroughScope::D3DHooks* d3dHooks;
 NIFLoader* nifloader;
+static std::chrono::steady_clock::time_point delayStartTime;
 
 PlayerCharacter* g_pchar = nullptr;
 
@@ -257,10 +263,23 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	auto originalCamera1stport = (*ptr_DrawWorld1stCamera)->port;
 	scopeCamera->local.translate = originalCamera->local.translate;
 	scopeCamera->local.rotate = originalCamera->local.rotate;
+	scopeCamera->local.translate.y += 15;
+
+
+	float scopeViewSize = 0.275f;
+	originalCamera1st->viewFrustum.left = -scopeViewSize;
+	originalCamera1st->viewFrustum.right = scopeViewSize;
+	originalCamera1st->viewFrustum.top = scopeViewSize;
+	originalCamera1st->viewFrustum.bottom = -scopeViewSize;
 
 	NiUpdateData nData;
 	nData.camera = scopeCamera;
 	scopeCamera->Update(nData);
+
+	nData.camera = originalCamera1st;
+	originalCamera1st->Update(nData);
+
+	
 	//清理主输出，准备第二次渲染
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 
@@ -276,6 +295,13 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	DrawWorld::SetUpdateCameraFOV(true);
 	DrawWorld::SetAdjusted1stPersonFOV(ScopeCamera::GetTargetFOV());
 	DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
+
+	// 更新裁剪处理器的视锥体（使用已优化的视锥体）
+	(*DrawWorldGeomListCullProc0)->SetFrustum(&scopeCamera->viewFrustum);
+	(*DrawWorldGeomListCullProc1)->SetFrustum(&scopeCamera->viewFrustum);
+
+	nData.camera = scopeCamera;
+	scopeCamera->Update(nData);
 
 	ScopeCamera::SetRenderingForScope(true);
 	g_RenderPreUIOriginal(ptr_drawWorld);  //第二次渲染
@@ -384,9 +410,9 @@ void __fastcall hkBSShaderAccumulator_RenderOpaqueDecals(BSShaderAccumulator* th
 	Fn fn = (Fn)BSShaderAccumulator_RenderOpaqueDecals_Ori.address();
 	(*fn)(thisPtr);
 }
-void __fastcall hkBSCullingGroup_Process(BSCullingGroup* thisPtr, bool someFlag)
+void __fastcall hkBSCullingGroup_Process(BSCullingGroup* thisPtr, bool abFirstStageOnly)
 {
-	g_BSCullingGroupProcessOriginal(thisPtr, someFlag);
+	g_BSCullingGroupProcessOriginal(thisPtr, abFirstStageOnly);
 }
 RenderTarget* __fastcall hkRenderer_CreateRenderTarget(Renderer* renderer, int aId, const wchar_t* apName, const RenderTargetProperties* aProperties)
 {
@@ -428,8 +454,6 @@ void __fastcall hkDeferredPrePass(uint64_t ptr_drawWorld)
 
 void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
 {
-	//if (!ScopeCamera::IsRenderingForScope())
-	//	return;
 	D3DEventNode(g_DeferredLightsImplOriginal(ptr_drawWorld), L"hkDeferredLightsImpl");
 }
 
@@ -441,9 +465,7 @@ void __fastcall hkDeferredComposite(uint64_t ptr_drawWorld)
 void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
 {
 	D3DHooks::SetForwardStage(true);
-
 	D3DEventNode(g_ForwardOriginal(ptr_drawWorld), L"hkDrawWorld_Forward");
-
 	D3DHooks::SetForwardStage(false);
 }
 
@@ -496,6 +518,25 @@ void __fastcall hkSetCurrentCubeMapRenderTarget(RenderTargetManager* manager, in
 	g_SetCurrentCubeMapRenderTargetOriginal(manager, aCubeMapRenderTarget, aMode, aView);
 }
 
+namespace FirstSpawnDelay
+{
+	static bool delayStarted = false;
+	static std::chrono::steady_clock::time_point delayStartTime;
+
+	void Reset()
+	{
+		delayStarted = false;
+		// delayStartTime 不需要重置，下次会重新赋值
+	}
+}
+
+void ResetFirstSpawnState()
+{
+	ScopeCamera::isFirstSpawnNode = false;
+	ScopeCamera::isDelayStarted = false;
+	ScopeCamera::isFirstScopeRender = true;
+}
+
 void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 {
 	if (isImguiManagerInit)
@@ -511,18 +552,56 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 	if (keyDecreaseFOV & 0x8000)
 		ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() - 1);
 
-	if (keyPgUp & 0x1) {
-		
-		if (g_pchar && g_pchar->currentProcess && !g_pchar->currentProcess->middleHigh->equippedItems.empty()) {
-			auto& equippedItem = g_pchar->currentProcess->middleHigh->equippedItems[0];
-			uint32_t formID = equippedItem.item.object->GetLocalFormID();
-			std::string modName = equippedItem.item.object->GetFile()->filename;
+	if (keyPgUp & 0x1)
+	{
+		BSScrapArray<NiPointer<Actor>> aRetArray;
+		std::vector<Actor*> actorList{}; 
+		ProcessLists::GetSingleton()->GetActorsWithinRangeOfReference(g_pchar, 20000, &aRetArray);
+		auto imadThermal = Utilities::GetFormFromMod("WestTekTacticalOptics.esp", 0x811)->As<TESImageSpaceModifier>();
+		for (size_t i = 0; i < aRetArray.size();i++)
+		{
+			Actor* actor = aRetArray[i].get();
+			if (actor->formID != 0x7 && actor->formID != 0x14)
+			{
+				std::string actorName = actor->GetDisplayFullName();
+				logger::info("Found Actor: {}", actorName.c_str());
+			}
+			actorList.push_back(actor);
+		}
 
-			DataPersistence::GetSingleton()->GeneratePresetConfig(formID, modName);
+		logger::info("actorList size: {}", actorList.size());
+
+		//auto pAccum = (*ptr_DrawWorldAccum);
+		//auto nameofSomething = pAccum->BatchRenderer.geometryGroups[0]->passList.head->pGeometry->name;
+		//imadThermal->Apply(100, 100, g_pchar->Get3D());
+		for (auto actor : actorList)
+		{
+			auto actorNode = actor->Get3D()->IsNode();
+			if (!actorNode) continue;
+
+			auto actorBase = actor->GetActorBase();
+			if (!actorBase) continue;
+
+			LogNodeHierarchy(actorNode);
+			auto actorNodeChildren = actorNode->children.data();
+			for (size_t j = 0; j < actorNode->children.size();j++) 
+			{
+				auto child = actorNodeChildren[j].get();
+				if (!child) continue;
+
+				auto childGeo = child->IsTriShape();
+				if (childGeo) {
+					auto lightShader = childGeo->QShaderProperty();
+					auto lightShader2 = (BSLightingShaderProperty*)lightShader;
+					auto lightMat = (BSLightingShaderMaterial*)lightShader2->material;
+				}
+			}
 		}
 	}
 	if (keyPgDown & 0x1)
+	{
 		Utilities::LogPlayerWeaponNodes();
+	}
 
 	auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
 
@@ -532,12 +611,38 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 		return g_PCUpdateMainThread(pChar);
 	}
 
+
+	if (!ScopeCamera::isFirstSpawnNode) {
+		if (!FirstSpawnDelay::delayStarted) {
+			// 开始延迟计时
+			FirstSpawnDelay::delayStarted = true;
+			FirstSpawnDelay::delayStartTime = std::chrono::steady_clock::now();
+		} else {
+			// 检查是否已经过了500ms
+			auto currentTime = std::chrono::steady_clock::now();
+			auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - FirstSpawnDelay::delayStartTime);
+
+			if (elapsed.count() >= 500) {
+				// 延迟时间到，执行逻辑
+				ScopeCamera::CleanupScopeResources();
+				ScopeCamera::SetupScopeForWeapon(weaponInfo);
+				d3dHooks->SetScopeTexture((ID3D11DeviceContext*)RE::BSGraphics::RendererData::GetSingleton()->context);
+				ScopeCamera::isFirstSpawnNode = true;
+				logger::warn("FirstSpawn Finish");
+			}
+		}
+		return g_PCUpdateMainThread(pChar);
+	}
+
+	if (g_pchar->IsInThirdPerson())
+		return g_PCUpdateMainThread(pChar);
+
 	if (ScopeCamera::IsSideAim() 
 		|| UI::GetSingleton()->GetMenuOpen("PauseMenu") 
 		|| UI::GetSingleton()->GetMenuOpen("WorkshopMenu") 
 		|| UI::GetSingleton()->GetMenuOpen("CursorMenu") 
 		|| UI::GetSingleton()->GetMenuOpen("ScopeMenu")
-		|| UI::GetSingleton()->GetMenuOpen("LooksMenu")
+		|| UI::GetSingleton()->GetMenuOpen("LooksMenu") 
 		) {
 		D3DHooks::SetEnableRender(false);
 	} else {
@@ -675,8 +780,7 @@ DWORD WINAPI InitThread(HMODULE hModule)
 		Sleep(10);
 	}
 
-	isImguiManagerInit = ThroughScope::ImGuiManager::GetSingleton()->Initialize();
-	d3dHooks->Initialize();
+	
     // Wait for the game world to be fully loaded
 	while (!RE::PlayerCharacter::GetSingleton() || !RE::PlayerCharacter::GetSingleton()->Get3D() || !RE::PlayerControls::GetSingleton() || !RE::PlayerCamera::GetSingleton() || !RE::Main::WorldRootCamera()) 
     {
@@ -685,19 +789,10 @@ DWORD WINAPI InitThread(HMODULE hModule)
     logger::info("Game world loaded, initializing ThroughScope...");
     
     // Initialize systems
+	isImguiManagerInit = ThroughScope::ImGuiManager::GetSingleton()->Initialize();
+	d3dHooks->Initialize();
     isScopCamReady = ThroughScope::ScopeCamera::Initialize();
 	isRenderReady = ThroughScope::RenderUtilities::Initialize();
-
-	Sleep(350);
-	if (!D3DHooks::isFirstSpawnNode) {
-		auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
-		if (weaponInfo.currentConfig) {
-			ScopeCamera::SetupScopeForWeapon(weaponInfo);
-			d3dHooks->SetScopeTexture((ID3D11DeviceContext*)RE::BSGraphics::RendererData::GetSingleton()->context);
-			D3DHooks::isFirstSpawnNode = true;
-			logger::warn("FirstSpawn Finish");
-		}
-	}
 
 
     logger::info("ThroughScope initialization completed");
@@ -771,6 +866,9 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_f4se, F4
 // F4SE Load plugin
 F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 {
+	SetConsoleOutputCP(CP_UTF8);
+	SetConsoleCP(CP_UTF8);
+
 #ifdef _DEBUG
     while (!IsDebuggerPresent()) {
         Sleep(1000);
@@ -791,20 +889,18 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
     
     // Register for F4SE messages
     message->RegisterListener([](F4SE::MessagingInterface::Message* msg) -> void {
-        if (msg->type == F4SE::MessagingInterface::kPostLoad) {
-            // Post load phase - all plugins are loaded
-            logger::info("F4SE Post Load");
-        } else if (msg->type == F4SE::MessagingInterface::kGameDataReady) {
+		if (msg->type == F4SE::MessagingInterface::kGameDataReady) {
             // Game data is ready - this is when we should initialize
             logger::info("Game data ready, initializing plugin");
             InitializePlugin();
-        } else if (msg->type == F4SE::MessagingInterface::kGameLoaded) {
-            // Game has been loaded
-			D3DHooks::isFirstSpawnNode = false;
+		} else if (msg->type == F4SE::MessagingInterface::kPostLoadGame) {
+
+			logger::info("Load a save, reset scope status");
+			ResetFirstSpawnState();
 		}
 		else if (msg->type == F4SE::MessagingInterface::kNewGame)
 		{
-			D3DHooks::isFirstSpawnNode = false;
+			ResetFirstSpawnState();
 		}
     });
 

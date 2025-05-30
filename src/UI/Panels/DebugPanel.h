@@ -4,6 +4,7 @@
 #include "ScopeCamera.h"
 #include "D3DHooks.h"
 #include "Utilities.h"
+#include "LocalizationManager.h"
 
 namespace ThroughScope
 {
@@ -16,7 +17,7 @@ namespace ThroughScope
         // 基础接口实现
         void Render() override;
         void Update() override;
-        const char* GetPanelName() const override { return "Debug"; }
+        const char* GetPanelName() const override { return LOC("ui.menu.debug"); }
 		bool GetSaved() const override { return isSaved; }
         
         // 调试功能

@@ -19,6 +19,7 @@
 #include "DataPersistence.h"
 #include "RenderUtilities.h"
 #include "ScopeCamera.h"
+#include "LocalizationManager.h"
 
 namespace ThroughScope
 {
@@ -45,6 +46,10 @@ namespace ThroughScope
 		void ShowErrorDialog(const std::string& title, const std::string& message) override;
 		void MarkUnsavedChanges() override { s_unsavedChangeCount++; }
 		void MarkSaved() override { s_unsavedChangeCount--; }
+		void LoadLanguageFonts();
+		void UpdateFontsForLanguage(Language language);
+		void RebuildFonts();
+		void RequestFontRebuild();
 
 	private:
 		ImGuiManager() = default;
@@ -53,6 +58,10 @@ namespace ThroughScope
 		// 初始化面板系统
 		void InitializePanels();
 		void ShutdownPanels();
+
+		// 字体管理
+		
+
 
 		// UI渲染
 		void RenderMainMenu();
@@ -80,6 +89,7 @@ namespace ThroughScope
 		bool m_Initialized = false;
 		bool m_MenuOpen = false;
 		bool m_HasUnsavedChanges = false;
+		bool m_FontRebuildRequested = false;  // 添加字体重建请求标志
 
 		static UINT s_unsavedChangeCount;
 		// 调试信息

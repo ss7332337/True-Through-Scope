@@ -32,10 +32,6 @@ namespace ThroughScope
 		RenderModelSelection();
 		ImGui::Spacing();
 		RenderQuickActions();
-
-		if (m_ShowModelPreview) {
-			RenderModelPreview();
-		}
 	}
 
 	void ModelSwitcherPanel::Update()
@@ -52,50 +48,49 @@ namespace ThroughScope
 	{
 		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 
-		RenderSectionHeader("Current Model Information");
+		RenderSectionHeader(LOC("models.current_model_info"));
 
 		if (!weaponInfo.currentConfig) {
-			ImGui::TextColored(m_WarningColor, "No configuration available");
+			ImGui::TextColored(m_WarningColor, LOC("models.no_config_available"));
 			return;
 		}
 
 		ImGui::BeginGroup();
 		if (!weaponInfo.currentConfig->modelName.empty()) {
-			ImGui::TextColored(m_SuccessColor, "Model: %s", weaponInfo.currentConfig->modelName.c_str());
+			ImGui::TextColored(m_SuccessColor, LOC("models.current_model_label"), weaponInfo.currentConfig->modelName.c_str());
 
 			// 显示模型状态
 			auto ttsNode = m_Manager->GetTTSNode();
 			if (ttsNode) {
-				ImGui::Text("Status: ✓ Loaded and Active");
-				ImGui::Text("Position: [%.2f, %.2f, %.2f]",
+				ImGui::Text(LOC("models.status_loaded"), 
 					ttsNode->local.translate.x,
 					ttsNode->local.translate.y,
 					ttsNode->local.translate.z);
 			} else {
-				ImGui::TextColored(m_WarningColor, "Status: ⚠ Not Loaded");
+				ImGui::TextColored(m_WarningColor, LOC("models.status_not_loaded"));
 
-				if (ImGui::Button("Auto-Load from Config")) {
+				if (ImGui::Button(LOC("models.auto_load_config"))) {
 					if (PreviewModel(weaponInfo.currentConfig->modelName)) {
-						m_Manager->SetDebugText("Model auto-loaded from configuration");
+						m_Manager->SetDebugText(LOC("models.auto_load_success"));
 					} else {
-						m_Manager->SetDebugText("Failed to auto-load model from configuration");
+						m_Manager->SetDebugText(LOC("models.auto_load_failed"));
 					}
 				}
-				RenderHelpTooltip("Load the model specified in the current configuration");
+				RenderHelpTooltip(LOC("tooltip.auto_load_config"));
 			}
 		} else {
-			ImGui::TextColored(m_WarningColor, "No model assigned to this configuration");
+			ImGui::TextColored(m_WarningColor, LOC("models.no_model_assigned"));
 		}
 		ImGui::EndGroup();
 	}
 
 	void ModelSwitcherPanel::RenderModelSelection()
 	{
-		RenderSectionHeader("Available Models");
+		RenderSectionHeader(LOC("models.available_models"));
 
 		if (m_AvailableNIFFiles.empty()) {
-			ImGui::TextColored(m_WarningColor, "No models found in ScopeShape directory");
-			if (ImGui::Button("Scan for Models")) {
+			ImGui::TextColored(m_WarningColor, LOC("models.no_models_found"));
+			if (ImGui::Button(LOC("models.scan_models"))) {
 				RefreshNIFFiles();
 			}
 			return;
@@ -106,9 +101,9 @@ namespace ThroughScope
 
 		// 搜索过滤器
 		ImGui::SetNextItemWidth(-100);
-		ImGui::InputTextWithHint("##Search", "Search models...", &m_SearchFilter);
+		ImGui::InputTextWithHint("##Search", LOC("models.search_placeholder"), &m_SearchFilter);
 		ImGui::SameLine();
-		if (ImGui::Button("Clear")) {
+		if (ImGui::Button(LOC("button.clear"))) {
 			m_SearchFilter.clear();
 		}
 
@@ -116,7 +111,7 @@ namespace ThroughScope
 		ImGui::Spacing();
 		std::string previewText = currentModelIndex >= 0 ?
 		                              GetModelDisplayName(m_AvailableNIFFiles[currentModelIndex], true) :
-		                              "Select Model...";
+		                              LOC("models.select_model");
 
 		ImGui::SetNextItemWidth(-100);
 		if (ImGui::BeginCombo("##ModelSelect", previewText.c_str())) {
@@ -143,10 +138,10 @@ namespace ThroughScope
 				if (ImGui::Selectable(displayName.c_str(), isSelected)) {
 					if (fileName != weaponInfo.currentConfig->modelName) {
 						if (SwitchToModel(fileName)) {
-							m_Manager->SetDebugText(fmt::format("Model switched to: {}", fileName).c_str());
+							m_Manager->SetDebugText(fmt::format(fmt::runtime(LOC("models.switch_success")), fileName).c_str());
 						} else {
-							m_Manager->ShowErrorDialog("Model Switch Error",
-								"Failed to switch to the selected model. Please check if the file is valid.");
+							m_Manager->ShowErrorDialog(LOC("models.switch_error_title"),
+								LOC("models.switch_error_desc"));
 						}
 					}
 				}
@@ -157,95 +152,37 @@ namespace ThroughScope
 
 				// 悬停预览
 				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("Click to switch to this model\nFile: %s", fileName.c_str());
+					ImGui::SetTooltip(LOC("tooltip.click_to_switch"), fileName.c_str());
 				}
 			}
 			ImGui::EndCombo();
 		}
 
 		ImGui::SameLine();
-		if (ImGui::Button("Refresh")) {
+		if (ImGui::Button(LOC("button.refresh"))) {
 			RefreshNIFFiles();
 		}
 	}
 
 	void ModelSwitcherPanel::RenderQuickActions()
 	{
-		RenderSectionHeader("Quick Actions");
+		RenderSectionHeader(LOC("models.quick_actions"));
 
 		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 
 		// 重新加载当前模型
-		if (ImGui::Button("Reload Current Model", ImVec2(-1, 0))) {
+		if (ImGui::Button(LOC("models.reload_current"), ImVec2(-1, 0))) {
 			ReloadCurrentModel();
 		}
-		RenderHelpTooltip("Reload the current model from the configuration");
+		RenderHelpTooltip(LOC("tooltip.reload_current"));
 
 		// 移除当前模型
-		if (ImGui::Button("Remove Current Model", ImVec2(-1, 0))) {
+		if (ImGui::Button(LOC("models.remove_current"), ImVec2(-1, 0))) {
 			RemoveCurrentModel();
 		}
-		RenderHelpTooltip("Remove the currently loaded TTSNode");
-
-		ImGui::Spacing();
-
-		// 模型预览控制
-		ImGui::Checkbox("Show Model Preview", &m_ShowModelPreview);
-		RenderHelpTooltip("Show additional model information and preview options");
+		RenderHelpTooltip(LOC("tooltip.remove_current"));
 	}
 
-	void ModelSwitcherPanel::RenderModelPreview()
-	{
-		if (!ImGui::CollapsingHeader("Model Preview & Information")) {
-			return;
-		}
-
-		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
-		auto ttsNode = m_Manager->GetTTSNode();
-
-		if (ttsNode && !weaponInfo.currentConfig->modelName.empty()) {
-			ImGui::Text("Model File: %s", weaponInfo.currentConfig->modelName.c_str());
-
-			// 显示文件信息
-			try {
-				std::filesystem::path modelPath = std::filesystem::current_path() /
-				                                  "Data" / "Meshes" / "TTS" / "ScopeShape" / weaponInfo.currentConfig->modelName;
-
-				if (std::filesystem::exists(modelPath)) {
-					auto fileSize = std::filesystem::file_size(modelPath);
-					auto lastWrite = std::filesystem::last_write_time(modelPath);
-
-					ImGui::Text("File Size: %.2f KB", fileSize / 1024.0f);
-					// Note: 时间格式化需要C++20的calendar功能，这里简化处理
-					ImGui::Text("Last Modified: (file system time)");
-				} else {
-					ImGui::TextColored(m_ErrorColor, "File not found!");
-				}
-			} catch (const std::exception& e) {
-				ImGui::TextColored(m_ErrorColor, "Error reading file info: %s", e.what());
-			}
-
-			ImGui::Separator();
-
-			// TTSNode信息
-			ImGui::Text("Node Information:");
-			ImGui::BulletText("Position: [%.3f, %.3f, %.3f]",
-				ttsNode->local.translate.x,
-				ttsNode->local.translate.y,
-				ttsNode->local.translate.z);
-
-			float pitch, yaw, roll;
-			ttsNode->local.rotate.ToEulerAnglesXYZ(pitch, yaw, roll);
-			ImGui::BulletText("Rotation: [%.1f, %.1f, %.1f] degrees",
-				pitch * 57.2957795f,  // 弧度转度数
-				yaw * 57.2957795f,
-				roll * 57.2957795f);
-
-			ImGui::BulletText("Scale: %.3f", ttsNode->local.scale);
-		} else {
-			ImGui::TextColored(m_WarningColor, "No model currently loaded");
-		}
-	}
 
 	bool ModelSwitcherPanel::SwitchToModel(const std::string& modelName)
 	{
@@ -272,7 +209,7 @@ namespace ThroughScope
 			return PreviewModel(modelName);
 
 		} catch (const std::exception& e) {
-			m_Manager->SetDebugText(fmt::format("Error switching model: {}", e.what()).c_str());
+			m_Manager->SetDebugText(fmt::format(fmt::runtime(LOC("models.error_switching")), e.what()).c_str());
 			return false;
 		}
 	}
@@ -346,7 +283,7 @@ namespace ThroughScope
 			return true;
 
 		} catch (const std::exception& e) {
-			m_Manager->SetDebugText(fmt::format("Error previewing model: {}", e.what()).c_str());
+			m_Manager->SetDebugText(fmt::format(fmt::runtime(LOC("models.error_previewing")), e.what()).c_str());
 			return false;
 		}
 	}
@@ -356,11 +293,11 @@ namespace ThroughScope
 		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 		if (weaponInfo.currentConfig && !weaponInfo.currentConfig->modelName.empty()) {
 			if (PreviewModel(weaponInfo.currentConfig->modelName)) {
-				m_Manager->SetDebugText(fmt::format("Model reloaded: {}",
+				m_Manager->SetDebugText(fmt::format(fmt::runtime(LOC("models.reload_success")),
 					weaponInfo.currentConfig->modelName)
 						.c_str());
 			} else {
-				m_Manager->ShowErrorDialog("Reload Error", "Failed to reload the current model.");
+				m_Manager->ShowErrorDialog(LOC("models.reload_error_title"), LOC("models.reload_error_desc"));
 			}
 		}
 	}
@@ -390,12 +327,12 @@ namespace ThroughScope
 					weaponNiNode->Update(updateData);
 				}
 
-				m_Manager->SetDebugText("Current model removed");
+				m_Manager->SetDebugText(LOC("models.remove_success"));
 			} else {
-				m_Manager->SetDebugText("No model to remove");
+				m_Manager->SetDebugText(LOC("models.no_model_to_remove"));
 			}
 		} catch (const std::exception& e) {
-			m_Manager->SetDebugText(fmt::format("Error removing model: {}", e.what()).c_str());
+			m_Manager->SetDebugText(fmt::format(fmt::runtime(LOC("models.error_removing")), e.what()).c_str());
 		}
 	}
 
@@ -412,7 +349,7 @@ namespace ThroughScope
 			std::filesystem::path dataPath = std::filesystem::current_path() / "Data" / "Meshes" / "TTS" / "ScopeShape";
 
 			if (!std::filesystem::exists(dataPath)) {
-				m_Manager->SetDebugText("ScopeShape directory not found!");
+				m_Manager->SetDebugText(LOC("models.directory_not_found"));
 				return;
 			}
 
@@ -427,10 +364,10 @@ namespace ThroughScope
 			std::sort(m_AvailableNIFFiles.begin(), m_AvailableNIFFiles.end());
 
 			m_NIFFilesScanned = true;
-			m_Manager->SetDebugText(fmt::format("Found {} NIF files", m_AvailableNIFFiles.size()).c_str());
+			m_Manager->SetDebugText(fmt::format(fmt::runtime(LOC("models.files_found")), m_AvailableNIFFiles.size()).c_str());
 
 		} catch (const std::exception& e) {
-			m_Manager->SetDebugText(fmt::format("Error scanning NIF files: {}", e.what()).c_str());
+			m_Manager->SetDebugText(fmt::format(fmt::runtime(LOC("models.error_scanning")), e.what()).c_str());
 		}
 	}
 
@@ -457,6 +394,6 @@ namespace ThroughScope
 
 	std::string ModelSwitcherPanel::GetModelDisplayName(const std::string& fileName, bool isCurrent) const
 	{
-		return isCurrent ? fileName + " (Current)" : fileName;
+		return isCurrent ? fileName + " " + LOC("models.current_suffix") : fileName;
 	}
 }

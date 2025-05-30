@@ -16,6 +16,7 @@ namespace ThroughScope
         
         // 更新面板逻辑（可选重写）
         virtual void Update() {}
+        virtual void UpdateOutSideUI() {}
         
         // 面板初始化（可选重写）
         virtual bool Initialize() { return true; }

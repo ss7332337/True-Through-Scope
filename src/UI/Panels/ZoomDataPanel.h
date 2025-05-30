@@ -3,6 +3,7 @@
 #include "BasePanelInterface.h"
 #include "ScopeCamera.h"
 #include "D3DHooks.h"
+#include "LocalizationManager.h"
 
 namespace ThroughScope
 {
@@ -16,7 +17,7 @@ namespace ThroughScope
         void Render() override;
         void Update() override;
         bool Initialize() override;
-        const char* GetPanelName() const override { return "Zoom Data Settings"; }
+        const char* GetPanelName() const override { return LOC("ui.menu.zoom"); }
 		bool GetSaved() const override { return isSaved; }
 
         // Current values access

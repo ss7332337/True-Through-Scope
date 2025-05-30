@@ -98,7 +98,8 @@ namespace ThroughScope {
 		{
 			float screenWidth;
 			float screenHeight;
-			float padding1[2];  // 16字节对齐
+			int enableNightVision;
+			int enableThermalVision;
 
 			float cameraPosition[3];
 			float padding2;  // 16字节对齐
@@ -123,6 +124,19 @@ namespace ThroughScope {
 			float reticlePadding;  // 16字节对齐
 
 			XMFLOAT4X4 CameraRotation = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+			float nightVisionIntensity;    // 夜视强度
+			float nightVisionNoiseScale;   // 噪点缩放
+			float nightVisionNoiseAmount;  // 噪点强度
+			float nightVisionGreenTint;    // 绿色色调强度
+
+			// 热成像效果参数
+			float thermalIntensity;    // 热成像强度
+			float thermalThreshold;    // 热成像阈值
+			float thermalContrast;     // 热成像对比度
+			float thermalNoiseAmount;  // 热成像噪点强度
+
+
 		};
 
     public:
@@ -133,6 +147,8 @@ namespace ThroughScope {
         static void WINAPI hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
 		static HRESULT WINAPI hkPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags);
 		static LRESULT CALLBACK hkWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+		static void WINAPI hkRSSetViewports(ID3D11DeviceContext* pContext, UINT NumViewports, const D3D11_VIEWPORT* pViewports);
+
         static bool IsScopeQuadBeingDrawn(ID3D11DeviceContext* pContext, UINT IndexCount);
         static bool IsScopeQuadBeingDrawnShape(ID3D11DeviceContext* pContext, UINT IndexCount);
 		static BOOL __stdcall ClipCursorHook(RECT* lpRect);
@@ -143,7 +159,9 @@ namespace ThroughScope {
 		static bool IsEnableRender() { return s_EnableRender; }
 		static void SetEnableRender(bool value) { s_EnableRender = value; }
 
-		static void UpdateScopeSettings(float relativeFogRadius, float scopeSwayAmount, float maxTravel, float radius);
+		static void UpdateScopeParallaxSettings(float relativeFogRadius, float scopeSwayAmount, float maxTravel, float radius);
+		static void UpdateNightVisionSettings(float intensity, float noiseScale, float noiseAmount, float greenTint, int enable);
+		static void UpdateThermalVisionSettings(float intensity, float threshold, float contrast, float noiseAmount, int enable);
 		static void SetReticleScale(float scale)
 		{
 			s_ReticleScale = std::clamp(scale, 0.1f, 32.0f);
@@ -164,8 +182,6 @@ namespace ThroughScope {
 		static float GetReticleScale() { return s_ReticleScale; }
 		static float GetReticleOffsetX() { return s_ReticleOffsetX; }
 		static float GetReticleOffsetY() { return s_ReticleOffsetY; }
-
-		static bool isFirstSpawnNode;
 
 	private:
 		struct BufferInfo
@@ -196,6 +212,23 @@ namespace ThroughScope {
 		static float s_ReticleScale;
 		static float s_ReticleOffsetX;
 		static float s_ReticleOffsetY;
+
+		// 夜视效果参数
+		static float s_NightVisionIntensity;
+		static float s_NightVisionNoiseScale;
+		static float s_NightVisionNoiseAmount;
+		static float s_NightVisionGreenTint;
+		
+
+		// 热成像效果参数
+		static float s_ThermalIntensity;
+		static float s_ThermalThreshold;
+		static float s_ThermalContrast;
+		static float s_ThermalNoiseAmount;
+		
+	public:
+		static int s_EnableThermalVision;
+		static int s_EnableNightVision;
 
 	private:
 		static bool s_EnableFOVAdjustment;
@@ -233,9 +266,9 @@ namespace ThroughScope {
 
 		static void ProcessGamepadFOVInput();
 		static void ProcessMouseWheelFOVInput(short wheelDelta);
-		static void ReCreateResource(ID3D11Device* device, D3D11_TEXTURE2D_DESC srcTexDesc);
 
 	public:
 		static void HandleFOVInput();
+
     };
 }

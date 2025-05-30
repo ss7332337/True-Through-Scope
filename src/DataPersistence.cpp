@@ -220,6 +220,18 @@ namespace ThroughScope
 			// Model name
 			config.modelName = getValue(configJson, "modelName", "");
 
+			// 加载夜视效果参数
+			config.scopeSettings.nightVisionIntensity = getValue(scopeJson, "nightVisionIntensity", 1.0f);
+			config.scopeSettings.nightVisionNoiseScale = getValue(scopeJson, "nightVisionNoiseScale", 0.05f);
+			config.scopeSettings.nightVisionNoiseAmount = getValue(scopeJson, "nightVisionNoiseAmount", 0.05f);
+			config.scopeSettings.nightVisionGreenTint = getValue(scopeJson, "nightVisionGreenTint", 1.2f);
+
+			// 加载热成像效果参数
+			config.scopeSettings.thermalIntensity = getValue(scopeJson, "thermalIntensity", 1.0f);
+			config.scopeSettings.thermalThreshold = getValue(scopeJson, "thermalThreshold", 0.5f);
+			config.scopeSettings.thermalContrast = getValue(scopeJson, "thermalContrast", 1.2f);
+			config.scopeSettings.thermalNoiseAmount = getValue(scopeJson, "thermalNoiseAmount", 0.03f);
+
 			// Add to multimap
 			m_Configurations.emplace(config.weaponConfig.GetKey(), config);
 
@@ -273,7 +285,17 @@ namespace ThroughScope
 				{ "minFOV", config.scopeSettings.minFOV },
 				{ "maxFOV", config.scopeSettings.maxFOV },
 				{ "nightVision", config.scopeSettings.nightVision },
-				{ "thermalVision", config.scopeSettings.thermalVision }
+				{ "thermalVision", config.scopeSettings.thermalVision },
+				// 保存夜视效果参数
+				{ "nightVisionIntensity", config.scopeSettings.nightVisionIntensity },
+				{ "nightVisionNoiseScale", config.scopeSettings.nightVisionNoiseScale },
+				{ "nightVisionNoiseAmount", config.scopeSettings.nightVisionNoiseAmount },
+				{ "nightVisionGreenTint", config.scopeSettings.nightVisionGreenTint },
+				// 保存热成像效果参数
+				{ "thermalIntensity", config.scopeSettings.thermalIntensity },
+				{ "thermalThreshold", config.scopeSettings.thermalThreshold },
+				{ "thermalContrast", config.scopeSettings.thermalContrast },
+				{ "thermalNoiseAmount", config.scopeSettings.thermalNoiseAmount }
 			};
 
 			// Reticle settings
@@ -382,7 +404,8 @@ namespace ThroughScope
 			nlohmann::json globalJson = {
 				{ "menuKeyBindings", m_GlobalSettings.menuKeyBindings },
 				{ "nightVisionKeyBindings", m_GlobalSettings.nightVisionKeyBindings },
-				{ "thermalVisionKeyBindings", m_GlobalSettings.thermalVisionKeyBindings }
+				{ "thermalVisionKeyBindings", m_GlobalSettings.thermalVisionKeyBindings },
+				{ "selectedLanguage", m_GlobalSettings.selectedLanguage }
 			};
 
 			// Create directory if it doesn't exist
@@ -410,13 +433,10 @@ namespace ThroughScope
 			if (!configFile.is_open()) {
 				logger::warn("Global config file not found, creating default configuration");
 
-				// Set default key bindings:
-				// - Menu: F12 (VK_F12 = 123)
-				// - Night Vision: N (VK_N = 78)
-				// - Thermal Vision: T (VK_T = 84)
-				m_GlobalSettings.menuKeyBindings = { 123, 0, 0 };          // F12
-				m_GlobalSettings.nightVisionKeyBindings = { 78, 0, 0 };    // N
-				m_GlobalSettings.thermalVisionKeyBindings = { 84, 0, 0 };  // T
+				m_GlobalSettings.menuKeyBindings = { 113, 0, 0 };          // F2
+				m_GlobalSettings.nightVisionKeyBindings = { 88, 16, 0 };    // LShift + X
+				m_GlobalSettings.thermalVisionKeyBindings = { 84, 0, 0 };  // LShift + T
+				m_GlobalSettings.selectedLanguage = 0;  // Default to English
 
 				return SaveGlobalConfig();
 			}
@@ -428,19 +448,26 @@ namespace ThroughScope
 			if (globalJson.contains("menuKeyBindings")) {
 				m_GlobalSettings.menuKeyBindings = globalJson["menuKeyBindings"].get<std::array<int, 3>>();
 			} else {
-				m_GlobalSettings.menuKeyBindings = { 123, 0, 0 };  // Default to F12
+				m_GlobalSettings.menuKeyBindings = { 113, 0, 0 }; 
 			}
 
 			if (globalJson.contains("nightVisionKeyBindings")) {
 				m_GlobalSettings.nightVisionKeyBindings = globalJson["nightVisionKeyBindings"].get<std::array<int, 3>>();
 			} else {
-				m_GlobalSettings.nightVisionKeyBindings = { 78, 0, 0 };  // Default to N
+				m_GlobalSettings.nightVisionKeyBindings = { 88, 16, 0 };
 			}
 
 			if (globalJson.contains("thermalVisionKeyBindings")) {
 				m_GlobalSettings.thermalVisionKeyBindings = globalJson["thermalVisionKeyBindings"].get<std::array<int, 3>>();
 			} else {
-				m_GlobalSettings.thermalVisionKeyBindings = { 84, 0, 0 };  // Default to T
+				m_GlobalSettings.thermalVisionKeyBindings = { 84, 0, 0 }; 
+			}
+
+			// 加载语言设置
+			if (globalJson.contains("selectedLanguage")) {
+				m_GlobalSettings.selectedLanguage = globalJson["selectedLanguage"].get<int>();
+			} else {
+				m_GlobalSettings.selectedLanguage = 0;  // Default to English
 			}
 
 			return true;
@@ -448,9 +475,10 @@ namespace ThroughScope
 			logger::error("Failed to load global config: {}. Creating default configuration.", e.what());
 
 			// Set default key bindings
-			m_GlobalSettings.menuKeyBindings = { 123, 0, 0 };          // F12
-			m_GlobalSettings.nightVisionKeyBindings = { 78, 0, 0 };    // N
-			m_GlobalSettings.thermalVisionKeyBindings = { 84, 0, 0 };  // T
+			m_GlobalSettings.menuKeyBindings = { 113, 0, 0 };
+			m_GlobalSettings.nightVisionKeyBindings = { 88, 16, 0 };
+			m_GlobalSettings.thermalVisionKeyBindings = { 84, 16, 0 };
+			m_GlobalSettings.selectedLanguage = 0;  // Default to English
 
 			return SaveGlobalConfig();
 		}

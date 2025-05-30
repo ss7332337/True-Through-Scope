@@ -13,6 +13,7 @@
 #include <xinput.h>
 #pragma comment(lib, "xinput.lib")
 
+static constexpr UINT MAX_VIEWPORTS = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 namespace ThroughScope {
@@ -30,7 +31,6 @@ namespace ThroughScope {
 	float D3DHooks::s_ReticleOffsetX = 0.5f;
 	float D3DHooks::s_ReticleOffsetY = 0.5f;
 	bool D3DHooks::s_HasCachedState = false;
-	bool D3DHooks::isFirstSpawnNode = false;
 
 	bool D3DHooks::s_isForwardStage = false;
 	bool D3DHooks::s_EnableFOVAdjustment = true;
@@ -60,15 +60,31 @@ namespace ThroughScope {
 	float D3DHooks::s_CurrentMaxTravel = 0.05f;
 	float D3DHooks::s_CurrentRadius = 0.3f;
 
+	// 夜视效果参数初始化
+	float D3DHooks::s_NightVisionIntensity = 1.0f;
+	float D3DHooks::s_NightVisionNoiseScale = 0.05f;
+	float D3DHooks::s_NightVisionNoiseAmount = 0.05f;
+	float D3DHooks::s_NightVisionGreenTint = 1.2f;
+	int D3DHooks::s_EnableNightVision = 0;
+
+	// 热成像效果参数初始化
+	float D3DHooks::s_ThermalIntensity = 1.0f;
+	float D3DHooks::s_ThermalThreshold = 0.5f;
+	float D3DHooks::s_ThermalContrast = 1.2f;
+	float D3DHooks::s_ThermalNoiseAmount = 0.03f;
+	int D3DHooks::s_EnableThermalVision = 0;
 
 	static constexpr UINT TARGET_STRIDE = 28;
 	static constexpr UINT TARGET_INDEX_COUNT = 96;
 	static constexpr UINT TARGET_BUFFER_SIZE = 0x0000000008000000;
 	typedef void(__stdcall* D3D11DrawIndexedHook)(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
+	typedef void(__stdcall* D3D11RSSetViewportsHook)(ID3D11DeviceContext* pContext, UINT NumViewports, const D3D11_VIEWPORT* pViewports);
 	using ClipCur = decltype(&ClipCursor);
 
 	D3D11DrawIndexedHook phookD3D11DrawIndexed = nullptr;
 	ClipCur phookClipCursor = nullptr;
+	D3D11RSSetViewportsHook phookD3D11RSSetViewports = nullptr;
+
 	D3DHooks* D3DInstance = D3DHooks::GetSington();
 	ImGuiManager* imguiMgr;
 	ID3D11DeviceContext* m_Context = nullptr;
@@ -107,7 +123,7 @@ namespace ThroughScope {
 		return hr;
 	}
 
-	void D3DHooks::UpdateScopeSettings(float relativeFogRadius, float scopeSwayAmount, float maxTravel, float radius)
+	void D3DHooks::UpdateScopeParallaxSettings(float relativeFogRadius, float scopeSwayAmount, float maxTravel, float radius)
 	{
 		s_CurrentRelativeFogRadius = relativeFogRadius;
 		s_CurrentScopeSwayAmount = scopeSwayAmount;
@@ -115,6 +131,24 @@ namespace ThroughScope {
 		s_CurrentRadius = radius;
 
 		//logger::info("Updated D3D scope settings - Parallax: {:.3f}, {:.3f}, {:.3f}, {:.3f}", relativeFogRadius, scopeSwayAmount, maxTravel, radius);
+	}
+
+	void D3DHooks::UpdateNightVisionSettings(float intensity, float noiseScale, float noiseAmount, float greenTint, int enable)
+	{
+		s_NightVisionIntensity = intensity;
+		s_NightVisionNoiseScale = noiseScale;
+		s_NightVisionNoiseAmount = noiseAmount;
+		s_NightVisionGreenTint = greenTint;
+		s_EnableNightVision = enable;
+	}
+
+	void D3DHooks::UpdateThermalVisionSettings(float intensity, float threshold, float contrast, float noiseAmount, int enable)
+	{
+		s_ThermalIntensity = intensity;
+		s_ThermalThreshold = threshold;
+		s_ThermalContrast = contrast;
+		s_ThermalNoiseAmount = noiseAmount;
+		s_EnableThermalVision = enable;
 	}
 
 	D3DHooks* D3DHooks::GetSington()
@@ -156,7 +190,7 @@ namespace ThroughScope {
 
 		void* drawIndexedFunc = contextVTable[12];
 		void* presentFunc = swapChainVTable[8];  // 注意：Present是SwapChain的方法，不是Context的
-
+		void* rsSetViewportsFunc = contextVTable[44];  // RSSetViewports - 索引44
 		// 初始化ImGui管理器
 		imguiMgr = ImGuiManager::GetSingleton();
 
@@ -164,15 +198,21 @@ namespace ThroughScope {
 		Utilities::CreateAndEnableHook(drawIndexedFunc, reinterpret_cast<void*>(hkDrawIndexed), reinterpret_cast<void**>(&phookD3D11DrawIndexed), "DrawIndexedHook");
 		Utilities::CreateAndEnableHook(presentFunc, reinterpret_cast<void*>(hkPresent), reinterpret_cast<void**>(&s_OriginalPresent), "Present");
 		Utilities::CreateAndEnableHook(&ClipCursor, ClipCursorHook, reinterpret_cast<LPVOID*>(&phookClipCursor), "ClipCursorHook");
+		
+		Utilities::CreateAndEnableHook(rsSetViewportsFunc, reinterpret_cast<void*>(hkRSSetViewports), reinterpret_cast<void**>(&phookD3D11RSSetViewports), "RSSetViewportsHook");
 
 		logger::info("D3D11 hooks initialized successfully");
 		return true;
     }
 
-    
+    int hookDelay = 0;
+
     void WINAPI D3DHooks::hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation)
 	{
 		// Check if the current draw call is for our scope quad
+		int hookdelayE = hookDelay++ % 5;
+		if (hookdelayE == 0)
+			logger::info("DrawCall");
 
 		bool isScopeQuad = IsScopeQuadBeingDrawn(pContext, IndexCount);
 		if (isScopeQuad) {
@@ -448,131 +488,6 @@ namespace ThroughScope {
 		// Return true if this is our target draw call
 		return foundTargetTextures;
 	}
-    
-	void D3DHooks::ReCreateResource(ID3D11Device* device, D3D11_TEXTURE2D_DESC srcTexDesc)
-	{
-		// 创建中间纹理
-		D3D11_TEXTURE2D_DESC stagingDesc = srcTexDesc;
-		stagingDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-		stagingDesc.MiscFlags = 0;
-		stagingDesc.SampleDesc.Count = 1;
-		stagingDesc.SampleDesc.Quality = 0;
-		stagingDesc.Usage = D3D11_USAGE_DEFAULT;
-		stagingDesc.CPUAccessFlags = 0;
-
-		HRESULT hr = device->CreateTexture2D(&stagingDesc, nullptr, &stagingTexture);
-		if (FAILED(hr)) {
-			logger::error("Failed to create staging texture: 0x{:X}", hr);
-			device->Release();
-			return;
-		}
-
-		// 创建着色器资源视图(SRV)
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		srvDesc.Format = stagingDesc.Format;
-		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-		srvDesc.Texture2D.MostDetailedMip = 0;
-		srvDesc.Texture2D.MipLevels = 1;
-
-		hr = device->CreateShaderResourceView(stagingTexture, &srvDesc, &stagingSRV);
-		if (FAILED(hr)) {
-			logger::error("Failed to create staging SRV: 0x{:X}", hr);
-			stagingTexture->Release();
-			stagingTexture = nullptr;
-			device->Release();
-			return;
-		}
-
-		// 创建常量缓冲区
-		D3D11_BUFFER_DESC cbDesc;
-		ZeroMemory(&cbDesc, sizeof(cbDesc));
-		cbDesc.ByteWidth = sizeof(ScopeConstantBuffer);
-		cbDesc.Usage = D3D11_USAGE_DYNAMIC;
-		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-		cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-		cbDesc.MiscFlags = 0;
-		cbDesc.StructureByteStride = 0;
-
-		hr = device->CreateBuffer(&cbDesc, nullptr, &constantBuffer);
-		if (FAILED(hr)) {
-			logger::error("Failed to create constant buffer: 0x{:X}", hr);
-			stagingSRV->Release();
-			stagingTexture->Release();
-			stagingTexture = nullptr;
-			stagingSRV = nullptr;
-			device->Release();
-			return;
-		}
-
-		ID3DBlob* psBlob = nullptr;
-
-		hr = CreateShaderFromFile(L"Data\\Shaders\\XiFeiLi\\TrueScopeShader.cso", L"HLSL\\TrueScopeShader.hlsl", "main", "ps_5_0", &psBlob);
-
-		// 创建像素着色器
-		hr = device->CreatePixelShader(
-			psBlob->GetBufferPointer(),
-			psBlob->GetBufferSize(),
-			nullptr,
-			&scopePixelShader);
-
-		if (FAILED(hr)) {
-			logger::error("Failed to create pixel shader: 0x{:X}", hr);
-			psBlob->Release();
-			device->Release();
-			return;
-		}
-
-		psBlob->Release();
-
-		// 创建采样器状态
-		D3D11_SAMPLER_DESC samplerDesc = {};
-		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-		samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
-		samplerDesc.MinLOD = 0;
-		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-
-		hr = device->CreateSamplerState(&samplerDesc, &samplerState);
-		if (FAILED(hr)) {
-			logger::error("Failed to create sampler state: 0x{:X}", hr);
-			scopePixelShader->Release();
-			scopePixelShader = nullptr;
-			device->Release();
-			return;
-		}
-
-		D3D11_BLEND_DESC blendDesc = {};
-		blendDesc.AlphaToCoverageEnable = FALSE;
-		blendDesc.IndependentBlendEnable = FALSE;
-
-		// 设置第一个渲染目标的混合状态
-		blendDesc.RenderTarget[0].BlendEnable = TRUE;
-
-		// 源混合因子：使用源颜色的Alpha
-		blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-		blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-		blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-
-		// Alpha混合：直接使用源Alpha覆盖
-		blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-		blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
-		blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-
-		// 写入所有颜色通道
-		blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-
-		hr = device->CreateBlendState(&blendDesc, &blendState);
-		if (FAILED(hr)) {
-			logger::error("Failed to create blend state: 0x{:X}", hr);
-			// 清理其他已创建的资源...
-			device->Release();
-			return;
-		}
-
-		logger::info("Successfully created all scope rendering resources");
-	}
 
     void D3DHooks::SetScopeTexture(ID3D11DeviceContext* pContext)
 	{
@@ -627,7 +542,127 @@ namespace ThroughScope {
 
 		// 创建或重新创建资源(如果需要)
 		if (!stagingTexture) {
-			ReCreateResource(device, srcTexDesc);
+			// 创建中间纹理
+			D3D11_TEXTURE2D_DESC stagingDesc = srcTexDesc;
+			stagingDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+			stagingDesc.MiscFlags = 0;
+			stagingDesc.SampleDesc.Count = 1;
+			stagingDesc.SampleDesc.Quality = 0;
+			stagingDesc.Usage = D3D11_USAGE_DEFAULT;
+			stagingDesc.CPUAccessFlags = 0;
+
+			HRESULT hr = device->CreateTexture2D(&stagingDesc, nullptr, &stagingTexture);
+			if (FAILED(hr)) {
+				logger::error("Failed to create staging texture: 0x{:X}", hr);
+				device->Release();
+				return;
+			}
+
+			// 创建着色器资源视图(SRV)
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Format = stagingDesc.Format;
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+			srvDesc.Texture2D.MipLevels = 1;
+
+			hr = device->CreateShaderResourceView(stagingTexture, &srvDesc, &stagingSRV);
+			if (FAILED(hr)) {
+				logger::error("Failed to create staging SRV: 0x{:X}", hr);
+				stagingTexture->Release();
+				stagingTexture = nullptr;
+				device->Release();
+				return;
+			}
+
+			// 创建常量缓冲区
+			D3D11_BUFFER_DESC cbDesc;
+			ZeroMemory(&cbDesc, sizeof(cbDesc));
+			cbDesc.ByteWidth = sizeof(ScopeConstantBuffer);
+			cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+			cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+			cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+			cbDesc.MiscFlags = 0;
+			cbDesc.StructureByteStride = 0;
+
+			hr = device->CreateBuffer(&cbDesc, nullptr, &constantBuffer);
+			if (FAILED(hr)) {
+				logger::error("Failed to create constant buffer: 0x{:X}", hr);
+				stagingSRV->Release();
+				stagingTexture->Release();
+				stagingTexture = nullptr;
+				stagingSRV = nullptr;
+				device->Release();
+				return;
+			}
+
+			ID3DBlob* psBlob = nullptr;
+
+			hr = CreateShaderFromFile(L"Data\\Shaders\\XiFeiLi\\TrueScopeShader.cso", L"HLSL\\TrueScopeShader.hlsl", "main", "ps_5_0", &psBlob);
+
+			// 创建像素着色器
+			hr = device->CreatePixelShader(
+				psBlob->GetBufferPointer(),
+				psBlob->GetBufferSize(),
+				nullptr,
+				&scopePixelShader);
+
+			if (FAILED(hr)) {
+				logger::error("Failed to create pixel shader: 0x{:X}", hr);
+				psBlob->Release();
+				device->Release();
+				return;
+			}
+
+			psBlob->Release();
+
+			// 创建采样器状态
+			D3D11_SAMPLER_DESC samplerDesc = {};
+			samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+			samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+			samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+			samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+			samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+			samplerDesc.MinLOD = 0;
+			samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+
+			hr = device->CreateSamplerState(&samplerDesc, &samplerState);
+			if (FAILED(hr)) {
+				logger::error("Failed to create sampler state: 0x{:X}", hr);
+				scopePixelShader->Release();
+				scopePixelShader = nullptr;
+				device->Release();
+				return;
+			}
+
+			D3D11_BLEND_DESC blendDesc = {};
+			blendDesc.AlphaToCoverageEnable = FALSE;
+			blendDesc.IndependentBlendEnable = FALSE;
+
+			// 设置第一个渲染目标的混合状态
+			blendDesc.RenderTarget[0].BlendEnable = TRUE;
+
+			// 源混合因子：使用源颜色的Alpha
+			blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+			blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+			blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+
+			// Alpha混合：直接使用源Alpha覆盖
+			blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+			blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+			blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+
+			// 写入所有颜色通道
+			blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+			hr = device->CreateBlendState(&blendDesc, &blendState);
+			if (FAILED(hr)) {
+				logger::error("Failed to create blend state: 0x{:X}", hr);
+				// 清理其他已创建的资源...
+				device->Release();
+				return;
+			}
+
+			logger::info("Successfully created all scope rendering resources");
 		}
 
 		// 复制/解析纹理内容
@@ -640,7 +675,7 @@ namespace ThroughScope {
 			pContext->CopyResource(stagingTexture, RenderUtilities::GetSecondPassColorTexture());
 		}
 
-		 // 更新常量缓冲区数据
+		// 更新常量缓冲区数据
 		D3D11_MAPPED_SUBRESOURCE mappedResource;
 		HRESULT hr = pContext->Map(constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
 		if (SUCCEEDED(hr)) {
@@ -670,7 +705,7 @@ namespace ThroughScope {
 			cbData->reticleOffsetX = s_ReticleOffsetX;
 			cbData->reticleOffsetY = s_ReticleOffsetY;
 
-			 DirectX::XMFLOAT4X4 rotationMatrix = {
+			DirectX::XMFLOAT4X4 rotationMatrix = {
 				1, 0, 0, 0,
 				0, 1, 0, 0,
 				0, 0, 1, 0,
@@ -692,14 +727,26 @@ namespace ThroughScope {
 			rotationMatrix._33 = playerCamera->world.rotate.entry[2].z;
 			rotationMatrix._34 = playerCamera->world.rotate.entry[2].w;
 
-			// 效果强度参数 - 可以通过配置文件或UI调整
-			cbData->parallax_Radius = s_CurrentRadius;  // 折射强度
+			cbData->parallax_Radius = s_CurrentRadius;                        // 折射强度
 			cbData->parallax_relativeFogRadius = s_CurrentRelativeFogRadius;  // 视差强度
 			cbData->parallax_scopeSwayAmount = s_CurrentScopeSwayAmount;      // 暗角强度
 			cbData->parallax_maxTravel = s_CurrentMaxTravel;                  // 折射强度
 
-			//auto camMat = playerCamera->local.rotate.entry[0];
-			auto camMat = RE::PlayerCamera::GetSingleton() -> cameraRoot->local.rotate.entry[0];
+			// 更新夜视效果参数
+			cbData->nightVisionIntensity = s_NightVisionIntensity;
+			cbData->nightVisionNoiseScale = s_NightVisionNoiseScale;
+			cbData->nightVisionNoiseAmount = s_NightVisionNoiseAmount;
+			cbData->nightVisionGreenTint = s_NightVisionGreenTint;
+			cbData->enableNightVision = s_EnableNightVision;
+
+			// 更新热成像效果参数
+			cbData->thermalIntensity = s_EnableThermalVision ? s_ThermalIntensity : 0.0f;
+			cbData->thermalThreshold = s_ThermalThreshold;
+			cbData->thermalContrast = s_ThermalContrast;
+			cbData->thermalNoiseAmount = s_ThermalNoiseAmount;
+			cbData->enableThermalVision = s_EnableThermalVision;
+
+			auto camMat = RE::PlayerCamera::GetSingleton()->cameraRoot->local.rotate.entry[0];
 			memcpy_s(&cbData->CameraRotation, sizeof(cbData->CameraRotation), &rotationMatrix, sizeof(rotationMatrix));
 			pContext->Unmap(constantBuffer, 0);
 		}
@@ -776,6 +823,11 @@ namespace ThroughScope {
 
 		// Pass to the original window procedure
 		return CallWindowProcA(s_OriginalWndProc, hWnd, uMsg, wParam, lParam);
+	}
+
+	void WINAPI D3DHooks::hkRSSetViewports(ID3D11DeviceContext* pContext, UINT NumViewports, const D3D11_VIEWPORT* pViewports)
+	{
+		return phookD3D11RSSetViewports(pContext, NumViewports, pViewports);
 	}
 
 	void D3DHooks::ProcessGamepadFOVInput()

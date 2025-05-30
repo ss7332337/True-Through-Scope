@@ -1,4 +1,3 @@
-
 #include "DebugPanel.h"
 
 namespace ThroughScope
@@ -23,13 +22,8 @@ namespace ThroughScope
 		RenderTTSNodeInformation();
 		ImGui::Spacing();
 		RenderRenderingStatus();
-
-		if (m_ShowAdvancedInfo) {
-			ImGui::Spacing();
-			RenderPerformanceInfo();
-			ImGui::Spacing();
-			RenderAdvancedDebugInfo();
-		}
+		ImGui::Spacing();
+		RenderAdvancedDebugInfo();
 
 		ImGui::Spacing();
 		RenderActionButtons();
@@ -44,11 +38,11 @@ namespace ThroughScope
 
 	void DebugPanel::RenderCameraInformation()
 	{
-		RenderSectionHeader("Scope Camera Information");
+		RenderSectionHeader(LOC("debug.scope_camera_info"));
 
 		auto scopeCamera = ScopeCamera::GetScopeCamera();
 		if (!scopeCamera) {
-			ImGui::TextColored(m_WarningColor, "Scope camera not available");
+			ImGui::TextColored(m_WarningColor, LOC("debug.camera_not_available"));
 			return;
 		}
 
@@ -57,12 +51,12 @@ namespace ThroughScope
 		ImGui::Columns(2, "CameraColumns", false);
 		ImGui::SetColumnWidth(0, 150);
 
-		// 左列 - 标签
-		ImGui::Text("Local Position:");
-		ImGui::Text("World Position:");
-		ImGui::Text("Local Rotation:");
-		ImGui::Text("World Rotation:");
-		ImGui::Text("Current FOV:");
+		// Left column - labels
+		ImGui::Text(LOC("debug.local_position"));
+		ImGui::Text(LOC("debug.world_position"));
+		ImGui::Text(LOC("debug.local_rotation"));
+		ImGui::Text(LOC("debug.world_rotation"));
+		ImGui::Text(LOC("debug.current_fov"));
 
 		ImGui::NextColumn();
 
@@ -86,10 +80,10 @@ namespace ThroughScope
 
 	void DebugPanel::RenderTTSNodeInformation()
 	{
-		RenderSectionHeader("TTSNode Information");
+		RenderSectionHeader(LOC("debug.tts_node_info"));
 
 		if (!m_DebugInfo.ttsNodeExists) {
-			ImGui::TextColored(m_WarningColor, "TTSNode not found");
+			ImGui::TextColored(m_WarningColor, LOC("debug.tts_node_not_found"));
 			return;
 		}
 
@@ -98,12 +92,13 @@ namespace ThroughScope
 		ImGui::Columns(2, "TTSColumns", false);
 		ImGui::SetColumnWidth(0, 150);
 
-		// 左列 - 标签
-		ImGui::Text("Local Position:");
-		ImGui::Text("World Position:");
-		ImGui::Text("Local Rotation:");
-		ImGui::Text("World Rotation:");
-		ImGui::Text("Local Scale:");
+		// Left column - labels
+		ImGui::Text(LOC("debug.local_position"));
+		ImGui::Text(LOC("debug.world_position"));
+		ImGui::Text(LOC("debug.local_rotation"));
+		ImGui::Text(LOC("debug.world_rotation"));
+		ImGui::Text(LOC("debug.local_scale"));
+
 
 		ImGui::NextColumn();
 
@@ -127,28 +122,28 @@ namespace ThroughScope
 
 	void DebugPanel::RenderRenderingStatus()
 	{
-		RenderSectionHeader("Rendering Status");
+		RenderSectionHeader(LOC("debug.rendering_status"));
 
 		ImGui::Columns(2, "StatusColumns", false);
 		ImGui::SetColumnWidth(0, 180);
 
-		// 左列 - 标签
-		ImGui::Text("Rendering Enabled:");
-		ImGui::Text("Is Forward Stage:");
-		ImGui::Text("Rendering For Scope:");
-		ImGui::Text("Node Status:");
+		// Left column - labels
+		ImGui::Text(LOC("debug.rendering_enabled"));
+		ImGui::Text(LOC("debug.is_forward_stage"));
+		ImGui::Text(LOC("debug.rendering_for_scope"));
+		ImGui::Text(LOC("debug.node_status"));
 
 		ImGui::NextColumn();
 
 		// 右列 - 状态
 		ImGui::TextColored(m_DebugInfo.renderingEnabled ? m_SuccessColor : m_ErrorColor,
-			"%s", m_DebugInfo.renderingEnabled ? "Yes" : "No");
+			"%s", m_DebugInfo.renderingEnabled ? LOC("common.yes") : LOC("common.no"));
 
 		ImGui::TextColored(m_DebugInfo.isForwardStage ? m_SuccessColor : m_WarningColor,
-			"%s", m_DebugInfo.isForwardStage ? "Yes" : "No");
+			"%s", m_DebugInfo.isForwardStage ? LOC("common.yes") : LOC("common.no"));
 
 		ImGui::TextColored(m_DebugInfo.isRenderingForScope ? m_SuccessColor : m_WarningColor,
-			"%s", m_DebugInfo.isRenderingForScope ? "Yes" : "No");
+			"%s", m_DebugInfo.isRenderingForScope ? LOC("common.yes") : LOC("common.no"));
 
 		std::string nodeStatus = GetNodeStatusText();
 		ImGui::TextColored(m_DebugInfo.ttsNodeExists ? m_SuccessColor : m_WarningColor,
@@ -157,86 +152,59 @@ namespace ThroughScope
 		ImGui::Columns(1);
 	}
 
-	void DebugPanel::RenderPerformanceInfo()
-	{
-		if (!ImGui::CollapsingHeader("Performance Information")) {
-			return;
-		}
-
-		ImGui::Text("Frame Time: %.3f ms", m_DebugInfo.frameTime * 1000.0f);
-		ImGui::Text("FPS: %.1f", 1.0f / m_DebugInfo.frameTime);
-		ImGui::Text("Frame Count: %d", m_DebugInfo.frameCount);
-
-		// FPS图表
-		static float fpsHistory[100] = {};
-		static int fpsHistoryIndex = 0;
-
-		float currentFPS = 1.0f / m_DebugInfo.frameTime;
-		fpsHistory[fpsHistoryIndex] = currentFPS;
-		fpsHistoryIndex = (fpsHistoryIndex + 1) % 100;
-
-		ImGui::PlotLines("FPS", fpsHistory, 100, fpsHistoryIndex, nullptr, 0.0f, 120.0f, ImVec2(0, 80));
-	}
-
 	void DebugPanel::RenderAdvancedDebugInfo()
 	{
-		if (!ImGui::CollapsingHeader("Advanced Debug Information")) {
+		if (!ImGui::CollapsingHeader(LOC("debug.advanced_debug_info"))) {
 			return;
 		}
 
 		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 
-		ImGui::Text("Weapon Information:");
+		ImGui::Text(LOC("debug.weapon_information"));
 		if (weaponInfo.weapon) {
-			ImGui::BulletText("Form ID: %08X", weaponInfo.weaponFormID);
-			ImGui::BulletText("Mod Name: %s", weaponInfo.weaponModName.c_str());
-			ImGui::BulletText("Has Config: %s", weaponInfo.currentConfig ? "Yes" : "No");
+			ImGui::BulletText(LOC("debug.form_id"), weaponInfo.weaponFormID);
+			ImGui::BulletText(LOC("debug.mod_name"), weaponInfo.weaponModName.c_str());
+			ImGui::BulletText(LOC("debug.has_config"), weaponInfo.currentConfig ? LOC("common.yes") : LOC("common.no"));
 
 			if (weaponInfo.currentConfig) {
-				ImGui::BulletText("Model: %s", weaponInfo.currentConfig->modelName.c_str());
-				ImGui::BulletText("Config Source: %s", weaponInfo.configSource.c_str());
+				ImGui::BulletText(LOC("debug.model_name"), weaponInfo.currentConfig->modelName.c_str());
+				ImGui::BulletText(LOC("debug.config_source"), weaponInfo.configSource.c_str());
 			}
 		} else {
-			ImGui::TextColored(m_WarningColor, "No weapon equipped");
+			ImGui::TextColored(m_WarningColor, LOC("debug.no_weapon_equipped"));
 		}
-
-		ImGui::Spacing();
-		ImGui::Text("System Information:");
-		ImGui::BulletText("ImGui Version: %s", ImGui::GetVersion());
-		ImGui::BulletText("Display Size: %.0fx%.0f", ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y);
-		ImGui::BulletText("Framerate: %.1f FPS", ImGui::GetIO().Framerate);
 	}
 
 	void DebugPanel::RenderActionButtons()
 	{
-		RenderSectionHeader("Debug Actions");
+		RenderSectionHeader(LOC("debug.actions"));
 
 		// 第一行按钮
-		if (ImGui::Button("Print Node Hierarchy")) {
+		if (ImGui::Button(LOC("debug.print_hierarchy"))) {
 			PrintNodeHierarchy();
 		}
-		RenderHelpTooltip("Print the weapon node hierarchy to the log file");
+		RenderHelpTooltip(LOC("tooltip.print_hierarchy"));
 
 		ImGui::SameLine();
-		if (ImGui::Button("Refresh TTSNode")) {
+		if (ImGui::Button(LOC("debug.refresh_node"))) {
 			RefreshTTSNode();
 		}
-		RenderHelpTooltip("Force refresh TTSNode information");
+		RenderHelpTooltip(LOC("tooltip.refresh_node"));
 
 		ImGui::SameLine();
-		if (ImGui::Button("Copy Values")) {
+		if (ImGui::Button(LOC("debug.copy_values"))) {
 			CopyValuesToClipboard();
 		}
-		RenderHelpTooltip("Copy current debug values to clipboard");
+		RenderHelpTooltip(LOC("tooltip.copy_values"));
 
 		// 第二行按钮
-		if (ImGui::Button("Force Update Debug Info")) {
+		if (ImGui::Button(LOC("debug.force_update"))) {
 			UpdateDebugInfo();
-			m_Manager->SetDebugText("Debug information updated");
+			m_Manager->SetDebugText(LOC("debug.info_updated"));
 		}
 
 		ImGui::SameLine();
-		if (ImGui::Button("Clear Debug Log")) {
+		if (ImGui::Button(LOC("debug.clear_log"))) {
 			m_Manager->SetDebugText("");
 		}
 
@@ -244,18 +212,18 @@ namespace ThroughScope
 		ImGui::Spacing();
 		ImGui::Separator();
 
-		ImGui::Checkbox("Auto Refresh", &m_AutoRefresh);
-		RenderHelpTooltip("Automatically refresh debug information");
+		ImGui::Checkbox(LOC("debug.auto_refresh"), &m_AutoRefresh);
+		RenderHelpTooltip(LOC("tooltip.auto_refresh"));
 
 		ImGui::SameLine();
-		ImGui::Checkbox("Show Advanced Info", &m_ShowAdvancedInfo);
-		RenderHelpTooltip("Show additional debug information and performance data");
+		ImGui::Checkbox(LOC("debug.show_advanced"), &m_ShowAdvancedInfo);
+		RenderHelpTooltip(LOC("tooltip.show_advanced_debug"));
 
 		if (m_AutoRefresh) {
 			ImGui::SameLine();
 			ImGui::SetNextItemWidth(100);
 			ImGui::SliderFloat("##RefreshRate", &m_RefreshInterval, 0.1f, 5.0f, "%.1fs");
-			RenderHelpTooltip("Debug information refresh interval");
+			RenderHelpTooltip(LOC("tooltip.refresh_interval"));
 		}
 
 	}
@@ -268,15 +236,15 @@ namespace ThroughScope
 				auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
 				if (weaponNode) {
 					ThroughScope::Utilities::PrintNodeHierarchy(weaponNode);
-					m_Manager->SetDebugText("Node hierarchy printed to log file");
+					m_Manager->SetDebugText(LOC("debug.hierarchy_printed"));
 				} else {
-					m_Manager->SetDebugText("Weapon node not found");
+					m_Manager->SetDebugText(LOC("debug.weapon_node_not_found"));
 				}
 			} else {
-				m_Manager->SetDebugText("Player character or 3D not available");
+				m_Manager->SetDebugText(LOC("debug.player_not_available"));
 			}
 		} catch (const std::exception& e) {
-			m_Manager->SetDebugText(fmt::format("Error printing hierarchy: {}", e.what()).c_str());
+			m_Manager->SetDebugText(fmt::format(fmt::runtime(LOC("debug.error_printing_hierarchy")), e.what()).c_str());
 		}
 	}
 
@@ -285,9 +253,9 @@ namespace ThroughScope
 		UpdateDebugInfo();
 
 		if (m_DebugInfo.ttsNodeExists) {
-			m_Manager->SetDebugText("TTSNode found and information updated");
+			m_Manager->SetDebugText(LOC("debug.tts_found_updated"));
 		} else {
-			m_Manager->SetDebugText("TTSNode not found!");
+			m_Manager->SetDebugText(LOC("debug.tts_not_found_exclaim"));
 		}
 	}
 
@@ -299,30 +267,34 @@ namespace ThroughScope
 			// 格式化调试信息
 			if (m_DebugInfo.ttsNodeExists) {
 				clipboardText = fmt::format(
-					"TTS Debug Information\n"
+					"{}\n"
 					"=====================\n"
-					"TTSNode Position: [{:.3f}, {:.3f}, {:.3f}]\n"
-					"TTSNode Rotation: [{:.1f}, {:.1f}, {:.1f}] degrees\n"
-					"TTSNode Scale: {:.3f}\n\n"
-					"Camera Position: [{:.3f}, {:.3f}, {:.3f}]\n"
-					"Camera FOV: {:.2f}°\n\n"
-					"Rendering Status: {}\n"
-					"Forward Stage: {}\n"
-					"Rendering For Scope: {}\n",
-					m_DebugInfo.ttsLocalPos.x, m_DebugInfo.ttsLocalPos.y, m_DebugInfo.ttsLocalPos.z,
-					m_DebugInfo.ttsLocalRot.x, m_DebugInfo.ttsLocalRot.y, m_DebugInfo.ttsLocalRot.z,
-					m_DebugInfo.ttsLocalScale,
-					m_DebugInfo.cameraLocalPos.x, m_DebugInfo.cameraLocalPos.y, m_DebugInfo.cameraLocalPos.z,
-					m_DebugInfo.currentFOV,
-					m_DebugInfo.renderingEnabled ? "Enabled" : "Disabled",
-					m_DebugInfo.isForwardStage ? "Yes" : "No",
-					m_DebugInfo.isRenderingForScope ? "Yes" : "No");
+					"{}: [{:.3f}, {:.3f}, {:.3f}]\n"
+					"{}: [{:.1f}, {:.1f}, {:.1f}] {}\n"
+					"{}: {:.3f}\n\n"
+					"{}: [{:.3f}, {:.3f}, {:.3f}]\n"
+					"{}: {:.2f}°\n\n"
+					"{}: {}\n"
+					"{}: {}\n"
+					"{}: {}\n",
+					LOC("debug.clipboard_header"),
+					LOC("debug.tts_position"), m_DebugInfo.ttsLocalPos.x, m_DebugInfo.ttsLocalPos.y, m_DebugInfo.ttsLocalPos.z,
+					LOC("debug.tts_rotation"), m_DebugInfo.ttsLocalRot.x, m_DebugInfo.ttsLocalRot.y, m_DebugInfo.ttsLocalRot.z, LOC("debug.degrees"),
+					LOC("debug.tts_scale"), m_DebugInfo.ttsLocalScale,
+					LOC("debug.camera_position"), m_DebugInfo.cameraLocalPos.x, m_DebugInfo.cameraLocalPos.y, m_DebugInfo.cameraLocalPos.z,
+					LOC("debug.camera_fov"), m_DebugInfo.currentFOV,
+					LOC("debug.rendering_status"), m_DebugInfo.renderingEnabled ? LOC("debug.enabled") : LOC("debug.disabled"),
+					LOC("debug.forward_stage"), m_DebugInfo.isForwardStage ? LOC("common.yes") : LOC("common.no"),
+					LOC("debug.rendering_for_scope"), m_DebugInfo.isRenderingForScope ? LOC("common.yes") : LOC("common.no"));
 			} else {
-				clipboardText =
-					"TTS Debug Information\n"
+				clipboardText = fmt::format(
+					"{}\n"
 					"=====================\n"
-					"TTSNode: Not Found\n"
-					"Please load a model first.\n";
+					"TTSNode: {}\n"
+					"{}\n",
+					LOC("debug.clipboard_header"),
+					LOC("debug.not_found"),
+					LOC("debug.load_model_first"));
 			}
 
 			// 复制到剪贴板
@@ -336,12 +308,12 @@ namespace ThroughScope
 					SetClipboardData(CF_TEXT, hClipboardData);
 				}
 				CloseClipboard();
-				m_Manager->SetDebugText("Debug values copied to clipboard!");
+				m_Manager->SetDebugText(LOC("debug.values_copied"));
 			} else {
-				m_Manager->SetDebugText("Failed to access clipboard!");
+				m_Manager->SetDebugText(LOC("debug.clipboard_failed"));
 			}
 		} catch (const std::exception& e) {
-			m_Manager->SetDebugText(fmt::format("Error copying to clipboard: {}", e.what()).c_str());
+			m_Manager->SetDebugText(fmt::format(fmt::runtime(LOC("debug.error_copying")), e.what()).c_str());
 		}
 	}
 

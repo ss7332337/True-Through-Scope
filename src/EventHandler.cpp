@@ -40,37 +40,6 @@ namespace ThroughScope
 		return olddata;
 	}
 
-	void CleanupScopeResources()
-	{
-		auto playerCharacter = RE::PlayerCharacter::GetSingleton();
-		if (!playerCharacter || !playerCharacter->Get3D()) {
-			return;
-		}
-
-		auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
-		if (!weaponNode || !weaponNode->IsNode()) {
-			return;
-		}
-
-		auto weaponNiNode = static_cast<RE::NiNode*>(weaponNode);
-		auto existingTTSNode = weaponNiNode->GetObjectByName("TTSNode");
-
-		if (existingTTSNode) {
-			logger::info("Removing existing TTSNode");
-			weaponNiNode->DetachChild(existingTTSNode);
-
-			// 更新节点
-			RE::NiUpdateData updateData{};
-			updateData.camera = ScopeCamera::GetScopeCamera();
-			if (updateData.camera) {
-				weaponNiNode->Update(updateData);
-			}
-
-			logger::info("Existing TTSNode removed");
-		}
-		logger::info("Scope resources cleaned up");
-	}
-
 
 	EquipWatcher* EquipWatcher::GetSingleton()
 	{
@@ -156,9 +125,9 @@ namespace ThroughScope
 				isQuerySpawnNode = true;
 				s_IsScopeActive = true;
 
-				if (D3DHooks::isFirstSpawnNode)
+				if (ScopeCamera::isFirstSpawnNode)
 				{
-					D3DHooks::isFirstSpawnNode = true;
+					ScopeCamera::isFirstSpawnNode = true;
 					logger::warn("FirstSpawn Finish: EquipWatcher");
 				}
 				
@@ -175,7 +144,7 @@ namespace ThroughScope
 			logger::info("Weapon unequipped, cleaning up scope resources");
 			s_IsScopeActive = false;
 			ScopeCamera::s_EquippedWeaponFormID = 0;
-			CleanupScopeResources();
+			ScopeCamera::CleanupScopeResources();
 		}
 
 		return RE::BSEventNotifyControl::kContinue;
@@ -217,13 +186,13 @@ namespace ThroughScope
 		
 		if (std::strcmp(eventName.c_str(), "weaponDraw") == 0)
 		{
-			CleanupScopeResources();
+			ScopeCamera::CleanupScopeResources();
 			auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
 			if (weaponInfo.currentConfig) {
 				ScopeCamera::SetupScopeForWeapon(weaponInfo);
 				isQuerySpawnNode = false;
-				if (D3DHooks::isFirstSpawnNode) {
-					D3DHooks::isFirstSpawnNode = true;
+				if (ScopeCamera::isFirstSpawnNode) {
+					ScopeCamera::isFirstSpawnNode = true;
 					logger::warn("FirstSpawn Finish: AnimationGraphEventWatcher");
 				}
 				

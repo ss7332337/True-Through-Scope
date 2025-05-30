@@ -3,6 +3,8 @@
 #include "BasePanelInterface.h"
 #include "ScopeCamera.h"
 #include "D3DHooks.h"
+#include <DataPersistence.h>
+#include "../Localization/LocalizationManager.h"
 
 namespace ThroughScope
 {
@@ -16,7 +18,7 @@ namespace ThroughScope
         void Render() override;
         void Update() override;
         bool Initialize() override;
-        const char* GetPanelName() const override { return "Camera Adjustment"; }
+        const char* GetPanelName() const override { return LOC("ui.menu.camera"); }
 		bool GetSaved() const override { return isSaved; }
         
         // 获取当前调整值
@@ -46,6 +48,7 @@ namespace ThroughScope
         
         // 重置所有调整
         void ResetAllAdjustments();
+		void ApplySettings();
         
     private:
         PanelManagerInterface* m_Manager;
@@ -57,12 +60,34 @@ namespace ThroughScope
         bool m_UIValuesInitialized = false;
         std::string m_LastLoadedConfigKey = "";
         
+        // 视差设置
+        float m_ParallaxRelativeFogRadius = 0.5f;
+        float m_ParallaxScopeSwayAmount = 0.1f;
+        float m_ParallaxMaxTravel = 0.05f;
+        float m_ParallaxRadius = 0.3f;
+
+        // 夜视效果设置
+        float m_NightVisionIntensity = 1.0f;
+        float m_NightVisionNoiseScale = 0.05f;
+        float m_NightVisionNoiseAmount = 0.05f;
+        float m_NightVisionGreenTint = 1.2f;
+        bool m_EnableNightVision = false;
+
+        // 热成像效果设置
+        float m_ThermalIntensity = 1.0f;
+        float m_ThermalThreshold = 0.5f;
+        float m_ThermalContrast = 1.2f;
+        float m_ThermalNoiseAmount = 0.03f;
+        bool m_EnableThermalVision = false;
+        
         // 渲染函数
         void RenderWeaponInformation();
         void RenderConfigurationSection();
         void RenderAdjustmentControls();
         void RenderScopeSettings();
         void RenderParallaxSettings();
+        void RenderNightVisionSettings();
+        void RenderThermalVisionSettings();
         void RenderActionButtons();
         
         // 应用调整
@@ -89,5 +114,8 @@ namespace ThroughScope
         // UI状态
         bool m_ShowAdvancedControls = false;
         bool m_ConfirmBeforeReset = true;
+        
+        // 辅助函数
+        void MarkSettingsChanged() { isSaved = false; }
     };
 }
