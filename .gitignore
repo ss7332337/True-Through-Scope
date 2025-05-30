@@ -5,3 +5,7 @@
 /vcpkg_installed
 /include/detours.h
 *.bak
+/build
+/Languages
+/.vscode
+/README_Fonts.md
