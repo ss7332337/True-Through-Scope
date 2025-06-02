@@ -42,7 +42,6 @@ REL::Relocation<uintptr_t> BSShaderAccumulator_RenderBlendedDecals_Ori{ REL::ID(
 #pragma region Main
 REL::Relocation<uintptr_t> DrawWorld_Begin_Ori{ REL::ID(502840) };
 REL::Relocation<uintptr_t> Main_DrawWorldAndUI_Ori{ REL::ID(408683) };
-REL::Relocation<uintptr_t> Main_Swap_Ori{ REL::ID(1075087) };
 REL::Relocation<uintptr_t> PCUpdateMainThread_Ori{ REL::ID(1134912) };
 #pragma endregion
 
@@ -56,15 +55,8 @@ REL::Relocation<uintptr_t> BSGraphics_RenderAlphaTestZPrePass_Ori{ REL::ID(76722
 
 REL::Relocation<uintptr_t> BSDistantObjectInstanceRenderer_Render_Ori{ REL::ID(148163) };
 REL::Relocation<uintptr_t> BSShaderAccumulator_ResetSunOcclusion_Ori{ REL::ID(371166) };
-REL::Relocation<uintptr_t> RenderTargetManager_ResummarizeHTileDepthStencilTarget_Ori{ REL::ID(777723) };
 REL::Relocation<uintptr_t> RenderTargetManager_DecompressDepthStencilTarget_Ori{ REL::ID(338650) };
 
-REL::Relocation<uintptr_t> RTM_SetCurrentRenderTarget_Ori{ REL::ID(1502425) };
-REL::Relocation<uintptr_t> RTM_SetCurrentDepthStencilTarget_Ori{ REL::ID(704517) };
-REL::Relocation<uintptr_t> RTM_SetCurrentCubeMapRenderTarget_Ori{ REL::ID(1049522) };
-REL::Relocation<uintptr_t> BG_SetDirtyRenderTargets_Ori{ REL::ID(361475) };
-REL::Relocation<uintptr_t> BG_SetRenderTarget_Ori{ REL::ID(1104516) };
-REL::Relocation<uintptr_t> BSRT_Create_Ori{ REL::ID(1118299) };
 REL::Relocation<uintptr_t> BSP_GetRenderPasses_Ori{ REL::ID(1289086) };
 REL::Relocation<uintptr_t> BSBatchRenderer_Draw_Ori{ REL::ID(1152191) };
 REL::Relocation<uintptr_t> MapDynamicTriShapeDynamicData_Ori{ REL::ID(732935) };
@@ -140,7 +132,6 @@ RenderZPrePassOriginalFuncType g_RenderZPrePassOriginal = nullptr;
 RenderAlphaTestZPrePassOriginalFuncType g_RenderAlphaTestZPrePassOriginal = nullptr;
 ResetSunOcclusionOriginalFuncType g_ResetSunOcclusionOriginal = nullptr;
 BSDistantObjectInstanceRenderer_Render_OriginalFuncType g_BSDistantObjectInstanceRenderer_RenderOriginal = nullptr;
-RenderTargetManager_ResummarizeHTileDepthStencilTarget_OriginalFuncType g_ResummarizeHTileDepthStencilTarget_RenderOriginal = nullptr;
 RenderTargetManager_DecompressDepthStencilTarget_OriginalFuncType g_DecompressDepthStencilTargetOriginal = nullptr;
 RTM_SetCurrentRenderTarget_OriginalFuncType g_SetCurrentRenderTargetOriginal = nullptr;
 RTM_SetCurrentDepthStencilTarget_OriginalFuncType g_SetCurrentDepthStencilTargetOriginal = nullptr;
@@ -152,7 +143,6 @@ BSEffectShaderProperty_GetRenderPasses_Original g_BSEffectShaderGetRenderPassesO
 FnRender_PreUI g_RenderPreUIOriginal = nullptr;
 FnBegin g_BeginOriginal = nullptr;
 FnMain_DrawWorldAndUI g_DrawWorldAndUIOriginal = nullptr;
-FnMain_Swap g_SwapOriginal = nullptr;
 FnBSCullingGroup_Process g_BSCullingGroupProcessOriginal = nullptr;
 Fn g_MainAccumOriginal = nullptr;
 Fn g_OcclusionMapRenderOriginal = nullptr;
@@ -373,10 +363,6 @@ void __fastcall hkBSDistantObjectInstanceRenderer_Render(uint64_t thisPtr)
 {
 	D3DEventNode(g_BSDistantObjectInstanceRenderer_RenderOriginal(thisPtr), L"hkBSDistantObjectInstanceRenderer_Render");
 }
-void __fastcall hkRenderTargetManager_ResummarizeHTileDepthStencilTarget(RenderTargetManager* thisPtr, int index)
-{
-	D3DEventNode(g_ResummarizeHTileDepthStencilTarget_RenderOriginal(thisPtr, index), L"hkRenderTargetManager_ResummarizeHTileDepthStencilTarget");
-}
 void __fastcall hkBSShaderAccumulator_ResetSunOcclusion(BSShaderAccumulator* thisPtr)
 {
 	D3DEventNode(g_ResetSunOcclusionOriginal(thisPtr), L"hkBSShaderAccumulator_ResetSunOcclusion");
@@ -482,40 +468,6 @@ void __fastcall hkBegin(uint64_t ptr_drawWorld)
 void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground)
 {
 	D3DEventNode(g_DrawWorldAndUIOriginal(ptr_drawWorld, abBackground), L"hkMain_DrawWorldAndUI");
-}
-
-void hkMain_Swap()
-{
-	g_SwapOriginal();
-}
-
-void __fastcall hkBGSetRenderTarget(RendererShadowState* arShadowState, unsigned int auiIndex, int aiTarget, SetRenderTargetMode aeMode)
-{
-	g_BGSetRenderTargetOriginal(arShadowState, auiIndex, aiTarget, aeMode);
-}
-
-void __fastcall hkBSShaderRenderTargetsCreate(void* thisPtr)
-{
-	g_BSShaderRenderTargetsCreateOriginal(thisPtr);
-}
-
-void __fastcall hkSetDirtyRenderTargets(void* thisPtr)
-{
-	g_SetDirtyRenderTargetsOriginal(thisPtr);
-}
-
-void __fastcall hkSetCurrentDepthStencilTarget(RenderTargetManager* manager, int aDepthStencilTarget, SetRenderTargetMode aMode, int aSlice)
-{
-	g_SetCurrentDepthStencilTargetOriginal(manager, aDepthStencilTarget, aMode, aSlice);
-}
-
-void __fastcall hkSetCurrentRenderTarget(RenderTargetManager* manager, int aIndex, int aRenderTarget, SetRenderTargetMode aMode)
-{
-	g_SetCurrentRenderTargetOriginal(manager, aIndex, aRenderTarget, aMode);
-}
-void __fastcall hkSetCurrentCubeMapRenderTarget(RenderTargetManager* manager, int aCubeMapRenderTarget, SetRenderTargetMode aMode, int aView)
-{
-	g_SetCurrentCubeMapRenderTargetOriginal(manager, aCubeMapRenderTarget, aMode, aView);
 }
 
 namespace FirstSpawnDelay
@@ -682,29 +634,8 @@ void RegisterHooks()
 	CreateAndEnableHook((LPVOID)BSDistantObjectInstanceRenderer_Render_Ori.address(), &hkBSDistantObjectInstanceRenderer_Render,
 		reinterpret_cast<LPVOID*>(&g_BSDistantObjectInstanceRenderer_RenderOriginal), "BSDistantObjectInstanceRenderer_Render");
 
-	CreateAndEnableHook((LPVOID)RenderTargetManager_ResummarizeHTileDepthStencilTarget_Ori.address(), &hkRenderTargetManager_ResummarizeHTileDepthStencilTarget,
-		reinterpret_cast<LPVOID*>(&g_ResummarizeHTileDepthStencilTarget_RenderOriginal), "ResummarizeHTileDepthStencilTarget");
-
 	CreateAndEnableHook((LPVOID)RenderTargetManager_DecompressDepthStencilTarget_Ori.address(), &hkDecompressDepthStencilTarget,
 		reinterpret_cast<LPVOID*>(&g_DecompressDepthStencilTargetOriginal), "DecompressDepthStencilTarget");
-
-	CreateAndEnableHook((LPVOID)RTM_SetCurrentRenderTarget_Ori.address(), &hkSetCurrentRenderTarget,
-		reinterpret_cast<LPVOID*>(&g_SetCurrentRenderTargetOriginal), "SetCurrentRenderTarget");
-
-	CreateAndEnableHook((LPVOID)RTM_SetCurrentDepthStencilTarget_Ori.address(), &hkSetCurrentDepthStencilTarget,
-		reinterpret_cast<LPVOID*>(&g_SetCurrentDepthStencilTargetOriginal), "SetCurrentDepthStencilTarget");
-
-	CreateAndEnableHook((LPVOID)RTM_SetCurrentCubeMapRenderTarget_Ori.address(), &hkSetCurrentCubeMapRenderTarget,
-		reinterpret_cast<LPVOID*>(&g_SetCurrentCubeMapRenderTargetOriginal), "SetCurrentCubeMapRenderTarget");
-
-	CreateAndEnableHook((LPVOID)BG_SetDirtyRenderTargets_Ori.address(), &hkSetDirtyRenderTargets,
-		reinterpret_cast<LPVOID*>(&g_SetDirtyRenderTargetsOriginal), "SetDirtyRenderTargets");
-
-	CreateAndEnableHook((LPVOID)BSRT_Create_Ori.address(), &hkBSShaderRenderTargetsCreate,
-		reinterpret_cast<LPVOID*>(&g_BSShaderRenderTargetsCreateOriginal), "BSShaderRenderTargetsCreate");
-
-	CreateAndEnableHook((LPVOID)BG_SetRenderTarget_Ori.address(), &hkBGSetRenderTarget,
-		reinterpret_cast<LPVOID*>(&g_BGSetRenderTargetOriginal), "BGSetRenderTarget");
 
 	CreateAndEnableHook((LPVOID)DrawWorld_Render_PreUI_Ori.address(), &hkRender_PreUI,
 		reinterpret_cast<LPVOID*>(&g_RenderPreUIOriginal), "Render_PreUI");
@@ -714,9 +645,6 @@ void RegisterHooks()
 
 	CreateAndEnableHook((LPVOID)Main_DrawWorldAndUI_Ori.address(), &hkMain_DrawWorldAndUI,
 		reinterpret_cast<LPVOID*>(&g_DrawWorldAndUIOriginal), "Main_DrawWorldAndUI");
-
-	CreateAndEnableHook((LPVOID)Main_Swap_Ori.address(), &hkMain_Swap,
-		reinterpret_cast<LPVOID*>(&g_SwapOriginal), "Main_Swap");
 
 	CreateAndEnableHook((LPVOID)BSCullingGroup_Process_Ori.address(), &hkBSCullingGroup_Process,
 		reinterpret_cast<LPVOID*>(&g_BSCullingGroupProcessOriginal), "BSCullingGroup_Process");
