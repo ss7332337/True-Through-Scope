@@ -142,12 +142,15 @@ namespace ThroughScope {
     public:
 		static D3DHooks* GetSington();
         bool Initialize();
+		bool PreInit();
 
         // D3D11 function hooks
         static void WINAPI hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
 		static HRESULT WINAPI hkPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags);
 		static LRESULT CALLBACK hkWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 		static void WINAPI hkRSSetViewports(ID3D11DeviceContext* pContext, UINT NumViewports, const D3D11_VIEWPORT* pViewports);
+
+		ID3D11DeviceContext* GetContext();
 
         static bool IsScopeQuadBeingDrawn(ID3D11DeviceContext* pContext, UINT IndexCount);
         static bool IsScopeQuadBeingDrawnShape(ID3D11DeviceContext* pContext, UINT IndexCount);
@@ -182,6 +185,7 @@ namespace ThroughScope {
 		static float GetReticleScale() { return s_ReticleScale; }
 		static float GetReticleOffsetX() { return s_ReticleOffsetX; }
 		static float GetReticleOffsetY() { return s_ReticleOffsetY; }
+		static bool isSelfDrawCall;
 
 	private:
 		struct BufferInfo
@@ -255,7 +259,8 @@ namespace ThroughScope {
 		static void RestoreIAState(ID3D11DeviceContext* pContext);
 		static void RestoreVSState(ID3D11DeviceContext* pContext);
 		static void RestoreRSState(ID3D11DeviceContext* pContext);
-		static void RestoreAllCachedStates(ID3D11DeviceContext* pContext);
+		static void CacheAllStates();
+		static void RestoreAllCachedStates();
 		static bool LoadAimTexture(const std::string& path);
 		static ID3D11ShaderResourceView* LoadAimSRV(const std::string& path);
     private:
@@ -267,6 +272,22 @@ namespace ThroughScope {
 		static void ProcessGamepadFOVInput();
 		static void ProcessMouseWheelFOVInput(short wheelDelta);
 
+		void HookAllContexts();
+		void HookContext(ID3D11DeviceContext* context);
+		static HRESULT WINAPI D3D11CreateDeviceAndSwapChain_Hook(
+			_In_opt_ IDXGIAdapter* pAdapter,
+			D3D_DRIVER_TYPE DriverType,
+			HMODULE Software,
+			UINT Flags,
+			_In_reads_opt_(FeatureLevels) CONST D3D_FEATURE_LEVEL* pFeatureLevels,
+			UINT FeatureLevels,
+			UINT SDKVersion,
+			_In_opt_ CONST DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
+			_COM_Outptr_opt_ IDXGISwapChain** ppSwapChain,
+			_COM_Outptr_opt_ ID3D11Device** ppDevice,
+			_Out_opt_ D3D_FEATURE_LEVEL* pFeatureLevel,
+			_COM_Outptr_opt_ ID3D11DeviceContext** ppImmediateContext);
+		UINT GetDrawIndexedIndex(ID3D11DeviceContext* context);
 	public:
 		static void HandleFOVInput();
 

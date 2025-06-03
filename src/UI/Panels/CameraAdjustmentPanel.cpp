@@ -338,15 +338,15 @@ namespace ThroughScope
 		if (ImGui::CollapsingHeader(LOC("camera.scope_settings"))) {
 			auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 			if (weaponInfo.currentConfig) {
-				static int minFOV = weaponInfo.currentConfig->scopeSettings.minFOV;
-				static int maxFOV = weaponInfo.currentConfig->scopeSettings.maxFOV;
-				static bool nightVision = weaponInfo.currentConfig->scopeSettings.nightVision;
-				static bool thermalVision = weaponInfo.currentConfig->scopeSettings.thermalVision;
 
-				ImGui::SliderInt(LOC("camera.min_fov"), &minFOV, 1, 180);
-				ImGui::SliderInt(LOC("camera.max_fov"), &maxFOV, 1, 180);
-				ImGui::Checkbox(LOC("camera.night_vision"), &nightVision);
-				ImGui::Checkbox(LOC("camera.thermal_vision"), &thermalVision);
+				ImGui::SliderInt(LOC("camera.min_fov"), &m_MinFov, 1, 180);
+				ImGui::SliderInt(LOC("camera.max_fov"), &m_MaxFov, 2, 180);
+				ImGui::Checkbox(LOC("camera.night_vision"), &m_EnableNightVision);
+				ImGui::SameLine();
+				ImGui::Text(LOC("camera.night_vision_Tips"));
+				ImGui::Checkbox(LOC("camera.thermal_vision"), &m_EnableThermalVision);
+				ImGui::SameLine();
+				ImGui::Text(LOC("camera.night_vision_Tips"));
 			}
 		}
 	}
@@ -482,6 +482,9 @@ namespace ThroughScope
 		config.scopeSettings.thermalThreshold = m_ThermalThreshold;
 		config.scopeSettings.thermalContrast = m_ThermalContrast;
 		config.scopeSettings.thermalNoiseAmount = m_ThermalNoiseAmount;
+		config.scopeSettings.minFOV = m_MinFov;
+		config.scopeSettings.maxFOV = m_MaxFov;
+
 	}
 
 	void CameraAdjustmentPanel::LoadFromConfig(const DataPersistence::ScopeConfig* config)
@@ -515,6 +518,9 @@ namespace ThroughScope
 		m_ThermalThreshold = config->scopeSettings.thermalThreshold;
 		m_ThermalContrast = config->scopeSettings.thermalContrast;
 		m_ThermalNoiseAmount = config->scopeSettings.thermalNoiseAmount;
+
+		m_MinFov = config->scopeSettings.minFOV;
+		m_MaxFov = config->scopeSettings.maxFOV;
 
 		ApplySettings();
 
@@ -558,7 +564,18 @@ namespace ThroughScope
 		       std::abs(m_CurrentValues.relativeFogRadius - m_PreviousValues.relativeFogRadius) > epsilon ||
 		       std::abs(m_CurrentValues.scopeSwayAmount - m_PreviousValues.scopeSwayAmount) > epsilon ||
 		       std::abs(m_CurrentValues.maxTravel - m_PreviousValues.maxTravel) > epsilon ||
-		       std::abs(m_CurrentValues.parallaxRadius - m_PreviousValues.parallaxRadius) > epsilon;
+		       std::abs(m_CurrentValues.parallaxRadius - m_PreviousValues.parallaxRadius) > epsilon ||
+
+		       std::abs(m_CurrentValues.nightVisionIntensity - m_PreviousValues.nightVisionIntensity) > epsilon ||
+		       std::abs(m_CurrentValues.nightVisionNoiseScale - m_PreviousValues.nightVisionNoiseScale) > epsilon ||
+		       std::abs(m_CurrentValues.nightVisionNoiseAmount - m_PreviousValues.nightVisionNoiseAmount) > epsilon ||
+		       std::abs(m_CurrentValues.nightVisionGreenTint - m_PreviousValues.nightVisionGreenTint) > epsilon ||
+		       std::abs(m_CurrentValues.thermalIntensity - m_PreviousValues.thermalIntensity) > epsilon ||
+		       std::abs(m_CurrentValues.thermalThreshold - m_PreviousValues.thermalThreshold) > epsilon ||
+		       std::abs(m_CurrentValues.thermalContrast - m_PreviousValues.thermalContrast) > epsilon ||
+		       std::abs(m_CurrentValues.thermalNoiseAmount - m_PreviousValues.thermalNoiseAmount) > epsilon ||
+		       m_CurrentValues.enableNightVision != m_PreviousValues.enableNightVision ||
+		       m_CurrentValues.enableThermalVision != m_PreviousValues.enableThermalVision;
 	}
 
 	void CameraAdjustmentPanel::UpdatePreviousValues()
@@ -624,6 +641,7 @@ namespace ThroughScope
 		ApplyRotationAdjustment();
 		ApplyScaleAdjustment();
 
+		ScopeCamera::SetFOVMinMax(m_CurrentValues.minFov, m_CurrentValues.maxFov);
 		// 应用视差设置
 		D3DHooks::UpdateScopeParallaxSettings(
 			m_CurrentValues.relativeFogRadius,

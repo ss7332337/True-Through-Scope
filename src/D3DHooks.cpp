@@ -16,6 +16,26 @@
 static constexpr UINT MAX_VIEWPORTS = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+typedef HRESULT (*D3D11Create)(
+	_In_opt_ IDXGIAdapter* pAdapter,
+	D3D_DRIVER_TYPE DriverType,
+	HMODULE Software,
+	UINT Flags,
+	_In_reads_opt_(FeatureLevels) CONST D3D_FEATURE_LEVEL* pFeatureLevels,
+	UINT FeatureLevels,
+	UINT SDKVersion,
+	_In_opt_ CONST DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
+	_COM_Outptr_opt_ IDXGISwapChain** ppSwapChain,
+	_COM_Outptr_opt_ ID3D11Device** ppDevice,
+	_Out_opt_ D3D_FEATURE_LEVEL* pFeatureLevel,
+	_COM_Outptr_opt_ ID3D11DeviceContext** ppImmediateContext);
+
+D3D11Create m_D3D11CreateDeviceAndSwapChain_O;
+
+//ID3D11Device* m_Device = nullptr;
+//IDXGISwapChain* m_SwapChain = nullptr;
+//ID3D11DeviceContext* m_Context = nullptr;
+
 namespace ThroughScope {
     
 	using namespace Microsoft::WRL;
@@ -89,6 +109,9 @@ namespace ThroughScope {
 	ImGuiManager* imguiMgr;
 	ID3D11DeviceContext* m_Context = nullptr;
 	ID3D11Device* m_Device = nullptr;
+	IDXGISwapChain* m_SwapChain = nullptr;
+
+	bool D3DHooks::isSelfDrawCall = false;
 
 	HRESULT D3DHooks::CreateShaderFromFile(const WCHAR* csoFileNameInOut, const WCHAR* hlslFileName, LPCSTR entryPoint, LPCSTR shaderModel, ID3DBlob** ppBlobOut)
 	{
@@ -156,46 +179,169 @@ namespace ThroughScope {
 		static D3DHooks instance;
 		return &instance;
 	}
+
+	ID3D11DeviceContext* D3DHooks::GetContext() 
+	{
+		return m_Context;
+	}
+
+	HRESULT WINAPI D3DHooks::D3D11CreateDeviceAndSwapChain_Hook(
+		_In_opt_ IDXGIAdapter* pAdapter,
+		D3D_DRIVER_TYPE DriverType,
+		HMODULE Software,
+		UINT Flags,
+		_In_reads_opt_(FeatureLevels) CONST D3D_FEATURE_LEVEL* pFeatureLevels,
+		UINT FeatureLevels,
+		UINT SDKVersion,
+		_In_opt_ CONST DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
+		_COM_Outptr_opt_ IDXGISwapChain** ppSwapChain,
+		_COM_Outptr_opt_ ID3D11Device** ppDevice,
+		_Out_opt_ D3D_FEATURE_LEVEL* pFeatureLevel,
+		_COM_Outptr_opt_ ID3D11DeviceContext** ppImmediateContext)
+	{
+		auto hr = m_D3D11CreateDeviceAndSwapChain_O(
+			pAdapter,
+			DriverType,
+			Software,
+			Flags,
+			pFeatureLevels,
+			FeatureLevels,
+			SDKVersion,
+			pSwapChainDesc,
+			ppSwapChain,
+			ppDevice,
+			pFeatureLevel,
+			ppImmediateContext);
+
+		m_SwapChain = *ppSwapChain;
+		m_Device = *ppDevice;
+		m_Device->GetImmediateContext(&m_Context);
+
+		GetSington()->HookAllContexts();
+
+		logger::info("Washoi!");
+
+		return hr;
+	}
+
+	std::vector<ID3D11DeviceContext*> allContexts;
+
+	void D3DHooks::HookContext(ID3D11DeviceContext* context)
+	{
+		// 获取正确的虚函数索引
+		static UINT drawIndexedIndex = GetDrawIndexedIndex(context);
+
+		void** vtable = *reinterpret_cast<void***>(context);
+		void* drawIndexedFunc = vtable[drawIndexedIndex];
+
+		// 避免重复hook
+		static std::unordered_set<void*> hookedVtables;
+		if (hookedVtables.find(vtable) != hookedVtables.end())
+			return;
+
+		hookedVtables.insert(vtable);
+
+		Utilities::CreateAndEnableHook(drawIndexedFunc,
+			reinterpret_cast<void*>(hkDrawIndexed),
+			reinterpret_cast<LPVOID*>(&phookD3D11DrawIndexed),
+			"DrawIndexedHook");
+	}
+
+	// 在设备创建后调用
+	void D3DHooks::HookAllContexts()
+	{
+		// Hook主上下文
+		HookContext(m_Context);
+
+		// Hook延迟上下文
+		/*ID3D11DeviceContext* deferredContext = nullptr;
+		for (UINT i = 0; i < 2; i++) {
+			if (SUCCEEDED(m_Device->CreateDeferredContext(0, &deferredContext))) {
+				HookContext(deferredContext);
+				deferredContext->Release();
+			}
+		}*/
+	}
+
+	
+	UINT D3DHooks::GetDrawIndexedIndex(ID3D11DeviceContext* context)
+	{
+		// 创建测试资源
+		D3D11_BUFFER_DESC desc = { 0 };
+		desc.ByteWidth = 1024;
+		desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+
+		ID3D11Buffer* testBuffer = nullptr;
+		m_Device->CreateBuffer(&desc, nullptr, &testBuffer);
+
+		// 设置测试状态
+		context->IASetIndexBuffer(testBuffer, DXGI_FORMAT_R16_UINT, 0);
+
+		// 特征码扫描
+		const BYTE drawCallPattern[] = { 0x48, 0x8B, 0x01, 0xFF, 0x90 };  // mov rax,[rcx]; call [rax+...]
+
+		for (UINT i = 0; i < 100; i++) {
+			void* func = reinterpret_cast<void**>(*reinterpret_cast<void***>(context))[i];
+
+			if (memcmp(func, drawCallPattern, sizeof(drawCallPattern)) == 0) {
+				logger::info("Found DrawIndexed at index {}", i);
+				testBuffer->Release();
+				return i;
+			}
+		}
+
+		testBuffer->Release();
+		return 12;  // 默认值
+	}
+
+	bool D3DHooks::PreInit()
+	{
+		REL::Relocation<uintptr_t> D3D11CreateDeviceAndSwapChainAddress{ REL::ID(438126) };
+		Utilities::CreateAndEnableHook((LPVOID)D3D11CreateDeviceAndSwapChainAddress.address(), &D3DHooks::D3D11CreateDeviceAndSwapChain_Hook,
+			reinterpret_cast<LPVOID*>(&m_D3D11CreateDeviceAndSwapChain_O), "D3D11CreateDeviceAndSwapChainAddress");
+		return true;
+	}
     
     bool D3DHooks::Initialize() 
 	{
 		logger::info("Initializing D3D11 hooks...");
 
-		// Get the D3D11 device and context from the game's renderer
-		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-		if (!rendererData || !rendererData->device || !rendererData->context) {
-			logger::error("Failed to get D3D11 device or context");
-			return false;
-		}
+		//auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		//if (!rendererData || !rendererData->device || !rendererData->context) {
+		//	logger::error("Failed to get D3D11 device or context");
+		//	return false;
+		//}
 
 		// 先获取SwapChain
-		s_SwapChain = reinterpret_cast<IDXGISwapChain*>(rendererData->renderWindow->swapChain);
-		if (!s_SwapChain) {
+		//m_SwapChain = reinterpret_cast<IDXGISwapChain*>(rendererData->renderWindow->swapChain);
+		if (!m_SwapChain) {
 			logger::error("Failed to get SwapChain");
 			return false;
 		}
 
-		m_Device = reinterpret_cast<ID3D11Device*>(rendererData->device);
-		m_Context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
+		/*m_Device = reinterpret_cast<ID3D11Device*>(rendererData->device);
+		m_Context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);*/
 		// 获取窗口句柄并设置窗口过程
 		DXGI_SWAP_CHAIN_DESC sd;
-		s_SwapChain->GetDesc(&sd);
+		m_SwapChain->GetDesc(&sd);
 		::GetWindowRect(sd.OutputWindow, &oldRect);
 
 		s_OriginalWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtr(sd.OutputWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(hkWndProc)));
 
 		// 获取虚函数表
-		void** contextVTable = *(void***)rendererData->context;
-		void** swapChainVTable = *(void***)s_SwapChain.Get();
+		void** contextVTable = *(void***)m_Context;
+		void** swapChainVTable = *(void***)m_SwapChain;
 
 		void* drawIndexedFunc = contextVTable[12];
 		void* presentFunc = swapChainVTable[8];  // 注意：Present是SwapChain的方法，不是Context的
 		void* rsSetViewportsFunc = contextVTable[44];  // RSSetViewports - 索引44
+
 		// 初始化ImGui管理器
 		imguiMgr = ImGuiManager::GetSingleton();
 
 		// 创建Hook
-		Utilities::CreateAndEnableHook(drawIndexedFunc, reinterpret_cast<void*>(hkDrawIndexed), reinterpret_cast<void**>(&phookD3D11DrawIndexed), "DrawIndexedHook");
+
+		//Utilities::CreateAndEnableHook(drawIndexedFunc, reinterpret_cast<void*>(hkDrawIndexed), reinterpret_cast<LPVOID*>(&phookD3D11DrawIndexed), "DrawIndexedHook");
 		Utilities::CreateAndEnableHook(presentFunc, reinterpret_cast<void*>(hkPresent), reinterpret_cast<void**>(&s_OriginalPresent), "Present");
 		Utilities::CreateAndEnableHook(&ClipCursor, ClipCursorHook, reinterpret_cast<LPVOID*>(&phookClipCursor), "ClipCursorHook");
 		
@@ -205,27 +351,18 @@ namespace ThroughScope {
 		return true;
     }
 
-    int hookDelay = 0;
-
     void WINAPI D3DHooks::hkDrawIndexed(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation)
 	{
-		// Check if the current draw call is for our scope quad
-		int hookdelayE = hookDelay++ % 5;
-		if (hookdelayE == 0)
-			logger::info("DrawCall");
+		if (isSelfDrawCall)
+			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 
 		bool isScopeQuad = IsScopeQuadBeingDrawn(pContext, IndexCount);
 		if (isScopeQuad) {
 
-			CacheIAState(pContext);
-			CacheVSState(pContext);
-			CacheRSState(pContext);
-			s_HasCachedState = true;
-
+			CacheAllStates();
 			if (ImGuiManager::GetSingleton()->IsMenuOpen()) {
 				return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 			}
-
 			return;
 		} else {
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
@@ -292,12 +429,20 @@ namespace ThroughScope {
 		return s_ReticleSRV.Get();
 	}
 
-	void D3DHooks::RestoreAllCachedStates(ID3D11DeviceContext* pContext)
+	void D3DHooks::CacheAllStates()
+	{
+		CacheIAState(m_Context);
+		CacheVSState(m_Context);
+		CacheRSState(m_Context);
+		s_HasCachedState = true;
+	}
+
+	void D3DHooks::RestoreAllCachedStates()
 	{
 		if (s_HasCachedState) {
-			RestoreIAState(pContext);
-			RestoreVSState(pContext);
-			RestoreRSState(pContext);
+			RestoreIAState(m_Context);
+			RestoreVSState(m_Context);
+			RestoreRSState(m_Context);
 
 			// 清除缓存
 			s_CachedIAState.Clear();

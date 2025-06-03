@@ -35,6 +35,22 @@ namespace ThroughScope
             float scopeSwayAmount = 0.1f;
             float maxTravel = 0.05f;
             float parallaxRadius = 0.3f;
+
+			//新添加的检测项
+			float nightVisionIntensity = 1.0f;
+			float nightVisionNoiseScale = 0.05f;
+			float nightVisionNoiseAmount = 0.05f;
+			float nightVisionGreenTint = 1.2f;
+			bool  enableNightVision = false;
+
+			float thermalIntensity = 1.0f;
+			float thermalThreshold = 0.5f;
+			float thermalContrast = 1.2f;
+			float thermalNoiseAmount = 0.03f;
+			bool enableThermalVision = false;
+
+			int minFov = 5;
+			int maxFov = 100;
         };
         
         const AdjustmentValues& GetCurrentValues() const { return m_CurrentValues; }
@@ -59,6 +75,10 @@ namespace ThroughScope
         bool m_RealTimeAdjustment = true;
         bool m_UIValuesInitialized = false;
         std::string m_LastLoadedConfigKey = "";
+
+		//fov
+		int m_MinFov = 5;
+		int m_MaxFov = 100;
         
         // 视差设置
         float m_ParallaxRelativeFogRadius = 0.5f;

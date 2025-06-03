@@ -59,7 +59,6 @@ namespace ThroughScope
 		thermalVisionKeys.primaryKey = VKToImGuiKey(globalSettings.thermalVisionKeyBindings[0]);
 		thermalVisionKeys.modifier = VKToImGuiKey(globalSettings.thermalVisionKeyBindings[1]);
 		
-		// 检查夜视效果快捷键（边沿触发）
 		if (weaponInfo.currentConfig->scopeSettings.nightVision)
 		{
 			static bool lastNightVisionState = false;
@@ -73,7 +72,6 @@ namespace ThroughScope
 		}
 		
 		if (weaponInfo.currentConfig->scopeSettings.thermalVision) {
-			// 检查热成像效果快捷键（边沿触发）
 			static bool lastThermalVisionState = false;
 			bool currentThermalVisionState = CheckCombinationKeysAsync(thermalVisionKeys);
 

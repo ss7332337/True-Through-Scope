@@ -398,6 +398,7 @@ namespace ThroughScope
             {"camera.thermal_vision_settings", "Thermal Vision Settings"},
             {"camera.enable_night_vision", "Enable Night Vision"},
             {"camera.enable_thermal_vision", "Enable Thermal Vision"},
+            {"camera.night_vision_Tips", "(Click the Save button to take effect)"},
             {"camera.intensity", "Intensity"},
             {"camera.noise_scale", "Noise Scale"},
             {"camera.noise_amount", "Noise Amount"},
