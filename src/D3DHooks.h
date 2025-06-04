@@ -20,6 +20,23 @@ namespace ThroughScope {
 		}
 	};
 
+	struct OMStateCache
+	{
+		// Render Targets
+		static constexpr UINT MAX_RENDER_TARGETS = D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT;
+		Microsoft::WRL::ComPtr<ID3D11RenderTargetView> renderTargetViews[MAX_RENDER_TARGETS];
+		Microsoft::WRL::ComPtr<ID3D11DepthStencilView> depthStencilView;
+		UINT numRenderTargets;
+
+		void Clear()
+		{
+			for (int i = 0; i < MAX_RENDER_TARGETS; ++i) {
+				renderTargetViews[i].Reset();
+			}
+			depthStencilView.Reset();
+			numRenderTargets = 0;
+		}
+	};
 
 	struct IAStateCache
 	{
@@ -207,6 +224,7 @@ namespace ThroughScope {
 		static IAStateCache s_CachedIAState;
 		static VSStateCache s_CachedVSState;
 		static RSStateCache s_CachedRSState;
+		static OMStateCache s_CachedOMState;
 		static bool s_HasCachedState;
 	private:
 		static float s_CurrentRelativeFogRadius;
@@ -256,13 +274,16 @@ namespace ThroughScope {
 		static void CacheIAState(ID3D11DeviceContext* pContext);
 		static void CacheVSState(ID3D11DeviceContext* pContext);
 		static void CacheRSState(ID3D11DeviceContext* pContext);
+		static void CacheOMState(ID3D11DeviceContext* pContext);
 		static void RestoreIAState(ID3D11DeviceContext* pContext);
 		static void RestoreVSState(ID3D11DeviceContext* pContext);
 		static void RestoreRSState(ID3D11DeviceContext* pContext);
+		static void RestoreOMState(ID3D11DeviceContext* pContext);
 		static void CacheAllStates();
 		static void RestoreAllCachedStates();
 		static bool LoadAimTexture(const std::string& path);
 		static ID3D11ShaderResourceView* LoadAimSRV(const std::string& path);
+		static void SetSecondRenderTargetAsActive();
     private:
 		static bool IsTargetDrawCall(const BufferInfo& vertexInfo, const BufferInfo& indexInfo, UINT indexCount);
 		static bool IsTargetDrawCall(std::vector<BufferInfo> vertexInfos, const BufferInfo& indexInfo, UINT indexCount);

@@ -14,6 +14,8 @@
 #include "DataPersistence.h"
 #include "ImGuiManager.h"
 
+
+
 using namespace RE;
 using namespace RE::BSGraphics;
 
@@ -69,6 +71,8 @@ REL::Relocation<uintptr_t> BSStreamLoad_Ori{ REL::ID(160035) };
 REL::Relocation<uintptr_t> MainPreRender_Ori{ REL::ID(378257) };
 
 
+
+
 #pragma endregion
 
 #pragma region Pointer
@@ -106,6 +110,7 @@ static REL::Relocation<NiCullingProcess**> DrawWorldGeomListCullProc0{ REL::ID(8
 static REL::Relocation<NiCullingProcess**> DrawWorldGeomListCullProc1{ REL::ID(1084947) };
 
 static REL::Relocation<BSCullingProcess**> DrawWorldCullingProcess{ REL::ID(520184) };
+static REL::Relocation<BSShaderManagerState**> BSM_ST{ REL::ID(1327069) };
 
 
 #pragma endregion
@@ -138,7 +143,7 @@ typedef void (*PCUpdateMainThread)(PlayerCharacter*);
 typedef void (*FnDrawTriShape)(BSGraphics::Renderer* thisPtr, BSGraphics::TriShape* apTriShape, unsigned int auiStartIndex, unsigned int auiNumTriangles);
 typedef void(__fastcall* FnDrawIndexed)(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
 typedef void(__fastcall* FnMainPreRender)(Main* thisptr, int auiDestination);
-
+typedef void (*FnTAA)(ImageSpaceEffectTemporalAA*, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param);
 
 
 	// 存储原始函数的指针
@@ -177,12 +182,14 @@ PCUpdateMainThread g_PCUpdateMainThread = nullptr;
 FnDrawTriShape g_DrawTriShape = nullptr;
 FnDrawIndexed g_DrawIndexed = nullptr;
 FnMainPreRender g_MainPreRender = nullptr;
+FnTAA g_TAA = nullptr;
 
 bool isFirstCopy = false;
 bool isRenderReady = false;
 bool isScopCamReady = false;
 bool isImguiManagerInit = false;
 bool isFirstSpawnNode = false;
+bool isEnableTAA = false;
 ThroughScope::D3DHooks* d3dHooks;
 NIFLoader* nifloader;
 static std::chrono::steady_clock::time_point delayStartTime;
@@ -226,6 +233,37 @@ using namespace ThroughScope::Utilities;
 //}
 
 NiFrustum originalCamera1stviewFrustum{};
+
+//void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param)
+//{
+//	isEnableTAA = thisPtr->isActive;
+//	g_TAA(thisPtr, a_geometry, a_param);
+//	if (isEnableTAA)
+//	{
+//		if (!isScopCamReady || !isRenderReady || !D3DHooks::IsEnableRender())
+//			return;
+//
+//		ID3D11DeviceContext* context = d3dHooks->GetContext();
+//		D3DHooks::CacheOMState(context);
+//		int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
+//		if (scopeNodeIndexCount != -1 && isEnableTAA) {
+//			try {
+//				RenderUtilities::SetRender_PreUIComplete(true);
+//				D3DHooks::SetSecondRenderTargetAsActive();
+//				d3dHooks->RestoreAllCachedStates();
+//				d3dHooks->SetScopeTexture(context);
+//				D3DHooks::isSelfDrawCall = true;
+//				context->DrawIndexed(scopeNodeIndexCount, 0, 0);
+//				D3DHooks::isSelfDrawCall = false;
+//				D3DHooks::RestoreOMState(context);
+//				RenderUtilities::SetRender_PreUIComplete(false);
+//			} catch (...) {
+//				logger::error("Exception during scope quad rendering");
+//				RenderUtilities::SetRender_PreUIComplete(false);
+//			}
+//		}
+//	}
+//}
 
 void __fastcall hkMainPreRender(Main* thisPtr, int auiDestination)
 {
@@ -334,6 +372,8 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 
 	NiUpdateData nData;
 
+	visCamera->viewFrustum = scopeFrustum;
+
 	nData.camera = visCamera;
 	visCamera->Update(nData);
 
@@ -369,8 +409,13 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	nData.camera = scopeCamera;
 	scopeCamera->Update(nData);
 
+	//Main::GetSingleton()->DrawWorld_PreRender(0);
+	//DrawWorld::DoUmbraQuery(ptr_drawWorld);
+
 	ScopeCamera::SetRenderingForScope(true);
+	(*BSM_ST)->ForceDisableSSR = true;
 	g_RenderPreUIOriginal(ptr_drawWorld);  //第二次渲染
+	(*BSM_ST)->ForceDisableSSR = false;
 	ScopeCamera::SetRenderingForScope(false);
 	D3DPERF_EndEvent();
 
@@ -386,9 +431,9 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	}
 
 
-	/*visCamera->viewFrustum = originalCamera1stviewFrustum;
+	visCamera->viewFrustum = originalCamera1stviewFrustum;
 	nData.camera = visCamera;
-	visCamera->Update(nData);*/
+	visCamera->Update(nData);
 
 	/*originalCamera1st->viewFrustum = originalCamera1stviewFrustum;
 	nData.camera = originalCamera1st;
@@ -397,22 +442,23 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	DrawWorld::SetCamera(originalCamera);
 	DrawWorld::SetUpdateCameraFOV(true);
 
-	RenderUtilities::SetRender_PreUIComplete(true);
-
 	int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
 	if (scopeNodeIndexCount != -1) {
 		try {
+			RenderUtilities::SetRender_PreUIComplete(true);
 			d3dHooks->RestoreAllCachedStates();
 			d3dHooks->SetScopeTexture(context);
 			D3DHooks::isSelfDrawCall = true;
 			context->DrawIndexed(scopeNodeIndexCount, 0, 0);
 			D3DHooks::isSelfDrawCall = false;
+			RenderUtilities::SetRender_PreUIComplete(false);
 		} catch (...) {
 			logger::error("Exception during scope quad rendering");
+			RenderUtilities::SetRender_PreUIComplete(false);
 		}
 	}
 
-	RenderUtilities::SetRender_PreUIComplete(false);
+	
 
 	if (originalCamera) {
 		if (originalCamera->DecRefCount() == 0) {
@@ -784,8 +830,15 @@ void RegisterHooks()
 	  /*CreateAndEnableHook((LPVOID)DrawIndexed_Ori.address(), &hkDrawIndexed,
 		  reinterpret_cast<LPVOID*>(&g_DrawIndexed), "DrawIndexed");*/
 
+	/* REL::Relocation<std::uintptr_t> vtable_TAA(RE::ImageSpaceEffectTemporalAA::VTABLE[0]);
+	 const auto oldFuncTAA = vtable_TAA.write_vfunc(1, reinterpret_cast<std::uintptr_t>(&hkHookTAA));
+	 g_TAA = decltype(&hkHookTAA)(oldFuncTAA);*/
+
 	logger::info("Hooks registered successfully");
 }
+
+
+
 
 // Initialization thread function
 DWORD WINAPI InitThread(HMODULE hModule) 
@@ -902,8 +955,9 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 	if (mhInit != MH_OK) {
 		logger::info("MH_Initialize Not Ok, Reason: {}", (int)mhInit);
 	}
+
 	d3dHooks->PreInit();
-	
+
     F4SE::Init(a_f4se);
     
     // Register plugin for F4SE messages

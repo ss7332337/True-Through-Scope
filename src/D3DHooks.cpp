@@ -13,6 +13,10 @@
 #include <xinput.h>
 #pragma comment(lib, "xinput.lib")
 
+
+#include <renderdoc_app.h>
+RENDERDOC_API_1_6_0* rdoc_api = nullptr;
+
 static constexpr UINT MAX_VIEWPORTS = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -32,10 +36,6 @@ typedef HRESULT (*D3D11Create)(
 
 D3D11Create m_D3D11CreateDeviceAndSwapChain_O;
 
-//ID3D11Device* m_Device = nullptr;
-//IDXGISwapChain* m_SwapChain = nullptr;
-//ID3D11DeviceContext* m_Context = nullptr;
-
 namespace ThroughScope {
     
 	using namespace Microsoft::WRL;
@@ -47,6 +47,7 @@ namespace ThroughScope {
 	IAStateCache D3DHooks::s_CachedIAState;
 	VSStateCache D3DHooks::s_CachedVSState;
 	RSStateCache D3DHooks::s_CachedRSState;  // 新增
+	OMStateCache D3DHooks::s_CachedOMState;  // 新增
 	float D3DHooks::s_ReticleScale = 1.0f;
 	float D3DHooks::s_ReticleOffsetX = 0.5f;
 	float D3DHooks::s_ReticleOffsetY = 0.5f;
@@ -241,10 +242,7 @@ namespace ThroughScope {
 
 		hookedVtables.insert(vtable);
 
-		Utilities::CreateAndEnableHook(drawIndexedFunc,
-			reinterpret_cast<void*>(hkDrawIndexed),
-			reinterpret_cast<LPVOID*>(&phookD3D11DrawIndexed),
-			"DrawIndexedHook");
+		Utilities::CreateAndEnableHook(drawIndexedFunc, reinterpret_cast<void*>(hkDrawIndexed), reinterpret_cast<LPVOID*>(&phookD3D11DrawIndexed), "DrawIndexedHook");
 	}
 
 	// 在设备创建后调用
@@ -294,33 +292,77 @@ namespace ThroughScope {
 		return 12;  // 默认值
 	}
 
+	bool isRenderDocDll = false;
+
+	void InitRenderDoc()
+	{
+		HMODULE mod = LoadLibraryA("renderdoc.dll");
+		if (!mod) {
+			logger::error("Failed to load renderdoc.dll. Error code: {}", GetLastError());
+			return;
+		}
+
+		pRENDERDOC_GetAPI RENDERDOC_GetAPI =
+			(pRENDERDOC_GetAPI)GetProcAddress(mod, "RENDERDOC_GetAPI");
+		if (!RENDERDOC_GetAPI) {
+			logger::error("Failed to get RENDERDOC_GetAPI function. Error code: {}", GetLastError());
+			return;
+		}
+
+		int ret = RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_6_0, (void**)&rdoc_api);
+		if (ret != 1) {
+			logger::error("RENDERDOC_GetAPI failed with return code: {}", ret);
+			return;
+		}
+		int major, minor, patch;
+		rdoc_api->GetAPIVersion(&major, &minor, &patch);
+		logger::info("RenderDoc API v{}.{}.{} loaded", major, minor, patch);
+		// Set RenderDoc options
+		rdoc_api->SetCaptureOptionU32(eRENDERDOC_Option_AllowFullscreen, 1);
+		rdoc_api->SetCaptureOptionU32(eRENDERDOC_Option_AllowVSync, 1);
+		rdoc_api->SetCaptureOptionU32(eRENDERDOC_Option_APIValidation, 1);
+		rdoc_api->SetCaptureOptionU32(eRENDERDOC_Option_CaptureAllCmdLists, 1);
+		rdoc_api->SetCaptureOptionU32(eRENDERDOC_Option_CaptureCallstacks, 1);
+		rdoc_api->SetCaptureOptionU32(eRENDERDOC_Option_RefAllResources, 1);
+
+		logger::info("RenderDoc initialized successfully");
+	}
+
+
 	bool D3DHooks::PreInit()
 	{
+		HMODULE mod = LoadLibraryA("renderdoc.dll");
+		isRenderDocDll = mod;
+		if (mod) {
+			logger::info("Found RenderDoc.dll, Using Another Hook.");
+			InitRenderDoc();
+		}
+
 		REL::Relocation<uintptr_t> D3D11CreateDeviceAndSwapChainAddress{ REL::ID(438126) };
 		Utilities::CreateAndEnableHook((LPVOID)D3D11CreateDeviceAndSwapChainAddress.address(), &D3DHooks::D3D11CreateDeviceAndSwapChain_Hook,
 			reinterpret_cast<LPVOID*>(&m_D3D11CreateDeviceAndSwapChain_O), "D3D11CreateDeviceAndSwapChainAddress");
 		return true;
 	}
+
+	
     
     bool D3DHooks::Initialize() 
 	{
+		
+
+	/*	if (isRenderDocDll)
+		{
+			const auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+			m_SwapChain = (IDXGISwapChain*)static_cast<void*>(rendererData->renderWindow->swapChain);
+			m_Device = (ID3D11Device*)static_cast<void*>(rendererData->device);
+			m_Context = (ID3D11DeviceContext*)static_cast<void*>(rendererData->context);
+		}*/
+
 		logger::info("Initializing D3D11 hooks...");
-
-		//auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-		//if (!rendererData || !rendererData->device || !rendererData->context) {
-		//	logger::error("Failed to get D3D11 device or context");
-		//	return false;
-		//}
-
-		// 先获取SwapChain
-		//m_SwapChain = reinterpret_cast<IDXGISwapChain*>(rendererData->renderWindow->swapChain);
 		if (!m_SwapChain) {
 			logger::error("Failed to get SwapChain");
 			return false;
 		}
-
-		/*m_Device = reinterpret_cast<ID3D11Device*>(rendererData->device);
-		m_Context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);*/
 		// 获取窗口句柄并设置窗口过程
 		DXGI_SWAP_CHAIN_DESC sd;
 		m_SwapChain->GetDesc(&sd);
@@ -341,7 +383,21 @@ namespace ThroughScope {
 
 		// 创建Hook
 
-		//Utilities::CreateAndEnableHook(drawIndexedFunc, reinterpret_cast<void*>(hkDrawIndexed), reinterpret_cast<LPVOID*>(&phookD3D11DrawIndexed), "DrawIndexedHook");
+		if (isRenderDocDll)
+		{
+			if (rdoc_api && m_Device) {
+				IDXGIDevice* pDXGIDevice = nullptr;
+				if (SUCCEEDED(m_Device->QueryInterface(__uuidof(IDXGIDevice), (void**)&pDXGIDevice))) {
+					rdoc_api->SetActiveWindow((void*)pDXGIDevice, sd.OutputWindow);
+					logger::info("Set RenderDoc active window to {:x}", (uintptr_t)sd.OutputWindow);
+					pDXGIDevice->Release();
+				} else {
+					logger::error("Failed to get DXGI device for RenderDoc");
+				}
+			}
+			//Utilities::CreateAndEnableHook(drawIndexedFunc, reinterpret_cast<void*>(hkDrawIndexed), reinterpret_cast<LPVOID*>(&phookD3D11DrawIndexed), "DrawIndexedHook");
+		}
+
 		Utilities::CreateAndEnableHook(presentFunc, reinterpret_cast<void*>(hkPresent), reinterpret_cast<void**>(&s_OriginalPresent), "Present");
 		Utilities::CreateAndEnableHook(&ClipCursor, ClipCursorHook, reinterpret_cast<LPVOID*>(&phookClipCursor), "ClipCursorHook");
 		
@@ -357,6 +413,7 @@ namespace ThroughScope {
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 
 		bool isScopeQuad = IsScopeQuadBeingDrawn(pContext, IndexCount);
+		//bool isScopeQuad = IsScopeQuadBeingDrawnShape(pContext, IndexCount);
 		if (isScopeQuad) {
 
 			CacheAllStates();
@@ -917,6 +974,11 @@ namespace ThroughScope {
 			return s_OriginalPresent(pSwapChain, SyncInterval, Flags);
 		}
 
+		if (GetAsyncKeyState(VK_F3) & 1) {
+			logger::info("Frame capture requested");
+			rdoc_api->TriggerCapture();
+		}
+
 		s_InPresent = true;
 		HRESULT result = S_OK;
 
@@ -1198,6 +1260,26 @@ namespace ThroughScope {
 		pContext->RSGetState(s_CachedRSState.rasterizerState.GetAddressOf());
 	}
 
+	void D3DHooks::CacheOMState(ID3D11DeviceContext* pContext)
+	{
+		// 缓存当前的RenderTarget和DepthStencil
+		pContext->OMGetRenderTargets(
+			OMStateCache::MAX_RENDER_TARGETS,
+			reinterpret_cast<ID3D11RenderTargetView**>(s_CachedOMState.renderTargetViews),
+			s_CachedOMState.depthStencilView.GetAddressOf()
+		);
+
+		// 计算实际绑定的RenderTarget数量
+		s_CachedOMState.numRenderTargets = 0;
+		for (UINT i = 0; i < OMStateCache::MAX_RENDER_TARGETS; ++i) {
+			if (s_CachedOMState.renderTargetViews[i].Get()) {
+				s_CachedOMState.numRenderTargets = i + 1;
+			}
+		}
+
+		logger::info("Cached {} render targets", s_CachedOMState.numRenderTargets);
+	}
+
 	void D3DHooks::RestoreRSState(ID3D11DeviceContext* pContext)
 	{
 		if (!s_HasCachedState)
@@ -1205,5 +1287,50 @@ namespace ThroughScope {
 
 		// 恢复Rasterizer State
 		pContext->RSSetState(s_CachedRSState.rasterizerState.Get());
+	}
+
+	void D3DHooks::RestoreOMState(ID3D11DeviceContext* pContext)
+	{
+		//if (!s_HasCachedState)
+		//	return;
+
+		// 恢复所有缓存的RenderTarget
+		ID3D11RenderTargetView* renderTargets[OMStateCache::MAX_RENDER_TARGETS];
+		for (UINT i = 0; i < OMStateCache::MAX_RENDER_TARGETS; ++i) {
+			renderTargets[i] = s_CachedOMState.renderTargetViews[i].Get();
+		}
+
+		pContext->OMSetRenderTargets(
+			s_CachedOMState.numRenderTargets,
+			renderTargets,
+			s_CachedOMState.depthStencilView.Get()
+		);
+
+		logger::info("Restored {} render targets", s_CachedOMState.numRenderTargets);
+	}
+
+	void D3DHooks::SetSecondRenderTargetAsActive()
+	{
+		if (!s_HasCachedState) {
+			logger::error("No cached state available for SetSecondRenderTargetAsActive");
+			return;
+		}
+
+		ID3D11RenderTargetView* targetRTV = nullptr;
+		
+		// 如果有两个或更多RenderTarget，使用第二个；否则使用第一个
+		if (s_CachedOMState.numRenderTargets >= 2) {
+			targetRTV = s_CachedOMState.renderTargetViews[1].Get();
+			logger::info("Setting second render target as active");
+		} else if (s_CachedOMState.numRenderTargets >= 1) {
+			targetRTV = s_CachedOMState.renderTargetViews[0].Get();
+			logger::info("Only one render target available, using first one");
+		} else {
+			logger::error("No render targets available in cached state");
+			return;
+		}
+
+		// 设置单个RenderTarget，保持原有的DepthStencil
+		m_Context->OMSetRenderTargets(1, &targetRTV, s_CachedOMState.depthStencilView.Get());
 	}
 }
