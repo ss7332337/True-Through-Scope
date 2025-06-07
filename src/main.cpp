@@ -233,7 +233,10 @@ using namespace ThroughScope::Utilities;
 //}
 
 NiFrustum originalCamera1stviewFrustum{};
-
+//renderTargets[26] = TAA 历史缓冲 = TAA PS t1
+//renderTargets[29] =  TAA Motion Vectors = TAA PS t2
+//renderTargets[24] = TAA Jitter Mask = TAA PS t4
+// 
 //void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param)
 //{
 //	isEnableTAA = thisPtr->isActive;
