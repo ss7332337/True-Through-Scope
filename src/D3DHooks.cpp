@@ -186,6 +186,11 @@ namespace ThroughScope {
 		return m_Context;
 	}
 
+	ID3D11Device* D3DHooks::GetDevice()
+	{
+		return m_Device;
+	}
+
 	HRESULT WINAPI D3DHooks::D3D11CreateDeviceAndSwapChain_Hook(
 		_In_opt_ IDXGIAdapter* pAdapter,
 		D3D_DRIVER_TYPE DriverType,
@@ -446,9 +451,9 @@ namespace ThroughScope {
 			return false;
 		}
 
-		if (s_ReticleSRV.Get()) {
-			m_Context->GenerateMips(s_ReticleSRV.Get());
-		}
+		//if (s_ReticleSRV.Get()) {
+		//	m_Context->GenerateMips(s_ReticleSRV.Get());
+		//}
 
 		if (tempPath)
 			free((void*)tempPath);
@@ -476,9 +481,9 @@ namespace ThroughScope {
 			return nullptr;
 		}
 
-		if (s_ReticleSRV.Get()) {
-			m_Context->GenerateMips(s_ReticleSRV.Get());
-		}
+		/*if (s_ReticleSRV.Get()) {
+			//m_Context->GenerateMips(s_ReticleSRV.Get());
+		}*/
 
 		if (tempPath)
 			free((void*)tempPath);

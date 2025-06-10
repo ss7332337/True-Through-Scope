@@ -168,6 +168,7 @@ namespace ThroughScope {
 		static void WINAPI hkRSSetViewports(ID3D11DeviceContext* pContext, UINT NumViewports, const D3D11_VIEWPORT* pViewports);
 
 		ID3D11DeviceContext* GetContext();
+		ID3D11Device* GetDevice();
 
         static bool IsScopeQuadBeingDrawn(ID3D11DeviceContext* pContext, UINT IndexCount);
         static bool IsScopeQuadBeingDrawnShape(ID3D11DeviceContext* pContext, UINT IndexCount);
