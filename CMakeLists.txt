@@ -141,14 +141,15 @@ add_library(
 	.clang-format
 )
 
-macro(set_hlsl_properties HLSL_FILE SHADER_TYPE)
+macro(set_hlsl_properties HLSL_FILE SHADER_TYPE ENTRY_POINT)
   set_source_files_properties(${HLSL_FILE} 
   PROPERTIES VS_SHADER_OBJECT_FILE_NAME 
-  "${Fallout4Path}/Data/Shaders/XiFeiLi/%(Filename).cso" 
-  VS_SHADER_TYPE ${SHADER_TYPE} VS_SHADER_MODEL 5.0 VS_SHADER_ENTRYPOINT main)
+  #"${Fallout4Path}/Data/Shaders/XiFeiLi/%(Filename).cso" 
+  "G:/Games/Fallout 4 ori/Fallout 4/Mo2/mods/TTS/Shaders/XiFeiLi/%(Filename).cso"
+  VS_SHADER_TYPE ${SHADER_TYPE} VS_SHADER_MODEL 5.0 VS_SHADER_ENTRYPOINT ${ENTRY_POINT})
 endmacro()
 
-set_hlsl_properties(src/HLSL/TrueScopeShader.hlsl Pixel)
+set_hlsl_properties(src/HLSL/TrueScopeShader.hlsl Pixel main)
 
 target_include_directories(
 	${PROJECT_NAME}
@@ -234,9 +235,9 @@ add_custom_target(
 	create_artifact_TTS
 	COMMAND
 		"${CMAKE_CURRENT_SOURCE_DIR}/${SCRIPT}"
-		"--name=\"${PROJECT_NAME}\""
-		"--dll=\"$<TARGET_FILE:${PROJECT_NAME}>\""
-		"--pdb=\"$<TARGET_PDB_FILE:${PROJECT_NAME}>\""
+		"--name=/"${PROJECT_NAME}/""
+		"--dll=/"$<TARGET_FILE:${PROJECT_NAME}>/""
+		"--pdb=/"$<TARGET_PDB_FILE:${PROJECT_NAME}>/""
 	WORKING_DIRECTORY
 		${CMAKE_CURRENT_BINARY_DIR}
 	SOURCES

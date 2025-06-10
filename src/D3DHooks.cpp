@@ -63,6 +63,7 @@ namespace ThroughScope {
 	static ID3D11ShaderResourceView* stagingSRV = nullptr;
 	static ID3D11PixelShader* scopePixelShader = nullptr;
 	static ID3D11SamplerState* samplerState = nullptr;
+	static ID3D11SamplerState* lutSamplerState = nullptr;
 	static ID3D11BlendState* blendState = nullptr;
 	static ID3D11Buffer* constantBuffer = nullptr;
 	Microsoft::WRL::ComPtr<ID3D11Texture2D> D3DHooks::s_ReticleTexture = nullptr;
@@ -94,6 +95,10 @@ namespace ThroughScope {
 	float D3DHooks::s_ThermalContrast = 1.2f;
 	float D3DHooks::s_ThermalNoiseAmount = 0.03f;
 	int D3DHooks::s_EnableThermalVision = 0;
+
+	// LUT纹理捕获相关
+	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> D3DHooks::s_CapturedLUTs[4] = { nullptr, nullptr, nullptr, nullptr };
+	float D3DHooks::s_LUTWeights[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
 	static constexpr UINT TARGET_STRIDE = 28;
 	static constexpr UINT TARGET_INDEX_COUNT = 96;
@@ -173,6 +178,99 @@ namespace ThroughScope {
 		s_ThermalContrast = contrast;
 		s_ThermalNoiseAmount = noiseAmount;
 		s_EnableThermalVision = enable;
+	}
+
+	void D3DHooks::CaptureLUTTextures(ID3D11DeviceContext* context)
+	{
+		if (!context) return;
+
+		// 捕获绑定在 t3, t4, t5, t6 的 3D LUT 纹理
+		ID3D11ShaderResourceView* lutSRVs[4];
+		context->PSGetShaderResources(3, 4, lutSRVs);
+
+		for (int i = 0; i < 4; i++) {
+			if (lutSRVs[i]) {
+				s_CapturedLUTs[i] = lutSRVs[i];
+				lutSRVs[i]->AddRef(); // 增加引用计数
+			}
+		}
+
+		// 从CB2获取LUT权重 - 使用临时缓冲区方法
+		ID3D11Buffer* constantBuffers[1];
+		context->PSGetConstantBuffers(2, 1, constantBuffers);
+
+		if (constantBuffers[0]) {
+			// 获取设备
+			ID3D11Device* device = nullptr;
+			context->GetDevice(&device);
+			
+			if (device) {
+				// 获取原始缓冲区描述
+				D3D11_BUFFER_DESC originalDesc;
+				constantBuffers[0]->GetDesc(&originalDesc);
+				
+				// 创建可读取的临时缓冲区
+				D3D11_BUFFER_DESC tempDesc = originalDesc;
+				tempDesc.Usage = D3D11_USAGE_STAGING;
+				tempDesc.BindFlags = 0;
+				tempDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+				tempDesc.MiscFlags = 0;
+				
+				ID3D11Buffer* tempBuffer = nullptr;
+				HRESULT hr = device->CreateBuffer(&tempDesc, nullptr, &tempBuffer);
+				
+				if (SUCCEEDED(hr)) {
+					// 复制数据到临时缓冲区
+					context->CopyResource(tempBuffer, constantBuffers[0]);
+					
+					// 映射并读取数据
+					D3D11_MAPPED_SUBRESOURCE mappedResource;
+					hr = context->Map(tempBuffer, 0, D3D11_MAP_READ, 0, &mappedResource);
+					
+					if (SUCCEEDED(hr)) {
+						// cb2_v1位于偏移16字节处，包含4个LUT权重
+						const float* weights = reinterpret_cast<const float*>(
+							reinterpret_cast<const char*>(mappedResource.pData) + 16);
+						
+						for (int i = 0; i < 4; i++) {
+							s_LUTWeights[i] = weights[i];
+						}
+	
+						context->Unmap(tempBuffer, 0);
+					} else {
+						// 如果映射失败，使用从调试中观察到的默认权重
+						s_LUTWeights[0] = 0.13896f;
+						s_LUTWeights[1] = 0.86104f;
+						s_LUTWeights[2] = 0.0f;
+						s_LUTWeights[3] = 0.0f;
+						logger::warn("Failed to map LUT weights, using fallback values: {:.5f}, {:.5f}, {:.5f}, {:.5f}", 
+							s_LUTWeights[0], s_LUTWeights[1], s_LUTWeights[2], s_LUTWeights[3]);
+					}
+					
+					tempBuffer->Release();
+				}
+				
+				device->Release();
+			}
+			
+			constantBuffers[0]->Release();
+		} 
+		else {
+			// 如果没有获取到常量缓冲区，使用默认权重
+			s_LUTWeights[0] = 1;
+			s_LUTWeights[1] = 0.0f;
+			s_LUTWeights[2] = 0.0f;
+			s_LUTWeights[3] = 0.0f;
+			logger::warn("No constant buffer found, using default LUT weights: {:.5f}, {:.5f}, {:.5f}, {:.5f}", 
+				s_LUTWeights[0], s_LUTWeights[1], s_LUTWeights[2], s_LUTWeights[3]);
+		}
+
+		// 释放临时引用
+		for (int i = 0; i < 4; i++) {
+			if (lutSRVs[i]) {
+				lutSRVs[i]->Release();
+			}
+		}
 	}
 
 	D3DHooks* D3DHooks::GetSington()
@@ -451,10 +549,6 @@ namespace ThroughScope {
 			return false;
 		}
 
-		//if (s_ReticleSRV.Get()) {
-		//	m_Context->GenerateMips(s_ReticleSRV.Get());
-		//}
-
 		if (tempPath)
 			free((void*)tempPath);
 
@@ -480,10 +574,6 @@ namespace ThroughScope {
 			logger::error("Failed to load reticle texture from path: {}", path);
 			return nullptr;
 		}
-
-		/*if (s_ReticleSRV.Get()) {
-			//m_Context->GenerateMips(s_ReticleSRV.Get());
-		}*/
 
 		if (tempPath)
 			free((void*)tempPath);
@@ -825,6 +915,7 @@ namespace ThroughScope {
 			// 创建采样器状态
 			D3D11_SAMPLER_DESC samplerDesc = {};
 			samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+			//samplerDesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
 			samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
 			samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
 			samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -833,6 +924,16 @@ namespace ThroughScope {
 			samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 
 			hr = device->CreateSamplerState(&samplerDesc, &samplerState);
+			if (FAILED(hr)) {
+				logger::error("Failed to create sampler state: 0x{:X}", hr);
+				scopePixelShader->Release();
+				scopePixelShader = nullptr;
+				device->Release();
+				return;
+			}
+			
+			samplerDesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+			hr = device->CreateSamplerState(&samplerDesc, &lutSamplerState);
 			if (FAILED(hr)) {
 				logger::error("Failed to create sampler state: 0x{:X}", hr);
 				scopePixelShader->Release();
@@ -953,6 +1054,11 @@ namespace ThroughScope {
 			cbData->thermalNoiseAmount = s_ThermalNoiseAmount;
 			cbData->enableThermalVision = s_EnableThermalVision;
 
+			// 设置LUT权重
+			for (int i = 0; i < 4; i++) {
+				cbData->lutWeights[i] = s_LUTWeights[i];
+			}
+
 			auto camMat = RE::PlayerCamera::GetSingleton()->cameraRoot->local.rotate.entry[0];
 			memcpy_s(&cbData->CameraRotation, sizeof(cbData->CameraRotation), &rotationMatrix, sizeof(rotationMatrix));
 			pContext->Unmap(constantBuffer, 0);
@@ -967,7 +1073,19 @@ namespace ThroughScope {
 		// 设置纹理资源和采样器
 		pContext->PSSetShaderResources(0, 1, &stagingSRV);
 		pContext->PSSetShaderResources(1, 1, s_ReticleSRV.GetAddressOf());
-		pContext->PSSetSamplers(0, 1, &samplerState);
+		
+		// 绑定LUT纹理到t2-t5
+		ID3D11ShaderResourceView* lutSRVs[4] = { 
+			s_CapturedLUTs[0].Get(), 
+			s_CapturedLUTs[1].Get(), 
+			s_CapturedLUTs[2].Get(), 
+			s_CapturedLUTs[3].Get() 
+		};
+		pContext->PSSetShaderResources(2, 4, lutSRVs);
+		
+		// 设置采样器（s0用于主纹理，s1用于LUT）
+		ID3D11SamplerState* samplers[2] = { samplerState, lutSamplerState };
+		pContext->PSSetSamplers(0, 2, samplers);
 
 		device->Release();
 	}

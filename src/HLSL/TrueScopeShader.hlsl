@@ -1,6 +1,13 @@
 Texture2D scopeTexture : register(t0);
 Texture2D reticleTexture : register(t1);
+// Color Grading 3D LUT纹理
+Texture3D lutTexture0 : register(t2);
+Texture3D lutTexture1 : register(t3);
+Texture3D lutTexture2 : register(t4);
+Texture3D lutTexture3 : register(t5);
+
 SamplerState scopeSampler : register(s0);
+SamplerState lutSampler : register(s1);
             
 // Constants buffer containing screen resolution, camera position and scope position
 cbuffer ScopeConstants : register(b0)
@@ -46,6 +53,9 @@ cbuffer ScopeConstants : register(b0)
     float thermalThreshold;        // 热成像阈值
     float thermalContrast;         // 热成像对比度
     float thermalNoiseAmount;      // 热成像噪点强度
+
+    // Color Grading LUT权重
+    float4 lutWeights;           // 4个LUT的混合权重
 }
             
 struct PS_INPUT
@@ -86,6 +96,40 @@ float2 transform_reticle_coords(float2 tc)
 // 生成随机噪点
 float random(float2 st) {
     return frac(sin(dot(st.xy, float2(12.9898, 78.233))) * 43758.5453123);
+}
+
+// Color Grading 色彩分级函数
+float4 applyColorGrading(float4 color)
+{
+    float4 r0 = color;
+    float3 r1, r2;
+
+    // 对RGB分量取对数
+    r0.xyz = log(r0.xyz);
+    
+    // 直接输出alpha通道
+    float4 outputColor;
+    outputColor.w = r0.w;
+    
+    // 应用gamma校正
+    r0.xyz = r0.xyz * 0.454545;
+    r0.xyz = exp(r0.xyz);
+    
+    // 调整颜色范围
+    r0.xyz = r0.xyz * 0.9375 + 0.03125;
+    
+    // 从多个3D LUT纹理采样并混合
+    r1 = lutTexture1.Sample(lutSampler, r0.xyz) * lutWeights.y;
+    r2 = lutTexture0.Sample(lutSampler, r0.xyz) * lutWeights.x;
+    r1 += r2;
+    
+    r2 = lutTexture2.Sample(lutSampler, r0.xyz) * lutWeights.z;
+    r1 += r2;
+    
+    r0.xyz = lutTexture3.Sample(lutSampler, r0.xyz) * lutWeights.w;
+    outputColor.xyz = r1 + r0.xyz;
+    
+    return outputColor;
 }
 
 // 夜视效果处理
@@ -190,13 +234,8 @@ float4 main(PS_INPUT input) : SV_TARGET
     float4 reticleColor = reticleTexture.Sample(scopeSampler, reticleTexCoord);
     
     
-    // Apply final effect
-    
-    color.rgb = pow(abs(color.rgb), 2.2);
-    // 在线性空间中提高亮度
-    color.rgb *= 105.0f;
-    // 转换回gamma空间
-    color.rgb = pow(abs(color.rgb), 1.0 / 2.2);
+    // 应用Color Grading色彩分级（替代原来的亮度提升）
+    color = applyColorGrading(color);
     
     // 计算夜视和热成像效果（无分支）
     float4 nightVisionColor = applyNightVision(color, texCoord);

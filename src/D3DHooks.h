@@ -153,7 +153,8 @@ namespace ThroughScope {
 			float thermalContrast;     // 热成像对比度
 			float thermalNoiseAmount;  // 热成像噪点强度
 
-
+			// Color Grading LUT权重
+			float lutWeights[4];  // 4个LUT的混合权重
 		};
 
     public:
@@ -204,6 +205,15 @@ namespace ThroughScope {
 		static float GetReticleOffsetX() { return s_ReticleOffsetX; }
 		static float GetReticleOffsetY() { return s_ReticleOffsetY; }
 		static bool isSelfDrawCall;
+
+		// LUT纹理捕获相关
+		static void CaptureLUTTextures(ID3D11DeviceContext* context);
+		static ID3D11ShaderResourceView* GetCapturedLUT(int index) { 
+			return (index >= 0 && index < 4) ? s_CapturedLUTs[index].Get() : nullptr; 
+		}
+		static float GetLUTWeight(int index) { 
+			return (index >= 0 && index < 4) ? s_LUTWeights[index] : 0.0f; 
+		}
 
 	private:
 		struct BufferInfo
@@ -262,6 +272,10 @@ namespace ThroughScope {
 	private:
 		static Microsoft::WRL::ComPtr<ID3D11Texture2D> s_ReticleTexture;
 		static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> s_ReticleSRV;
+
+		// LUT纹理捕获相关
+		static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> s_CapturedLUTs[4];  // 存储4个LUT纹理
+		static float s_LUTWeights[4];  // 存储4个LUT的权重
 
 	public:
 		static void SetForwardStage(bool isForward) { s_isForwardStage = isForward; }

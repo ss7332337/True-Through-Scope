@@ -33,6 +33,9 @@ namespace ThroughScope
         static ID3D11Texture2D* GetSecondPassColorTexture() { return s_SecondPassColorTexture; }
         static ID3D11Texture2D* GetSecondPassDepthTexture() { return s_SecondPassDepthTexture; }
 
+		static ID3D11Texture2D* GetBackBufferTexture() { return s_BackBufferTexture; }
+		static ID3D11ShaderResourceView* GetBackBufferSRV() { return s_BackBufferSRV; }
+
         // Status flags
         static bool IsFirstPassComplete() { return s_FirstPassComplete; }
         static void SetFirstPassComplete(bool value) { s_FirstPassComplete = value; }
@@ -59,6 +62,10 @@ namespace ThroughScope
         static ID3D11Texture2D* s_FirstPassDepthTexture;
         static ID3D11Texture2D* s_SecondPassColorTexture;
         static ID3D11Texture2D* s_SecondPassDepthTexture;
+
+		static ID3D11Texture2D* s_BackBufferTexture;
+		static ID3D11ShaderResourceView* s_BackBufferSRV;
+
 
         // Scope textures
         static RE::BSGraphics::Texture* s_ScopeBSTexture;

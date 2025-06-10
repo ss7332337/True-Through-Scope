@@ -233,40 +233,195 @@ using namespace ThroughScope::Utilities;
 //}
 
 NiFrustum originalCamera1stviewFrustum{};
+uint64_t savedDrawWorld = 0;
+
+//renderTargets[0] = SwapChainImage RenderTarget(Only rtView and srView)
+//renderTargets[4] = Main Render_PreUI RenderTarget
 //renderTargets[26] = TAA 历史缓冲 = TAA PS t1
-//renderTargets[29] =  TAA Motion Vectors = TAA PS t2
-//renderTargets[24] = TAA Jitter Mask = TAA PS t4
-// 
-//void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param)
-//{
-//	isEnableTAA = thisPtr->isActive;
-//	g_TAA(thisPtr, a_geometry, a_param);
-//	if (isEnableTAA)
-//	{
-//		if (!isScopCamReady || !isRenderReady || !D3DHooks::IsEnableRender())
-//			return;
-//
-//		ID3D11DeviceContext* context = d3dHooks->GetContext();
-//		D3DHooks::CacheOMState(context);
-//		int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
-//		if (scopeNodeIndexCount != -1 && isEnableTAA) {
-//			try {
-//				RenderUtilities::SetRender_PreUIComplete(true);
-//				D3DHooks::SetSecondRenderTargetAsActive();
-//				d3dHooks->RestoreAllCachedStates();
-//				d3dHooks->SetScopeTexture(context);
-//				D3DHooks::isSelfDrawCall = true;
-//				context->DrawIndexed(scopeNodeIndexCount, 0, 0);
-//				D3DHooks::isSelfDrawCall = false;
-//				D3DHooks::RestoreOMState(context);
-//				RenderUtilities::SetRender_PreUIComplete(false);
-//			} catch (...) {
-//				logger::error("Exception during scope quad rendering");
-//				RenderUtilities::SetRender_PreUIComplete(false);
-//			}
-//		}
-//	}
-//}
+//renderTargets[29] = TAA Motion Vectors = TAA PS t2
+//renderTargets[24] = TAA Jitter Mask = TAA PS t4 就是那个红不拉几的
+//renderTargets[15] = 用于调整颜色的 1920 -> 480 的模糊的图像
+
+
+
+
+void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param)
+{
+	// 在执行TAA之前捕获LUT纹理
+	ID3D11DeviceContext* context = d3dHooks->GetContext();
+	if (context && D3DHooks::IsEnableRender()) {
+		// 捕获当前绑定的LUT纹理 (t3, t4, t5, t6)
+		D3DHooks::CaptureLUTTextures(context);
+	}
+
+	// 1. 先执行原本的TAA
+	g_TAA(thisPtr, a_geometry, a_param);
+	
+
+	if (!isScopCamReady || !isRenderReady || !D3DHooks::IsEnableRender())
+		return;
+
+	auto playerCamera = *ptr_DrawWorldCamera;
+	auto scopeCamera = ScopeCamera::GetScopeCamera();
+
+	if (!scopeCamera || !scopeCamera->parent)
+		return;
+
+	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+	if (!rendererData || !rendererData->context) {
+		logger::error("Renderer data or context is null");
+		return;
+	}
+
+	auto RTVs = rendererData->renderTargets;
+	ID3D11RenderTargetView* mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
+	ID3D11DepthStencilView* mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
+	ID3D11Texture2D* mainRTTexture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
+	ID3D11Texture2D* mainDSTexture = (ID3D11Texture2D*)rendererData->depthStencilTargets[2].texture;
+
+	//ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
+	ID3D11Device* device = d3dHooks->GetDevice();
+	ID3D11Texture2D* rtTexture2D = nullptr;
+	ID3D11RenderTargetView* savedRTVs[2] = { nullptr };
+	context->OMGetRenderTargets(2, savedRTVs, nullptr);
+	
+	ID3D11Resource* rtResource = nullptr;
+	savedRTVs[1]->GetResource(&rtResource);
+	if (rtResource != nullptr) {
+		rtResource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&rtTexture2D);
+		rtResource->Release();  // 释放原始资源引用
+	}
+
+	D3D11_TEXTURE2D_DESC originalDesc;
+	D3D11_TEXTURE2D_DESC rtTextureDesc;
+	rtTexture2D->GetDesc(&originalDesc);  // 获取原纹理参数
+	rtTextureDesc = originalDesc;
+	rtTextureDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+	// 1. 保存BackBuffer
+	auto backBufferSRV = RenderUtilities::GetBackBufferSRV();
+	auto backBufferTex = RenderUtilities::GetBackBufferTexture();
+
+	HRESULT hr = device->CreateTexture2D(&rtTextureDesc, nullptr, &backBufferTex);
+	hr = device->CreateShaderResourceView(backBufferTex, NULL, &backBufferSRV);
+	context->CopyResource(backBufferTex, rtTexture2D);
+
+
+
+	if (mainRTTexture) {
+		// Copy the render target to our texture
+		context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), mainRTTexture);
+		context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), mainDSTexture);
+		RenderUtilities::SetFirstPassComplete(true);
+	} else {
+		logger::error("Failed to find a valid render target texture");
+	}
+
+	//更新瞄具镜头
+	NiCloningProcess tempP{};
+	NiCamera* originalCamera = (NiCamera*)((*ptr_DrawWorldCamera)->CreateClone(tempP));
+
+	auto originalCamera1st = *ptr_DrawWorldCamera;
+	originalCamera1stviewFrustum = originalCamera1st->viewFrustum;
+	auto originalCamera1stport = (*ptr_DrawWorld1stCamera)->port;
+	scopeCamera->local.translate = originalCamera->local.translate;
+	scopeCamera->local.rotate = originalCamera->local.rotate;
+	scopeCamera->local.translate.y += 15;
+
+	auto drawWorldCullingProcess = *DrawWorldCullingProcess;
+
+	NiUpdateData nData;
+
+	nData.camera = scopeCamera;
+	scopeCamera->Update(nData);
+
+	nData.camera = originalCamera1st;
+	originalCamera1st->Update(nData);
+
+	
+	//清理主输出，准备第二次渲染
+	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+	for (size_t i = 0; i < sizeof(RTVs); i++)
+	{
+		context->ClearRenderTargetView((ID3D11RenderTargetView*)RTVs[i].rtView, clearColor);
+	}
+
+	//for (size_t i = 0; i < 100; i++) {
+	//	context->ClearRenderTargetView((ID3D11RenderTargetView*)RTVs[i].rtView, clearColor);
+	//}
+
+	context->ClearDepthStencilView(mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+
+	D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
+	DrawWorld::SetCamera(scopeCamera);
+	DrawWorld::SetUpdateCameraFOV(true);
+	DrawWorld::SetAdjusted1stPersonFOV(ScopeCamera::GetTargetFOV());
+	DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
+
+	nData.camera = scopeCamera;
+	scopeCamera->Update(nData);
+
+	ScopeCamera::SetRenderingForScope(true);
+	(*BSM_ST)->ForceDisableSSR = true;
+	g_RenderPreUIOriginal(savedDrawWorld);  //第二次渲染输出到临时RenderTarget
+	(*BSM_ST)->ForceDisableSSR = false;
+	ScopeCamera::SetRenderingForScope(false);
+	D3DPERF_EndEvent();
+
+
+
+	context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), mainRTTexture);
+	context->CopyResource(rtTexture2D, backBufferTex);
+	RenderUtilities::SetSecondPassComplete(true);
+
+	// 现在更新scope模型的纹理
+	if (RenderUtilities::IsSecondPassComplete()) {
+		// Restore the original render target content for normal display
+		context->CopyResource(mainRTTexture, RenderUtilities::GetFirstPassColorTexture());
+		context->CopyResource(mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
+		}
+
+
+	/*visCamera->viewFrustum = originalCamera1stviewFrustum;
+	nData.camera = visCamera;
+	visCamera->Update(nData);*/
+
+	/*originalCamera1st->viewFrustum = originalCamera1stviewFrustum;
+	nData.camera = originalCamera1st;
+	originalCamera1st->Update(nData);*/
+
+	DrawWorld::SetCamera(originalCamera);
+	DrawWorld::SetUpdateCameraFOV(true);
+
+	context->OMSetRenderTargets(1, &savedRTVs[1], nullptr);
+
+	int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
+	if (scopeNodeIndexCount != -1) {
+		try {
+			RenderUtilities::SetRender_PreUIComplete(true);
+			d3dHooks->RestoreAllCachedStates();
+			d3dHooks->SetScopeTexture(context);
+			D3DHooks::isSelfDrawCall = true;
+			context->DrawIndexed(scopeNodeIndexCount, 0, 0);
+			D3DHooks::isSelfDrawCall = false;
+			
+			RenderUtilities::SetRender_PreUIComplete(false);
+		} catch (...) {
+			logger::error("Exception during scope content rendering");
+			RenderUtilities::SetRender_PreUIComplete(false);
+		}
+	}
+
+	//DrawWorld::Render_UI(savedDrawWorld);
+
+	if (originalCamera) {
+		if (originalCamera->DecRefCount() == 0) {
+			originalCamera->DeleteThis();
+		}
+	}
+}
 
 void __fastcall hkMainPreRender(Main* thisPtr, int auiDestination)
 {
@@ -277,14 +432,14 @@ void __fastcall hkBegin(uint64_t ptr_drawWorld)
 {
 	g_BeginOriginal(ptr_drawWorld);
 
-	auto drawWorldCullingProcess = *DrawWorldCullingProcess;
-	float scopeViewSize = 0.275f;
-	NiFrustum scopeFrustum{};
-	scopeFrustum.left = -scopeViewSize;
-	scopeFrustum.right = scopeViewSize;
-	scopeFrustum.top = scopeViewSize;
-	scopeFrustum.bottom = -scopeViewSize;
-	drawWorldCullingProcess->m_kFrustum = scopeFrustum;
+	//auto drawWorldCullingProcess = *DrawWorldCullingProcess;
+	//float scopeViewSize = 0.275f;
+	//NiFrustum scopeFrustum{};
+	//scopeFrustum.left = -scopeViewSize;
+	//scopeFrustum.right = scopeViewSize;
+	//scopeFrustum.top = scopeViewSize;
+	//scopeFrustum.bottom = -scopeViewSize;
+	//drawWorldCullingProcess->m_kFrustum = scopeFrustum;
 }
 
 void hkDrawTriShape(BSGraphics::Renderer* thisPtr, BSGraphics::TriShape* apTriShape, unsigned int auiStartIndex, unsigned int auiNumTriangles)
@@ -314,160 +469,154 @@ void hkBSStreamLoad(BSStream* stream, const char* apFileName, NiBinaryStream* ap
 void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 {
 	//先正常渲染主场景
+	savedDrawWorld = ptr_drawWorld;
 	D3DEventNode(g_RenderPreUIOriginal(ptr_drawWorld), L"First Render_PreUI");
 	
 
-	if (!isScopCamReady || !isRenderReady || !D3DHooks::IsEnableRender())
-		return;
+	//if (!isScopCamReady || !isRenderReady || !D3DHooks::IsEnableRender())
+	//	return;
 
-	auto playerCamera = *ptr_DrawWorldCamera;
-	auto scopeCamera = ScopeCamera::GetScopeCamera();
+	//auto playerCamera = *ptr_DrawWorldCamera;
+	//auto scopeCamera = ScopeCamera::GetScopeCamera();
 
-	if (!scopeCamera || !scopeCamera->parent)
-		return;
+	//if (!scopeCamera || !scopeCamera->parent)
+	//	return;
 
-	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-	if (!rendererData || !rendererData->context) {
-		logger::error("Renderer data or context is null");
-		return;
-	}
+	//auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+	//if (!rendererData || !rendererData->context) {
+	//	logger::error("Renderer data or context is null");
+	//	return;
+	//}
 
-	//ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
-	ID3D11DeviceContext* context = d3dHooks->GetContext();
+	////ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
+	//ID3D11DeviceContext* context = d3dHooks->GetContext();
 
-	auto RTVs = rendererData->renderTargets;
-	ID3D11RenderTargetView* mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
-	ID3D11DepthStencilView* mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
-	ID3D11Texture2D* mainRTTexture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
-	ID3D11Texture2D* mainDSTexture = (ID3D11Texture2D*)rendererData->depthStencilTargets[2].texture;
+	//auto RTVs = rendererData->renderTargets;
+	//ID3D11RenderTargetView* mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
+	//ID3D11DepthStencilView* mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
+	//ID3D11Texture2D* mainRTTexture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
+	//ID3D11Texture2D* mainDSTexture = (ID3D11Texture2D*)rendererData->depthStencilTargets[2].texture;
 
-	if (mainRTTexture) {
-		// Copy the render target to our texture
-		context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), mainRTTexture);
-		context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), mainDSTexture);
-		RenderUtilities::SetFirstPassComplete(true);
-	} else {
-		logger::error("Failed to find a valid render target texture");
-	}
+	//if (mainRTTexture) {
+	//	// Copy the render target to our texture
+	//	context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), mainRTTexture);
+	//	context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), mainDSTexture);
+	//	RenderUtilities::SetFirstPassComplete(true);
+	//} else {
+	//	logger::error("Failed to find a valid render target texture");
+	//}
 
-	//更新瞄具镜头
-	NiCloningProcess tempP{};
-	NiCamera* originalCamera = (NiCamera*)((*ptr_DrawWorldCamera)->CreateClone(tempP));
+	////更新瞄具镜头
+	//NiCloningProcess tempP{};
+	//NiCamera* originalCamera = (NiCamera*)((*ptr_DrawWorldCamera)->CreateClone(tempP));
 
-	auto originalCamera1st = *ptr_DrawWorldCamera;
-	originalCamera1stviewFrustum = originalCamera1st->viewFrustum;
-	auto originalCamera1stport = (*ptr_DrawWorld1stCamera)->port;
-	scopeCamera->local.translate = originalCamera->local.translate;
-	scopeCamera->local.rotate = originalCamera->local.rotate;
-	scopeCamera->local.translate.y += 15;
-
-
-	auto visCamera = *ptr_DrawWorldVisCamera;
-	float scopeViewSize = 0.275f;
-	NiFrustum scopeFrustum{};
-	scopeFrustum.left = -scopeViewSize;
-	scopeFrustum.right = scopeViewSize;
-	scopeFrustum.top = scopeViewSize;
-	scopeFrustum.bottom = -scopeViewSize;
-
-	auto drawWorldCullingProcess = *DrawWorldCullingProcess;
-	drawWorldCullingProcess->m_kFrustum = scopeFrustum;
-
-	NiUpdateData nData;
-
-	visCamera->viewFrustum = scopeFrustum;
-
-	nData.camera = visCamera;
-	visCamera->Update(nData);
-
-	nData.camera = scopeCamera;
-	scopeCamera->Update(nData);
-
-	nData.camera = originalCamera1st;
-	originalCamera1st->Update(nData);
-
-	
-	//清理主输出，准备第二次渲染
-	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-
-	for (size_t i = 0; i < sizeof(RTVs); i++)
-	{
-		context->ClearRenderTargetView((ID3D11RenderTargetView*)RTVs[i].rtView, clearColor);
-	}
-
-	context->ClearDepthStencilView(mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
-
-	D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
-	DrawWorld::SetCamera(scopeCamera);
-	DrawWorld::SetUpdateCameraFOV(true);
-	DrawWorld::SetAdjusted1stPersonFOV(ScopeCamera::GetTargetFOV());
-	DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
-
-	// 更新裁剪处理器的视锥体（使用已优化的视锥体）
-	//(*DrawWorldGeomListCullProc0)->SetFrustum(&visCamera->viewFrustum);
-	//(*DrawWorldGeomListCullProc1)->SetFrustum(&visCamera->viewFrustum);
-	//(*DrawWorldGeomListCullProc0)->bCustomCullPlanes = true;
-	//(*DrawWorldGeomListCullProc1)->bCustomCullPlanes = true;
-
-	nData.camera = scopeCamera;
-	scopeCamera->Update(nData);
-
-	//Main::GetSingleton()->DrawWorld_PreRender(0);
-	//DrawWorld::DoUmbraQuery(ptr_drawWorld);
-
-	ScopeCamera::SetRenderingForScope(true);
-	(*BSM_ST)->ForceDisableSSR = true;
-	g_RenderPreUIOriginal(ptr_drawWorld);  //第二次渲染
-	(*BSM_ST)->ForceDisableSSR = false;
-	ScopeCamera::SetRenderingForScope(false);
-	D3DPERF_EndEvent();
-
-	context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), mainRTTexture);
-	RenderUtilities::SetSecondPassComplete(true);
-	ID3D11ShaderResourceView* scopeSRV = nullptr;
-
-	// 现在更新scope模型的纹理
-	if (RenderUtilities::IsSecondPassComplete()) {
-		// Restore the original render target content for normal display
-		context->CopyResource(mainRTTexture, RenderUtilities::GetFirstPassColorTexture());
-		context->CopyResource(mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
-	}
+	//auto originalCamera1st = *ptr_DrawWorldCamera;
+	//originalCamera1stviewFrustum = originalCamera1st->viewFrustum;
+	//auto originalCamera1stport = (*ptr_DrawWorld1stCamera)->port;
+	//scopeCamera->local.translate = originalCamera->local.translate;
+	//scopeCamera->local.rotate = originalCamera->local.rotate;
+	//scopeCamera->local.translate.y += 15;
 
 
-	visCamera->viewFrustum = originalCamera1stviewFrustum;
-	nData.camera = visCamera;
-	visCamera->Update(nData);
+	//auto visCamera = *ptr_DrawWorldVisCamera;
+	//float scopeViewSize = 0.275f;
+	//NiFrustum scopeFrustum{};
+	//scopeFrustum.left = -scopeViewSize;
+	//scopeFrustum.right = scopeViewSize;
+	//scopeFrustum.top = scopeViewSize;
+	//scopeFrustum.bottom = -scopeViewSize;
 
-	/*originalCamera1st->viewFrustum = originalCamera1stviewFrustum;
-	nData.camera = originalCamera1st;
-	originalCamera1st->Update(nData);*/
+	//auto drawWorldCullingProcess = *DrawWorldCullingProcess;
+	//drawWorldCullingProcess->m_kFrustum = scopeFrustum;
 
-	DrawWorld::SetCamera(originalCamera);
-	DrawWorld::SetUpdateCameraFOV(true);
+	//NiUpdateData nData;
 
-	int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
-	if (scopeNodeIndexCount != -1) {
-		try {
-			RenderUtilities::SetRender_PreUIComplete(true);
-			d3dHooks->RestoreAllCachedStates();
-			d3dHooks->SetScopeTexture(context);
-			D3DHooks::isSelfDrawCall = true;
-			context->DrawIndexed(scopeNodeIndexCount, 0, 0);
-			D3DHooks::isSelfDrawCall = false;
-			RenderUtilities::SetRender_PreUIComplete(false);
-		} catch (...) {
-			logger::error("Exception during scope quad rendering");
-			RenderUtilities::SetRender_PreUIComplete(false);
-		}
-	}
+	//visCamera->viewFrustum = scopeFrustum;
 
-	
+	//nData.camera = visCamera;
+	//visCamera->Update(nData);
 
-	if (originalCamera) {
-		if (originalCamera->DecRefCount() == 0) {
-			originalCamera->DeleteThis();
-		}
-	}
+	//nData.camera = scopeCamera;
+	//scopeCamera->Update(nData);
+
+	//nData.camera = originalCamera1st;
+	//originalCamera1st->Update(nData);
+
+	//
+	////清理主输出，准备第二次渲染
+	//float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+	//for (size_t i = 0; i < sizeof(RTVs); i++)
+	//{
+	//	context->ClearRenderTargetView((ID3D11RenderTargetView*)RTVs[i].rtView, clearColor);
+	//}
+
+	//context->ClearDepthStencilView(mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+	//D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
+	//DrawWorld::SetCamera(scopeCamera);
+	//DrawWorld::SetUpdateCameraFOV(true);
+	//DrawWorld::SetAdjusted1stPersonFOV(ScopeCamera::GetTargetFOV());
+	//DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
+
+	//// 更新裁剪处理器的视锥体（使用已优化的视锥体）
+	////(*DrawWorldGeomListCullProc0)->SetFrustum(&visCamera->viewFrustum);
+	////(*DrawWorldGeomListCullProc1)->SetFrustum(&visCamera->viewFrustum);
+	////(*DrawWorldGeomListCullProc0)->bCustomCullPlanes = true;
+	////(*DrawWorldGeomListCullProc1)->bCustomCullPlanes = true;
+
+	//nData.camera = scopeCamera;
+	//scopeCamera->Update(nData);
+
+	////Main::GetSingleton()->DrawWorld_PreRender(0);
+	////DrawWorld::DoUmbraQuery(ptr_drawWorld);
+
+	//ScopeCamera::SetRenderingForScope(true);
+	//(*BSM_ST)->ForceDisableSSR = true;
+	//g_RenderPreUIOriginal(ptr_drawWorld);  //第二次渲染
+	//(*BSM_ST)->ForceDisableSSR = false;
+	//ScopeCamera::SetRenderingForScope(false);
+	//D3DPERF_EndEvent();
+
+	//context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), mainRTTexture);
+	//RenderUtilities::SetSecondPassComplete(true);
+	//ID3D11ShaderResourceView* scopeSRV = nullptr;
+
+
+	//visCamera->viewFrustum = originalCamera1stviewFrustum;
+	//nData.camera = visCamera;
+	//visCamera->Update(nData);
+
+	///*originalCamera1st->viewFrustum = originalCamera1stviewFrustum;
+	//nData.camera = originalCamera1st;
+	//originalCamera1st->Update(nData);*/
+
+	//DrawWorld::SetCamera(originalCamera);
+	//DrawWorld::SetUpdateCameraFOV(true);
+
+	//int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
+	//if (scopeNodeIndexCount != -1) {
+	//	try {
+	//		RenderUtilities::SetRender_PreUIComplete(true);
+	//		d3dHooks->RestoreAllCachedStates();
+	//		d3dHooks->SetScopeTexture(context);
+	//		D3DHooks::isSelfDrawCall = true;
+	//		context->DrawIndexed(scopeNodeIndexCount, 0, 0);
+	//		D3DHooks::isSelfDrawCall = false;
+	//		RenderUtilities::SetRender_PreUIComplete(false);
+	//	} catch (...) {
+	//		logger::error("Exception during scope quad rendering");
+	//		RenderUtilities::SetRender_PreUIComplete(false);
+	//	}
+	//}
+
+	//DrawWorld::Render_UI(ptr_drawWorld);
+
+	//if (originalCamera) {
+	//	if (originalCamera->DecRefCount() == 0) {
+	//		originalCamera->DeleteThis();
+	//	}
+	//}
 }
 
 
@@ -833,9 +982,9 @@ void RegisterHooks()
 	  /*CreateAndEnableHook((LPVOID)DrawIndexed_Ori.address(), &hkDrawIndexed,
 		  reinterpret_cast<LPVOID*>(&g_DrawIndexed), "DrawIndexed");*/
 
-	/* REL::Relocation<std::uintptr_t> vtable_TAA(RE::ImageSpaceEffectTemporalAA::VTABLE[0]);
+	 REL::Relocation<std::uintptr_t> vtable_TAA(RE::ImageSpaceEffectTemporalAA::VTABLE[0]);
 	 const auto oldFuncTAA = vtable_TAA.write_vfunc(1, reinterpret_cast<std::uintptr_t>(&hkHookTAA));
-	 g_TAA = decltype(&hkHookTAA)(oldFuncTAA);*/
+	 g_TAA = decltype(&hkHookTAA)(oldFuncTAA);
 
 	logger::info("Hooks registered successfully");
 }

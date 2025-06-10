@@ -10,6 +10,9 @@ namespace ThroughScope
     ID3D11Texture2D* RenderUtilities::s_SecondPassColorTexture = nullptr;
     ID3D11Texture2D* RenderUtilities::s_SecondPassDepthTexture = nullptr;
 
+	ID3D11Texture2D* RenderUtilities::s_BackBufferTexture = nullptr;
+	ID3D11ShaderResourceView* RenderUtilities::s_BackBufferSRV = nullptr;
+
     RE::BSGraphics::Texture* RenderUtilities::s_ScopeBSTexture = nullptr;
     RE::NiTexture* RenderUtilities::s_ScopeNiTexture = nullptr;
     bool RenderUtilities::s_FirstPassComplete = false;
