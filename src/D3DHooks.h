@@ -215,6 +215,10 @@ namespace ThroughScope {
 			return (index >= 0 && index < 4) ? s_LUTWeights[index] : 0.0f; 
 		}
 
+		// 全屏三角形渲染相关
+		static void RenderImageSpaceEffect(ID3D11DeviceContext* context);
+		static bool InitializeImageSpaceEffectResources(ID3D11Device* device);
+
 	private:
 		struct BufferInfo
 		{
@@ -276,6 +280,21 @@ namespace ThroughScope {
 		// LUT纹理捕获相关
 		static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> s_CapturedLUTs[4];  // 存储4个LUT纹理
 		static float s_LUTWeights[4];  // 存储4个LUT的权重
+
+		// 全屏三角形渲染资源
+		static Microsoft::WRL::ComPtr<ID3D11VertexShader> s_ImageSpaceEffectVS;
+		static Microsoft::WRL::ComPtr<ID3D11PixelShader> s_ImageSpaceEffectPS;
+		static Microsoft::WRL::ComPtr<ID3D11RasterizerState> s_ImageSpaceEffectRS;
+		static Microsoft::WRL::ComPtr<ID3D11DepthStencilState> s_ImageSpaceEffectDSS;
+		static Microsoft::WRL::ComPtr<ID3D11SamplerState> s_ImageSpaceEffectSamplers[4];
+		
+		// 全屏三角形输出的RenderTarget
+		static Microsoft::WRL::ComPtr<ID3D11Texture2D> s_ImageSpaceEffectOutputTexture;
+		static Microsoft::WRL::ComPtr<ID3D11RenderTargetView> s_ImageSpaceEffectOutputRTV;
+		static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> s_ImageSpaceEffectOutputSRV;
+		
+		// 全屏三角形常量缓冲区
+		static Microsoft::WRL::ComPtr<ID3D11Buffer> s_ImageSpaceEffectConstantBuffer;
 
 	public:
 		static void SetForwardStage(bool isForward) { s_isForwardStage = isForward; }

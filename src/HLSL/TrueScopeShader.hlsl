@@ -236,6 +236,7 @@ float4 main(PS_INPUT input) : SV_TARGET
     
     // 应用Color Grading色彩分级（替代原来的亮度提升）
     color = applyColorGrading(color);
+    color *= 1.1f;
     
     // 计算夜视和热成像效果（无分支）
     float4 nightVisionColor = applyNightVision(color, texCoord);

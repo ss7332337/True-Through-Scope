@@ -6,12 +6,14 @@
 #include <imgui_impl_win32.h>
 #include <ScopeCamera.h>
 #include <wrl/client.h>
+#include <d3dcompiler.h>
 
 #include <DDSTextureLoader11.h>
 #include "ImGuiManager.h"
 
 #include <xinput.h>
 #pragma comment(lib, "xinput.lib")
+#pragma comment(lib, "d3dcompiler.lib")
 
 
 #include <renderdoc_app.h>
@@ -99,6 +101,21 @@ namespace ThroughScope {
 	// LUT纹理捕获相关
 	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> D3DHooks::s_CapturedLUTs[4] = { nullptr, nullptr, nullptr, nullptr };
 	float D3DHooks::s_LUTWeights[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+	// 全屏三角形渲染资源
+	Microsoft::WRL::ComPtr<ID3D11VertexShader> D3DHooks::s_ImageSpaceEffectVS = nullptr;
+	Microsoft::WRL::ComPtr<ID3D11PixelShader> D3DHooks::s_ImageSpaceEffectPS = nullptr;
+	Microsoft::WRL::ComPtr<ID3D11RasterizerState> D3DHooks::s_ImageSpaceEffectRS = nullptr;
+	Microsoft::WRL::ComPtr<ID3D11DepthStencilState> D3DHooks::s_ImageSpaceEffectDSS = nullptr;
+	Microsoft::WRL::ComPtr<ID3D11SamplerState> D3DHooks::s_ImageSpaceEffectSamplers[4] = { nullptr, nullptr, nullptr, nullptr };
+	
+	// 全屏三角形输出的RenderTarget
+	Microsoft::WRL::ComPtr<ID3D11Texture2D> D3DHooks::s_ImageSpaceEffectOutputTexture = nullptr;
+	Microsoft::WRL::ComPtr<ID3D11RenderTargetView> D3DHooks::s_ImageSpaceEffectOutputRTV = nullptr;
+	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> D3DHooks::s_ImageSpaceEffectOutputSRV = nullptr;
+	
+	// 全屏三角形常量缓冲区
+	Microsoft::WRL::ComPtr<ID3D11Buffer> D3DHooks::s_ImageSpaceEffectConstantBuffer = nullptr;
 
 	static constexpr UINT TARGET_STRIDE = 28;
 	static constexpr UINT TARGET_INDEX_COUNT = 96;
@@ -271,6 +288,333 @@ namespace ThroughScope {
 				lutSRVs[i]->Release();
 			}
 		}
+	}
+
+	bool D3DHooks::InitializeImageSpaceEffectResources(ID3D11Device* device)
+	{
+		if (!device) {
+			logger::error("Device is null in InitializeImageEffectResources");
+			return false;
+		}
+
+		// 编译顶点着色器从文件
+		ID3DBlob* vsBlob = nullptr;
+		ID3DBlob* errorBlob = nullptr;
+		HRESULT hr = CreateShaderFromFile(
+			L"Data\\Shaders\\XiFeiLi\\ImageSpaceEffectVS.cso", 
+			L"src\\HLSL\\ImageSpaceEffectVS.hlsl", 
+			"main", 
+			"vs_5_0", 
+			&vsBlob);
+
+		if (FAILED(hr) || !vsBlob) {
+			logger::error("Failed to compile ImageSpaceEffect vertex shader from file");
+			return false;
+		}
+
+		hr = device->CreateVertexShader(
+			vsBlob->GetBufferPointer(),
+			vsBlob->GetBufferSize(),
+			nullptr,
+			s_ImageSpaceEffectVS.GetAddressOf());
+
+		vsBlob->Release();
+
+		if (FAILED(hr)) {
+			logger::error("Failed to create ImageSpaceEffect vertex shader: 0x{:X}", hr);
+			return false;
+		}
+
+		logger::info("Successfully created ImageSpaceEffect vertex shader from file");
+
+		// 编译像素着色器从文件
+		ID3DBlob* psBlob = nullptr;
+		hr = CreateShaderFromFile(
+			L"Data\\Shaders\\XiFeiLi\\ImageSpaceEffect.cso", 
+			L"src\\HLSL\\ImageSpaceEffect.hlsl", 
+			"main", 
+			"ps_5_0", 
+			&psBlob);
+
+		if (FAILED(hr) || !psBlob) {
+			logger::error("Failed to compile ImageSpaceEffect pixel shader from file");
+			return false;
+		}
+
+		hr = device->CreatePixelShader(
+			psBlob->GetBufferPointer(),
+			psBlob->GetBufferSize(),
+			nullptr,
+			s_ImageSpaceEffectPS.GetAddressOf());
+
+		psBlob->Release();
+
+		if (FAILED(hr)) {
+			logger::error("Failed to create ImageSpaceEffect pixel shader: 0x{:X}", hr);
+			return false;
+		}
+
+		logger::info("Successfully created ImageSpaceEffect pixel shader from file");
+
+		// 创建光栅化状态
+		D3D11_RASTERIZER_DESC rsDesc = {};
+		rsDesc.FillMode = D3D11_FILL_SOLID;
+		rsDesc.CullMode = D3D11_CULL_NONE;
+		rsDesc.FrontCounterClockwise = FALSE;
+		rsDesc.DepthBias = 0;
+		rsDesc.DepthBiasClamp = 0.0f;
+		rsDesc.SlopeScaledDepthBias = 0.0f;
+		rsDesc.DepthClipEnable = FALSE;
+		rsDesc.ScissorEnable = FALSE;
+		rsDesc.MultisampleEnable = FALSE;
+		rsDesc.AntialiasedLineEnable = FALSE;
+
+		hr = device->CreateRasterizerState(&rsDesc, s_ImageSpaceEffectRS.GetAddressOf());
+		if (FAILED(hr)) {
+			logger::error("Failed to create ImageSpaceEffect rasterizer state: 0x{:X}", hr);
+			return false;
+		}
+
+		// 创建深度模板状态
+		D3D11_DEPTH_STENCIL_DESC dssDesc = {};
+		dssDesc.DepthEnable = FALSE;
+		dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+		dssDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+		dssDesc.StencilEnable = FALSE;
+
+		hr = device->CreateDepthStencilState(&dssDesc, s_ImageSpaceEffectDSS.GetAddressOf());
+		if (FAILED(hr)) {
+			logger::error("Failed to create ImageSpaceEffect depth stencil state: 0x{:X}", hr);
+			return false;
+		}
+
+		// 创建采样器状态
+		// Sampler 0: UVW: ClampEdge, Min&Mag: Linear, Mip: Point
+		D3D11_SAMPLER_DESC samplerDesc0 = {};
+		samplerDesc0.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+		samplerDesc0.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc0.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc0.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc0.ComparisonFunc = D3D11_COMPARISON_NEVER;
+		samplerDesc0.MinLOD = 0;
+		samplerDesc0.MaxLOD = D3D11_FLOAT32_MAX;
+
+		hr = device->CreateSamplerState(&samplerDesc0, s_ImageSpaceEffectSamplers[0].GetAddressOf());
+		if (FAILED(hr)) {
+			logger::error("Failed to create ImageSpaceEffect sampler 0: 0x{:X}", hr);
+			return false;
+		}
+
+		// Samplers 1-3: UVW: ClampEdge, Min&Mag&Mip: Point
+		D3D11_SAMPLER_DESC samplerDesc1 = {};
+		samplerDesc1.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+		samplerDesc1.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc1.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc1.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc1.ComparisonFunc = D3D11_COMPARISON_NEVER;
+		samplerDesc1.MinLOD = 0;
+		samplerDesc1.MaxLOD = D3D11_FLOAT32_MAX;
+
+		for (int i = 1; i < 4; i++) {
+			hr = device->CreateSamplerState(&samplerDesc1, s_ImageSpaceEffectSamplers[i].GetAddressOf());
+			if (FAILED(hr)) {
+				logger::error("Failed to create ImageSpaceEffect sampler {}: 0x{:X}", i, hr);
+				return false;
+			}
+		}
+
+		// 创建全屏三角形输出的RenderTarget
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		UINT screenWidth = rendererData->renderWindow[0].windowWidth;
+		UINT screenHeight = rendererData->renderWindow[0].windowHeight;
+
+		// 创建纹理
+		D3D11_TEXTURE2D_DESC textureDesc = {};
+		textureDesc.Width = screenWidth;
+		textureDesc.Height = screenHeight;
+		textureDesc.MipLevels = 1;
+		textureDesc.ArraySize = 1;
+		textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		textureDesc.SampleDesc.Count = 1;
+		textureDesc.SampleDesc.Quality = 0;
+		textureDesc.Usage = D3D11_USAGE_DEFAULT;
+		textureDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+		textureDesc.CPUAccessFlags = 0;
+		textureDesc.MiscFlags = 0;
+
+		hr = device->CreateTexture2D(&textureDesc, nullptr, s_ImageSpaceEffectOutputTexture.GetAddressOf());
+		if (FAILED(hr)) {
+			logger::error("Failed to create ImageSpaceEffect output texture: 0x{:X}", hr);
+			return false;
+		}
+
+		// 创建RTV
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+		rtvDesc.Format = textureDesc.Format;
+		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+		rtvDesc.Texture2D.MipSlice = 0;
+
+		hr = device->CreateRenderTargetView(s_ImageSpaceEffectOutputTexture.Get(), &rtvDesc, s_ImageSpaceEffectOutputRTV.GetAddressOf());
+		if (FAILED(hr)) {
+			logger::error("Failed to create ImageSpaceEffect output RTV: 0x{:X}", hr);
+			return false;
+		}
+
+		// 创建SRV
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = textureDesc.Format;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MostDetailedMip = 0;
+		srvDesc.Texture2D.MipLevels = 1;
+
+		hr = device->CreateShaderResourceView(s_ImageSpaceEffectOutputTexture.Get(), &srvDesc, s_ImageSpaceEffectOutputSRV.GetAddressOf());
+		if (FAILED(hr)) {
+			logger::error("Failed to create ImageSpaceEffect output SRV: 0x{:X}", hr);
+			return false;
+		}
+
+		// 创建常量缓冲区cb2 - 包含5个float4向量 (80字节)
+		D3D11_BUFFER_DESC cbDesc = {};
+		cbDesc.ByteWidth = 80; // 5 * 16 bytes
+		cbDesc.Usage = D3D11_USAGE_IMMUTABLE;
+		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		cbDesc.CPUAccessFlags = 0;
+		cbDesc.MiscFlags = 0;
+
+		// 设置常量缓冲区数据
+		struct FullscreenCB2Data {
+			float cb2_v0[4]; // 未使用，但保持结构完整
+			float cb2_v1[4]; // 3.25, 1.60, 0.18, 0.02
+			float cb2_v2[4]; // 1.00, 0.00, 1.00, 1.00
+			float cb2_v3[4]; // 0.00, 0.00, 0.00, 0.00
+			float cb2_v4[4]; // 1.00, 1.00, 1.00, 1.00
+		};
+
+		FullscreenCB2Data cbData = {};
+		// cb2_v0 - 未使用，设置为0
+		cbData.cb2_v0[0] = 0.0f;
+		cbData.cb2_v0[1] = 0.0f;
+		cbData.cb2_v0[2] = 0.0f;
+		cbData.cb2_v0[3] = 0.0f;
+		
+		// cb2_v1
+		cbData.cb2_v1[0] = 3.25f;
+		cbData.cb2_v1[1] = 1.60f;
+		cbData.cb2_v1[2] = 0.18f;
+		cbData.cb2_v1[3] = 0.02f;
+		
+		// cb2_v2
+		cbData.cb2_v2[0] = 1.00f;
+		cbData.cb2_v2[1] = 0.00f;
+		cbData.cb2_v2[2] = 1.00f;
+		cbData.cb2_v2[3] = 1.00f;
+		
+		// cb2_v3
+		cbData.cb2_v3[0] = 0.00f;
+		cbData.cb2_v3[1] = 0.00f;
+		cbData.cb2_v3[2] = 0.00f;
+		cbData.cb2_v3[3] = 0.00f;
+		
+		// cb2_v4
+		cbData.cb2_v4[0] = 1.00f;
+		cbData.cb2_v4[1] = 1.00f;
+		cbData.cb2_v4[2] = 1.00f;
+		cbData.cb2_v4[3] = 1.00f;
+
+		D3D11_SUBRESOURCE_DATA cbInitData = {};
+		cbInitData.pSysMem = &cbData;
+
+		hr = device->CreateBuffer(&cbDesc, &cbInitData, s_ImageSpaceEffectConstantBuffer.GetAddressOf());
+		if (FAILED(hr)) {
+			logger::error("Failed to create ImageSpaceEffect constant buffer: 0x{:X}", hr);
+			return false;
+		}
+
+		logger::info("Successfully initialized ImageSpaceEffect triangle resources with 4 samplers, output RenderTarget ({}x{}), and constant buffer", screenWidth, screenHeight);
+		return true;
+	}
+
+	void D3DHooks::RenderImageSpaceEffect(ID3D11DeviceContext* context)
+	{
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		auto RTVs = rendererData->renderTargets;
+
+		if (!context || !s_ImageSpaceEffectVS || !s_ImageSpaceEffectPS || !s_ImageSpaceEffectOutputRTV) {
+			logger::error("Invalid context, shaders, or output RTV in RenderFullscreenTriangle");
+			return;
+		}
+
+		// 保存当前渲染目标
+		ID3D11RenderTargetView* currentRTV = nullptr;
+		ID3D11DepthStencilView* currentDSV = nullptr;
+		context->OMGetRenderTargets(1, &currentRTV, &currentDSV);
+
+		// 设置为我们的输出RenderTarget
+		context->OMSetRenderTargets(1, s_ImageSpaceEffectOutputRTV.GetAddressOf(), nullptr);
+
+		// 清理我们的渲染目标为蓝色
+		float clearColor[4] = { 0.0f, 0.0f, 1.0f, 1.0f }; // 蓝色
+		context->ClearRenderTargetView(s_ImageSpaceEffectOutputRTV.Get(), clearColor);
+
+		// 获取当前视口
+		UINT numViewports = 1;
+		D3D11_VIEWPORT viewport;
+		context->RSGetViewports(&numViewports, &viewport);
+
+		// 确保视口设置正确
+		context->RSSetViewports(1, &viewport);
+
+		// 设置着色器
+		context->VSSetShader(s_ImageSpaceEffectVS.Get(), nullptr, 0);
+		context->PSSetShader(s_ImageSpaceEffectPS.Get(), nullptr, 0);
+
+		// 设置我们的纹理资源
+		ID3D11ShaderResourceView* ourSRVs[4] = { 
+			(ID3D11ShaderResourceView*)RTVs[15].srView,  // t0: 用于调整颜色的模糊图像
+			stagingSRV,                                   // t1: 瞄准镜纹理
+			(ID3D11ShaderResourceView*)RTVs[69].srView,  // t2: 1x1小像素
+			(ID3D11ShaderResourceView*)RTVs[24].srView,  // t3: TAA Jitter Mask
+		};
+
+		// 设置我们的采样器状态
+		ID3D11SamplerState* ourSamplers[4] = {
+			s_ImageSpaceEffectSamplers[0].Get(),  // s0: Linear/Point
+			s_ImageSpaceEffectSamplers[1].Get(),  // s1: Point/Point/Point
+			s_ImageSpaceEffectSamplers[2].Get(),  // s2: Point/Point/Point
+			s_ImageSpaceEffectSamplers[3].Get(),  // s3: Point/Point/Point
+		};
+
+		// 设置纹理和采样器到我们的着色器
+		context->PSSetShaderResources(0, 4, ourSRVs);
+		context->PSSetSamplers(0, 4, ourSamplers);
+
+		// 设置我们的常量缓冲区cb2
+		ID3D11Buffer* ourCB2 = s_ImageSpaceEffectConstantBuffer.Get();
+		context->PSSetConstantBuffers(2, 1, &ourCB2);
+
+		// 设置渲染状态
+		context->RSSetState(s_ImageSpaceEffectRS.Get());
+		context->OMSetDepthStencilState(s_ImageSpaceEffectDSS.Get(), 0);
+		
+		// 禁用混合状态以确保像素能正常输出
+		float blendFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		context->OMSetBlendState(nullptr, blendFactor, 0xffffffff);
+
+		// 清除输入布局（全屏三角形不需要顶点缓冲区）
+		context->IASetInputLayout(nullptr);
+		context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
+		context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
+		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+		// 绘制全屏三角形（3个顶点）
+		context->Draw(3, 0);
+
+		// 恢复原始渲染目标
+		context->OMSetRenderTargets(1, &currentRTV, currentDSV);
+
+		// 释放获取的引用
+		if (currentRTV) currentRTV->Release();
+		if (currentDSV) currentDSV->Release();
 	}
 
 	D3DHooks* D3DHooks::GetSington()
@@ -794,8 +1138,6 @@ namespace ThroughScope {
 			return;
 		}
 
-		RestoreAllCachedStates();
-
 		// 获取D3D11设备
 		ID3D11Device* device = nullptr;
 		pContext->GetDevice(&device);
@@ -803,6 +1145,16 @@ namespace ThroughScope {
 			logger::error("Failed to get D3D11 device in SetScopeTexture");
 			return;
 		}
+
+		// 初始化全屏三角形资源（如果还没有初始化）
+		if (!s_ImageSpaceEffectVS || !s_ImageSpaceEffectPS) {
+			if (!InitializeImageSpaceEffectResources(device)) {
+				logger::error("Failed to initialize ImageSpaceEffect triangle resources");
+				device->Release();
+				return;
+			}
+		}
+
 
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
 		UINT screenWidth = rendererData->renderWindow[0].windowWidth;
@@ -971,7 +1323,6 @@ namespace ThroughScope {
 				device->Release();
 				return;
 			}
-
 			logger::info("Successfully created all scope rendering resources");
 		}
 
@@ -984,6 +1335,11 @@ namespace ThroughScope {
 		} else {
 			pContext->CopyResource(stagingTexture, RenderUtilities::GetSecondPassColorTexture());
 		}
+
+		// 在设置瞄准镜纹理之前，先渲染全屏三角形
+		RenderImageSpaceEffect(pContext);
+
+		RestoreAllCachedStates();
 
 		// 更新常量缓冲区数据
 		D3D11_MAPPED_SUBRESOURCE mappedResource;
@@ -1066,14 +1422,16 @@ namespace ThroughScope {
 			pContext->Unmap(constantBuffer, 0);
 		}
 
-		FLOAT blendFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-		pContext->OMSetBlendState(blendState, blendFactor, 0xffffffff);
+		float blendFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		pContext->OMSetBlendState(nullptr, blendFactor, 0xffffffff);
+
 		pContext->PSSetConstantBuffers(0, 1, &constantBuffer);
 		// 设置我们的像素着色器
 		pContext->PSSetShader(scopePixelShader, nullptr, 0);
 
 		// 设置纹理资源和采样器
-		pContext->PSSetShaderResources(0, 1, &stagingSRV);
+		// 第一个输入使用全屏三角形的输出
+		pContext->PSSetShaderResources(0, 1, s_ImageSpaceEffectOutputSRV.GetAddressOf());
 		pContext->PSSetShaderResources(1, 1, s_ReticleSRV.GetAddressOf());
 		
 		// 绑定LUT纹理到t2-t5

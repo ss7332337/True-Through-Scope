@@ -150,6 +150,8 @@ macro(set_hlsl_properties HLSL_FILE SHADER_TYPE ENTRY_POINT)
 endmacro()
 
 set_hlsl_properties(src/HLSL/TrueScopeShader.hlsl Pixel main)
+set_hlsl_properties(src/HLSL/ImageSpaceEffectVS.hlsl Vertex main)
+set_hlsl_properties(src/HLSL/ImageSpaceEffect.hlsl Pixel main)
 
 target_include_directories(
 	${PROJECT_NAME}

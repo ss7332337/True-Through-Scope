@@ -241,6 +241,7 @@ uint64_t savedDrawWorld = 0;
 //renderTargets[29] = TAA Motion Vectors = TAA PS t2
 //renderTargets[24] = TAA Jitter Mask = TAA PS t4 就是那个红不拉几的
 //renderTargets[15] = 用于调整颜色的 1920 -> 480 的模糊的图像
+//renderTargets[69] = 1x1 的小像素
 
 
 
@@ -405,7 +406,6 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 			D3DHooks::isSelfDrawCall = true;
 			context->DrawIndexed(scopeNodeIndexCount, 0, 0);
 			D3DHooks::isSelfDrawCall = false;
-			
 			RenderUtilities::SetRender_PreUIComplete(false);
 		} catch (...) {
 			logger::error("Exception during scope content rendering");
