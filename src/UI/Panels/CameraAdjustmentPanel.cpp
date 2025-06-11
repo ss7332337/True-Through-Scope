@@ -369,7 +369,7 @@ namespace ThroughScope
 			ImGui::PushID("NightVision");
 			if (m_EnableNightVision)
 			{
-				ImGui::SliderFloat(LOC("camera.intensity"), &m_NightVisionIntensity, 0.0f, 2.0f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.intensity"), &m_NightVisionIntensity, 1.0f, 10.0f, "%.2f");
 				ImGui::SliderFloat(LOC("camera.noise_scale"), &m_NightVisionNoiseScale, 0.01f, 0.2f, "%.3f");
 				ImGui::SliderFloat(LOC("camera.noise_amount"), &m_NightVisionNoiseAmount, 0.0f, 0.2f, "%.3f");
 				ImGui::SliderFloat(LOC("camera.green_tint"), &m_NightVisionGreenTint, 0.0f, 2.0f, "%.2f");
@@ -386,7 +386,7 @@ namespace ThroughScope
 			ImGui::PushID("Thermal");
 			if (m_EnableThermalVision)
 			{
-				ImGui::SliderFloat(LOC("camera.intensity"), &m_ThermalIntensity, 0.0f, 2.0f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.intensity"), &m_ThermalIntensity, 1.0f, 10.0f, "%.2f");
 				ImGui::SliderFloat(LOC("camera.threshold"), &m_ThermalThreshold, 0.0f, 1.0f, "%.2f");
 				ImGui::SliderFloat(LOC("camera.contrast"), &m_ThermalContrast, 0.5f, 2.0f, "%.2f");
 				ImGui::SliderFloat(LOC("camera.noise_amount"), &m_ThermalNoiseAmount, 0.0f, 0.2f, "%.3f");
@@ -795,8 +795,7 @@ namespace ThroughScope
 			m_NightVisionIntensity,
 			m_NightVisionNoiseScale,
 			m_NightVisionNoiseAmount,
-			m_NightVisionGreenTint,
-			m_EnableNightVision
+			m_NightVisionGreenTint
 		);
 
 		// 应用热成像设置
@@ -804,8 +803,7 @@ namespace ThroughScope
 			m_ThermalIntensity,
 			m_ThermalThreshold,
 			m_ThermalContrast,
-			m_ThermalNoiseAmount,
-			m_EnableThermalVision
+			m_ThermalNoiseAmount
 		);
 	}
 

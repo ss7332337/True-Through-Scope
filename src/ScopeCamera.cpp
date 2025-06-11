@@ -162,8 +162,7 @@ namespace ThroughScope
 			config->scopeSettings.nightVisionIntensity,
 			config->scopeSettings.nightVisionNoiseScale,
 			config->scopeSettings.nightVisionNoiseAmount,
-			config->scopeSettings.nightVisionGreenTint,
-			s_enableNightVision
+			config->scopeSettings.nightVisionGreenTint
 		);
 
 		// 应用热成像效果设置
@@ -171,8 +170,7 @@ namespace ThroughScope
 			config->scopeSettings.thermalIntensity,
 			config->scopeSettings.thermalThreshold,
 			config->scopeSettings.thermalContrast,
-			config->scopeSettings.thermalNoiseAmount,
-			s_enableThermalVision
+			config->scopeSettings.thermalNoiseAmount
 		);
 
 		// 设置摄像头FOV

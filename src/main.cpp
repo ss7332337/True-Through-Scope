@@ -772,18 +772,8 @@ void ResetFirstSpawnState()
 
 void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 {
-	if (isImguiManagerInit)
-		ThroughScope::ImGuiManager::GetSingleton()->Update();
-
-	SHORT keyIncreaseFOV = GetAsyncKeyState(VK_NUMPAD3);
-	SHORT keyDecreaseFOV = GetAsyncKeyState(VK_NUMPAD9);
 	SHORT keyPgDown = GetAsyncKeyState(VK_NEXT);
 	SHORT keyPgUp = GetAsyncKeyState(VK_PRIOR);
-
-	if (keyIncreaseFOV & 0x8000)
-		ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() + 1);
-	if (keyDecreaseFOV & 0x8000)
-		ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() - 1);
 
 	if (keyPgUp & 0x1)
 	{

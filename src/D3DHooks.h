@@ -182,8 +182,8 @@ namespace ThroughScope {
 		static void SetEnableRender(bool value) { s_EnableRender = value; }
 
 		static void UpdateScopeParallaxSettings(float relativeFogRadius, float scopeSwayAmount, float maxTravel, float radius);
-		static void UpdateNightVisionSettings(float intensity, float noiseScale, float noiseAmount, float greenTint, int enable);
-		static void UpdateThermalVisionSettings(float intensity, float threshold, float contrast, float noiseAmount, int enable);
+		static void UpdateNightVisionSettings(float intensity, float noiseScale, float noiseAmount, float greenTint);
+		static void UpdateThermalVisionSettings(float intensity, float threshold, float contrast, float noiseAmount);
 		static void SetReticleScale(float scale)
 		{
 			s_ReticleScale = std::clamp(scale, 0.1f, 32.0f);

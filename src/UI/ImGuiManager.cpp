@@ -210,18 +210,6 @@ namespace ThroughScope
 			}
 		}
 		
-		static float lastUpdateTime = 0.0f;
-		float currentTime = ImGui::GetTime();
-		float deltaTime = currentTime - lastUpdateTime;
-		lastUpdateTime = currentTime;
-
-		// 性能优化 - 降低更新频率
-		static int frameCounter = 0;
-		frameCounter++;
-		if (frameCounter % 2 == 0) {
-			return;
-		}
-
 
 		bool UIOpen = RE::UI::GetSingleton()->GetMenuOpen("PauseMenu") || RE::UI::GetSingleton()->GetMenuOpen("WorkshopMenu") || RE::UI::GetSingleton()->GetMenuOpen("CursorMenu");
 		
@@ -245,11 +233,8 @@ namespace ThroughScope
 			}
 		}
 
-		if (!UIOpen)
-		{
-			for (auto& panel : m_Panels) {
-				panel->UpdateOutSideUI();
-			}
+		for (auto& panel : m_Panels) {
+			panel->UpdateOutSideUI();
 		}
 		
 

@@ -136,6 +136,8 @@ namespace ThroughScope {
 
 	bool D3DHooks::isSelfDrawCall = false;
 
+	ImGuiIO io;
+
 	HRESULT D3DHooks::CreateShaderFromFile(const WCHAR* csoFileNameInOut, const WCHAR* hlslFileName, LPCSTR entryPoint, LPCSTR shaderModel, ID3DBlob** ppBlobOut)
 	{
 		HRESULT hr = S_OK;
@@ -179,22 +181,20 @@ namespace ThroughScope {
 		//logger::info("Updated D3D scope settings - Parallax: {:.3f}, {:.3f}, {:.3f}, {:.3f}", relativeFogRadius, scopeSwayAmount, maxTravel, radius);
 	}
 
-	void D3DHooks::UpdateNightVisionSettings(float intensity, float noiseScale, float noiseAmount, float greenTint, int enable)
+	void D3DHooks::UpdateNightVisionSettings(float intensity, float noiseScale, float noiseAmount, float greenTint)
 	{
 		s_NightVisionIntensity = intensity;
 		s_NightVisionNoiseScale = noiseScale;
 		s_NightVisionNoiseAmount = noiseAmount;
 		s_NightVisionGreenTint = greenTint;
-		s_EnableNightVision = enable;
 	}
 
-	void D3DHooks::UpdateThermalVisionSettings(float intensity, float threshold, float contrast, float noiseAmount, int enable)
+	void D3DHooks::UpdateThermalVisionSettings(float intensity, float threshold, float contrast, float noiseAmount)
 	{
 		s_ThermalIntensity = intensity;
 		s_ThermalThreshold = threshold;
 		s_ThermalContrast = contrast;
 		s_ThermalNoiseAmount = noiseAmount;
-		s_EnableThermalVision = enable;
 	}
 
 	void D3DHooks::CaptureLUTTextures(ID3D11DeviceContext* context)
@@ -1466,6 +1466,8 @@ namespace ThroughScope {
 		HRESULT result = S_OK;
 
 		if (imguiMgr && imguiMgr->IsInitialized()) {
+			io.WantCaptureMouse = imguiMgr->IsMenuOpen();
+			imguiMgr->Update();
 			imguiMgr->Render();
 		}
 
@@ -1478,32 +1480,6 @@ namespace ThroughScope {
 
 	LRESULT CALLBACK D3DHooks::hkWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	{
-		if (imguiMgr && imguiMgr->IsInitialized() && imguiMgr->IsMenuOpen()) {
-			if (ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam)) {
-				return true;
-			}
-
-			// Block game input when ImGui is capturing keyboard/mouse
-			ImGuiIO& io = ImGui::GetIO();
-			if (io.WantCaptureMouse || io.WantCaptureKeyboard) {
-				// Block specific messages that should not be passed to the game
-				switch (uMsg) {
-				case WM_LBUTTONDOWN:
-				case WM_LBUTTONUP:
-				case WM_RBUTTONDOWN:
-				case WM_RBUTTONUP:
-				case WM_MBUTTONDOWN:
-				case WM_MBUTTONUP:
-				case WM_MOUSEWHEEL:
-				case WM_MOUSEMOVE:
-				case WM_KEYDOWN:
-				case WM_KEYUP:
-				case WM_CHAR:
-					return true;
-				}
-			}
-		}
-
 		auto playerChar = RE::PlayerCharacter::GetSingleton();
 		if (uMsg == WM_MOUSEWHEEL && s_EnableFOVAdjustment && playerChar && Utilities::IsInADS(playerChar)) {
 			short wheelDelta = GET_WHEEL_DELTA_WPARAM(wParam);
@@ -1511,8 +1487,20 @@ namespace ThroughScope {
 			return true;
 		}
 
-		// Pass to the original window procedure
-		return CallWindowProcA(s_OriginalWndProc, hWnd, uMsg, wParam, lParam);
+		
+
+		if (imguiMgr && imguiMgr->IsInitialized() && imguiMgr->IsMenuOpen()) 
+		{
+			io = ImGui::GetIO();
+			if (imguiMgr->IsMenuOpen())
+			{
+				ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
+				return true;
+			}
+			
+		}
+
+		return CallWindowProc(s_OriginalWndProc, hWnd, uMsg, wParam, lParam);
 	}
 
 	void WINAPI D3DHooks::hkRSSetViewports(ID3D11DeviceContext* pContext, UINT NumViewports, const D3D11_VIEWPORT* pViewports)
@@ -1585,8 +1573,6 @@ namespace ThroughScope {
 	BOOL __stdcall D3DHooks::ClipCursorHook(RECT* lpRect)
 	{
 		if (imguiMgr->IsMenuOpen()) {
-			if (!lpRect)
-				return false;
 			*lpRect = oldRect;
 		}
 		return phookClipCursor(lpRect);
