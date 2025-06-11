@@ -401,7 +401,6 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 	if (scopeNodeIndexCount != -1) {
 		try {
 			RenderUtilities::SetRender_PreUIComplete(true);
-			d3dHooks->RestoreAllCachedStates();
 			d3dHooks->SetScopeTexture(context);
 			D3DHooks::isSelfDrawCall = true;
 			context->DrawIndexed(scopeNodeIndexCount, 0, 0);

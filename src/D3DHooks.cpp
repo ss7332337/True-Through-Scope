@@ -794,6 +794,8 @@ namespace ThroughScope {
 			return;
 		}
 
+		RestoreAllCachedStates();
+
 		// 获取D3D11设备
 		ID3D11Device* device = nullptr;
 		pContext->GetDevice(&device);
