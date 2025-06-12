@@ -101,33 +101,13 @@ namespace ThroughScope
 
 	void ScopeCamera::CleanupScopeResources()
 	{
-		auto playerCharacter = RE::PlayerCharacter::GetSingleton();
-		if (!playerCharacter || !playerCharacter->Get3D()) {
-			return;
+		if (s_CurrentScopeNode) {
+			s_CurrentScopeNode = nullptr;
 		}
-
-		auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
-		if (!weaponNode || !weaponNode->IsNode()) {
-			return;
-		}
-
-		auto weaponNiNode = static_cast<RE::NiNode*>(weaponNode);
-		auto existingTTSNode = weaponNiNode->GetObjectByName("TTSNode");
-
-		if (existingTTSNode) {
-			logger::info("Removing existing TTSNode");
-			weaponNiNode->DetachChild(existingTTSNode);
-
-			// 更新节点
-			RE::NiUpdateData updateData{};
-			updateData.camera = ScopeCamera::GetScopeCamera();
-			if (updateData.camera) {
-				weaponNiNode->Update(updateData);
-			}
-
-			logger::info("Existing TTSNode removed");
-		}
-		logger::info("Scope resources cleaned up");
+		
+		// 清理D3D相关资源
+		ThroughScope::D3DHooks::CleanupStaticResources();
+		logger::info("Scope resources cleaned up successfully");
 	}
 
     void ScopeCamera::ResetCamera()

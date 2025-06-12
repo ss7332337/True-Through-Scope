@@ -22,6 +22,7 @@ namespace ThroughScope
         // Initialization
         static bool Initialize();
         static void Shutdown();
+        static void CleanupBackBufferResources();
         
         // Texture management
         static bool CreateTemporaryTextures();

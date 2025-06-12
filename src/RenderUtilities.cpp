@@ -36,6 +36,14 @@ namespace ThroughScope
     void RenderUtilities::Shutdown()
     {
         ReleaseTemporaryTextures();
+        CleanupBackBufferResources();
+    }
+
+    void RenderUtilities::CleanupBackBufferResources()
+    {
+        SAFE_RELEASE(s_BackBufferTexture);
+        SAFE_RELEASE(s_BackBufferSRV);
+        logger::info("BackBuffer resources cleaned up successfully");
     }
 
     bool RenderUtilities::CreateTemporaryTextures()

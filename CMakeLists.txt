@@ -141,12 +141,42 @@ add_library(
 	.clang-format
 )
 
+# 定义输出路径列表
+set(HLSL_OUTPUT_PATHS
+    "G:/Games/FO4_SO/mods/TTS True Through Scope/Shaders/XiFeiLi"
+    "G:/Games/Fallout 4 ori/Fallout 4/Mo2/mods/TTS/Shaders/XiFeiLi"
+)
+
 macro(set_hlsl_properties HLSL_FILE SHADER_TYPE ENTRY_POINT)
+  # 设置主要的编译属性，使用第一个路径作为编译输出
+  list(GET HLSL_OUTPUT_PATHS 0 PRIMARY_OUTPUT_PATH)
   set_source_files_properties(${HLSL_FILE} 
-  PROPERTIES VS_SHADER_OBJECT_FILE_NAME 
-  #"${Fallout4Path}/Data/Shaders/XiFeiLi/%(Filename).cso" 
-  "G:/Games/Fallout 4 ori/Fallout 4/Mo2/mods/TTS/Shaders/XiFeiLi/%(Filename).cso"
-  VS_SHADER_TYPE ${SHADER_TYPE} VS_SHADER_MODEL 5.0 VS_SHADER_ENTRYPOINT ${ENTRY_POINT})
+    PROPERTIES 
+    VS_SHADER_OBJECT_FILE_NAME "${PRIMARY_OUTPUT_PATH}/%(Filename).cso"
+    VS_SHADER_TYPE ${SHADER_TYPE} 
+    VS_SHADER_MODEL 5.0 
+    VS_SHADER_ENTRYPOINT ${ENTRY_POINT}
+  )
+  
+  # 获取文件名（不含扩展名）
+  get_filename_component(SHADER_NAME ${HLSL_FILE} NAME_WE)
+  
+  # 为每个额外的路径添加自定义命令来复制cso文件
+  list(LENGTH HLSL_OUTPUT_PATHS PATH_COUNT)
+  if(PATH_COUNT GREATER 1)
+    # 跳过第一个路径（已经是编译输出路径）
+    math(EXPR LAST_INDEX "${PATH_COUNT} - 1")
+    foreach(i RANGE 1 ${LAST_INDEX})
+      list(GET HLSL_OUTPUT_PATHS ${i} OUTPUT_PATH)
+      add_custom_command(
+        TARGET ${PROJECT_NAME}
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTPUT_PATH}"
+        COMMAND ${CMAKE_COMMAND} -E copy "${PRIMARY_OUTPUT_PATH}/${SHADER_NAME}.cso" "${OUTPUT_PATH}/${SHADER_NAME}.cso"
+        COMMENT "复制 ${SHADER_NAME}.cso 到 ${OUTPUT_PATH}"
+      )
+    endforeach()
+  endif()
 endmacro()
 
 set_hlsl_properties(src/HLSL/TrueScopeShader.hlsl Pixel main)
@@ -222,8 +252,8 @@ add_custom_command(
 		POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> "${Fallout4Path}/Data/F4SE/Plugins/"
 		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:${PROJECT_NAME}> "${Fallout4Path}/Data/F4SE/Plugins/"
-		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> "G:/Games/FO4_SO/mods/Fake Through Scope testing/F4SE/Plugins/"
-		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:${PROJECT_NAME}> "G:/Games/FO4_SO/mods/Fake Through Scope testing/F4SE/Plugins/"
+		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> "G:/Games/FO4_SO/mods/TTS True Through Scope/F4SE/Plugins/"
+		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:${PROJECT_NAME}> "G:/Games/FO4_SO/mods/TTS True Through Scope/F4SE/Plugins/"
 		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> "G:/Games/Fallout 4 ori/Fallout 4/Mo2/mods/TTS/F4SE/Plugins/"
 		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:${PROJECT_NAME}> "G:/Games/Fallout 4 ori/Fallout 4/Mo2/mods/TTS/F4SE/Plugins/"
 	)

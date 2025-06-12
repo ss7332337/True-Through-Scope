@@ -299,15 +299,25 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 	rtTextureDesc = originalDesc;
 	rtTextureDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
 
-	// 1. 保存BackBuffer
-	auto backBufferSRV = RenderUtilities::GetBackBufferSRV();
-	auto backBufferTex = RenderUtilities::GetBackBufferTexture();
+	// 1. 创建临时的BackBuffer纹理和SRV用于此次渲染
+	ID3D11Texture2D* tempBackBufferTex = nullptr;
+	ID3D11ShaderResourceView* tempBackBufferSRV = nullptr;
 
-	HRESULT hr = device->CreateTexture2D(&rtTextureDesc, nullptr, &backBufferTex);
-	hr = device->CreateShaderResourceView(backBufferTex, NULL, &backBufferSRV);
-	context->CopyResource(backBufferTex, rtTexture2D);
-
-
+	HRESULT hr = device->CreateTexture2D(&rtTextureDesc, nullptr, &tempBackBufferTex);
+	if (SUCCEEDED(hr)) {
+		hr = device->CreateShaderResourceView(tempBackBufferTex, NULL, &tempBackBufferSRV);
+		if (FAILED(hr)) {
+			logger::error("Failed to create temporary BackBuffer SRV: 0x{:X}", hr);
+			SAFE_RELEASE(tempBackBufferTex);
+			return;
+		}
+	} else {
+		logger::error("Failed to create temporary BackBuffer texture: 0x{:X}", hr);
+		return;
+	}
+	
+	// 复制当前渲染目标内容到临时BackBuffer
+	context->CopyResource(tempBackBufferTex, rtTexture2D);
 
 	if (mainRTTexture) {
 		// Copy the render target to our texture
@@ -323,7 +333,12 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 	NiCamera* originalCamera = (NiCamera*)((*ptr_DrawWorldCamera)->CreateClone(tempP));
 
 	auto originalCamera1st = *ptr_DrawWorldCamera;
-	originalCamera1stviewFrustum = originalCamera1st->viewFrustum;
+	//originalCamera1stviewFrustum = originalCamera1st->viewFrustum;
+	originalCamera1stviewFrustum.bottom = originalCamera1st->viewFrustum.bottom;
+	originalCamera1stviewFrustum.top = originalCamera1st->viewFrustum.top;
+	originalCamera1stviewFrustum.left = originalCamera1st->viewFrustum.left;
+	originalCamera1stviewFrustum.right = originalCamera1st->viewFrustum.right;
+
 	auto originalCamera1stport = (*ptr_DrawWorld1stCamera)->port;
 	scopeCamera->local.translate = originalCamera->local.translate;
 	scopeCamera->local.rotate = originalCamera->local.rotate;
@@ -331,13 +346,7 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 
 	auto drawWorldCullingProcess = *DrawWorldCullingProcess;
 
-	NiUpdateData nData;
-
-	nData.camera = scopeCamera;
-	scopeCamera->Update(nData);
-
-	nData.camera = originalCamera1st;
-	originalCamera1st->Update(nData);
+	
 
 	
 	//清理主输出，准备第二次渲染
@@ -361,20 +370,34 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 	DrawWorld::SetAdjusted1stPersonFOV(ScopeCamera::GetTargetFOV());
 	DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
 
+
+	float scopeViewSize = 0.275f;
+	NiFrustum scopeFrustum{};
+	scopeFrustum.left = -scopeViewSize;
+	scopeFrustum.right = scopeViewSize;
+	scopeFrustum.top = scopeViewSize;
+	scopeFrustum.bottom = -scopeViewSize;
+	scopeFrustum.farPlane = 20480;
+	scopeFrustum.nearPlane = 10;
+
+
+	NiUpdateData nData;
+	//originalCamera1st->viewFrustum = scopeFrustum;
 	nData.camera = scopeCamera;
 	scopeCamera->Update(nData);
 
+	nData.camera = originalCamera1st;
+	originalCamera1st->Update(nData);
+
 	ScopeCamera::SetRenderingForScope(true);
-	(*BSM_ST)->ForceDisableSSR = true;
 	g_RenderPreUIOriginal(savedDrawWorld);  //第二次渲染输出到临时RenderTarget
-	(*BSM_ST)->ForceDisableSSR = false;
 	ScopeCamera::SetRenderingForScope(false);
 	D3DPERF_EndEvent();
 
 
 
 	context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), mainRTTexture);
-	context->CopyResource(rtTexture2D, backBufferTex);
+	context->CopyResource(rtTexture2D, tempBackBufferTex);
 	RenderUtilities::SetSecondPassComplete(true);
 
 	// 现在更新scope模型的纹理
@@ -388,13 +411,6 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 	/*visCamera->viewFrustum = originalCamera1stviewFrustum;
 	nData.camera = visCamera;
 	visCamera->Update(nData);*/
-
-	/*originalCamera1st->viewFrustum = originalCamera1stviewFrustum;
-	nData.camera = originalCamera1st;
-	originalCamera1st->Update(nData);*/
-
-	DrawWorld::SetCamera(originalCamera);
-	DrawWorld::SetUpdateCameraFOV(true);
 
 	context->OMSetRenderTargets(1, &savedRTVs[1], nullptr);
 
@@ -413,8 +429,22 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 		}
 	}
 
-	//DrawWorld::Render_UI(savedDrawWorld);
+	DrawWorld::SetCamera(originalCamera1st);
+	DrawWorld::SetUpdateCameraFOV(true);
 
+	//originalCamera1st->viewFrustum = originalCamera1stviewFrustum;
+	nData.camera = originalCamera1st;
+	originalCamera1st->Update(nData);
+
+	// === 资源清理部分 ===
+	// 清理临时创建的D3D资源
+	SAFE_RELEASE(tempBackBufferTex);
+	SAFE_RELEASE(tempBackBufferSRV);
+	SAFE_RELEASE(rtTexture2D);
+	SAFE_RELEASE(savedRTVs[0]);
+	SAFE_RELEASE(savedRTVs[1]);
+	
+	// 清理Camera克隆
 	if (originalCamera) {
 		if (originalCamera->DecRefCount() == 0) {
 			originalCamera->DeleteThis();
@@ -431,14 +461,18 @@ void __fastcall hkBegin(uint64_t ptr_drawWorld)
 {
 	g_BeginOriginal(ptr_drawWorld);
 
-	//auto drawWorldCullingProcess = *DrawWorldCullingProcess;
-	//float scopeViewSize = 0.275f;
-	//NiFrustum scopeFrustum{};
-	//scopeFrustum.left = -scopeViewSize;
-	//scopeFrustum.right = scopeViewSize;
-	//scopeFrustum.top = scopeViewSize;
-	//scopeFrustum.bottom = -scopeViewSize;
-	//drawWorldCullingProcess->m_kFrustum = scopeFrustum;
+	if (D3DHooks::IsEnableRender())
+	{
+		auto drawWorldCullingProcess = *DrawWorldCullingProcess;
+		float scopeViewSize = 0.275f;
+		NiFrustum scopeFrustum{};
+		scopeFrustum.left = -scopeViewSize;
+		scopeFrustum.right = scopeViewSize;
+		scopeFrustum.top = scopeViewSize;
+		scopeFrustum.bottom = -scopeViewSize;
+		drawWorldCullingProcess->m_kFrustum = scopeFrustum;
+	}
+	
 }
 
 void hkDrawTriShape(BSGraphics::Renderer* thisPtr, BSGraphics::TriShape* apTriShape, unsigned int auiStartIndex, unsigned int auiNumTriangles)
@@ -1087,16 +1121,20 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
         Sleep(1000);
     }
     Sleep(1000);
+	
+
 #endif
 
-	d3dHooks = D3DHooks::GetSington();
-	nifloader = NIFLoader::GetSington();
 	auto mhInit = MH_Initialize();
 	// 初始化MinHook
 	if (mhInit != MH_OK) {
 		logger::info("MH_Initialize Not Ok, Reason: {}", (int)mhInit);
 	}
 
+	d3dHooks = D3DHooks::GetSington();
+	nifloader = NIFLoader::GetSington();
+	
+	logger::info("Ninja!");
 	d3dHooks->PreInit();
 
     F4SE::Init(a_f4se);
@@ -1123,6 +1161,14 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 		else if (msg->type == F4SE::MessagingInterface::kNewGame)
 		{
 			ResetFirstSpawnState();
+		}
+		else if (msg->type == F4SE::MessagingInterface::kPreLoadGame ||
+				 msg->type == F4SE::MessagingInterface::kDeleteGame)
+		{
+			// 游戏关闭前或删除存档时清理资源
+			logger::info("Cleaning up resources before game shutdown");
+			ThroughScope::D3DHooks::CleanupStaticResources();
+			ThroughScope::RenderUtilities::CleanupBackBufferResources();
 		}
     });
 

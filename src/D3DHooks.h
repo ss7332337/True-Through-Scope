@@ -157,8 +157,47 @@ namespace ThroughScope {
 			float lutWeights[4];  // 4个LUT的混合权重
 		};
 
+		// 缓存的常量缓冲区数据，用于比较是否需要更新
+		struct CachedScopeConstantBuffer
+		{
+			float screenWidth = 0;
+			float screenHeight = 0;
+			int enableNightVision = -1;
+			int enableThermalVision = -1;
+			float cameraPosition[3] = {0, 0, 0};
+			float scopePosition[3] = {0, 0, 0};
+			float reticleScale = 0;
+			float reticleOffsetX = 0;
+			float reticleOffsetY = 0;
+			
+			bool NeedsUpdate(const ScopeConstantBuffer& newData) const {
+				return screenWidth != newData.screenWidth ||
+					   screenHeight != newData.screenHeight ||
+					   enableNightVision != newData.enableNightVision ||
+					   enableThermalVision != newData.enableThermalVision ||
+					   memcmp(cameraPosition, newData.cameraPosition, sizeof(cameraPosition)) != 0 ||
+					   memcmp(scopePosition, newData.scopePosition, sizeof(scopePosition)) != 0 ||
+					   reticleScale != newData.reticleScale ||
+					   reticleOffsetX != newData.reticleOffsetX ||
+					   reticleOffsetY != newData.reticleOffsetY;
+			}
+			
+			void UpdateFrom(const ScopeConstantBuffer& newData) {
+				screenWidth = newData.screenWidth;
+				screenHeight = newData.screenHeight;
+				enableNightVision = newData.enableNightVision;
+				enableThermalVision = newData.enableThermalVision;
+				memcpy(cameraPosition, newData.cameraPosition, sizeof(cameraPosition));
+				memcpy(scopePosition, newData.scopePosition, sizeof(scopePosition));
+				reticleScale = newData.reticleScale;
+				reticleOffsetX = newData.reticleOffsetX;
+				reticleOffsetY = newData.reticleOffsetY;
+			}
+		};
+
     public:
 		static D3DHooks* GetSington();
+		static void CleanupStaticResources(); // 添加静态资源清理函数
         bool Initialize();
 		bool PreInit();
 
@@ -241,6 +280,7 @@ namespace ThroughScope {
 		static RSStateCache s_CachedRSState;
 		static OMStateCache s_CachedOMState;
 		static bool s_HasCachedState;
+		static CachedScopeConstantBuffer s_CachedConstantBufferData; // 缓存的常量缓冲区数据
 	private:
 		static float s_CurrentRelativeFogRadius;
 		static float s_CurrentScopeSwayAmount;

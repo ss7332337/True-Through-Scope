@@ -54,6 +54,7 @@ namespace ThroughScope {
 	float D3DHooks::s_ReticleOffsetX = 0.5f;
 	float D3DHooks::s_ReticleOffsetY = 0.5f;
 	bool D3DHooks::s_HasCachedState = false;
+	D3DHooks::CachedScopeConstantBuffer D3DHooks::s_CachedConstantBufferData; // 初始化缓存数据
 
 	bool D3DHooks::s_isForwardStage = false;
 	bool D3DHooks::s_EnableFOVAdjustment = true;
@@ -201,6 +202,11 @@ namespace ThroughScope {
 	{
 		if (!context) return;
 
+		// 先清理之前的LUT纹理
+		for (int i = 0; i < 4; i++) {
+			s_CapturedLUTs[i].Reset();
+		}
+
 		// 捕获绑定在 t3, t4, t5, t6 的 3D LUT 纹理
 		ID3D11ShaderResourceView* lutSRVs[4];
 		context->PSGetShaderResources(3, 4, lutSRVs);
@@ -208,7 +214,7 @@ namespace ThroughScope {
 		for (int i = 0; i < 4; i++) {
 			if (lutSRVs[i]) {
 				s_CapturedLUTs[i] = lutSRVs[i];
-				lutSRVs[i]->AddRef(); // 增加引用计数
+				// 注意：ComPtr会自动管理引用计数，不需要手动AddRef
 			}
 		}
 
@@ -778,13 +784,15 @@ namespace ThroughScope {
 
 	bool D3DHooks::PreInit()
 	{
+#ifdef _DEBUG
 		HMODULE mod = LoadLibraryA("renderdoc.dll");
 		isRenderDocDll = mod;
 		if (mod) {
 			logger::info("Found RenderDoc.dll, Using Another Hook.");
 			InitRenderDoc();
 		}
-
+#endif
+		logger::info("AHYEEEEERT!");
 		REL::Relocation<uintptr_t> D3D11CreateDeviceAndSwapChainAddress{ REL::ID(438126) };
 		Utilities::CreateAndEnableHook((LPVOID)D3D11CreateDeviceAndSwapChainAddress.address(), &D3DHooks::D3D11CreateDeviceAndSwapChain_Hook,
 			reinterpret_cast<LPVOID*>(&m_D3D11CreateDeviceAndSwapChain_O), "D3D11CreateDeviceAndSwapChainAddress");
@@ -808,7 +816,10 @@ namespace ThroughScope {
 		logger::info("Initializing D3D11 hooks...");
 		if (!m_SwapChain) {
 			logger::error("Failed to get SwapChain");
-			return false;
+			auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+			m_SwapChain = (IDXGISwapChain*)static_cast<void*>(rendererData->renderWindow->swapChain);
+			m_Device = (ID3D11Device*)static_cast<void*>(rendererData->device);
+			m_Context = (ID3D11DeviceContext*)static_cast<void*>(rendererData->context);
 		}
 		// 获取窗口句柄并设置窗口过程
 		DXGI_SWAP_CHAIN_DESC sd;
@@ -872,6 +883,7 @@ namespace ThroughScope {
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 		}
 	}
+
 
 	bool D3DHooks::LoadAimTexture(const std::string& path)
 	{
@@ -1130,7 +1142,7 @@ namespace ThroughScope {
 		return foundTargetTextures;
 	}
 
-    void D3DHooks::SetScopeTexture(ID3D11DeviceContext* pContext)
+    	void D3DHooks::SetScopeTexture(ID3D11DeviceContext* pContext)
 	{
 		// 确保我们有有效的纹理
 		if (!RenderUtilities::GetSecondPassColorTexture()) {
@@ -1191,14 +1203,42 @@ namespace ThroughScope {
 		D3D11_TEXTURE2D_DESC srcTexDesc;
 		RenderUtilities::GetSecondPassColorTexture()->GetDesc(&srcTexDesc);
 
-		// 创建或重新创建资源(如果需要)
+		// 检查是否需要重新创建资源（纹理不存在或尺寸不匹配）
+		bool needRecreate = false;
 		if (!stagingTexture) {
+			needRecreate = true;
+		} else {
+			// 检查现有纹理尺寸是否匹配
+			D3D11_TEXTURE2D_DESC existingDesc;
+			stagingTexture->GetDesc(&existingDesc);
+			if (existingDesc.Width != srcTexDesc.Width || 
+				existingDesc.Height != srcTexDesc.Height ||
+				existingDesc.Format != srcTexDesc.Format) {
+				needRecreate = true;
+				logger::info("Recreating staging texture due to size/format change: {}x{} -> {}x{}", 
+					existingDesc.Width, existingDesc.Height, srcTexDesc.Width, srcTexDesc.Height);
+			}
+		}
+
+		// 创建或重新创建资源(如果需要)
+		if (needRecreate) {
+			// 清理可能存在的旧资源
+			SAFE_RELEASE(stagingTexture);
+			SAFE_RELEASE(stagingSRV);
+			SAFE_RELEASE(scopePixelShader);
+			SAFE_RELEASE(samplerState);
+			SAFE_RELEASE(lutSamplerState);
+			SAFE_RELEASE(blendState);
+			SAFE_RELEASE(constantBuffer);
+
 			// 创建中间纹理
 			D3D11_TEXTURE2D_DESC stagingDesc = srcTexDesc;
 			stagingDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+			
 			stagingDesc.MiscFlags = 0;
 			stagingDesc.SampleDesc.Count = 1;
 			stagingDesc.SampleDesc.Quality = 0;
+			
 			stagingDesc.Usage = D3D11_USAGE_DEFAULT;
 			stagingDesc.CPUAccessFlags = 0;
 
@@ -1341,35 +1381,40 @@ namespace ThroughScope {
 
 		RestoreAllCachedStates();
 
-		// 更新常量缓冲区数据
-		D3D11_MAPPED_SUBRESOURCE mappedResource;
-		HRESULT hr = pContext->Map(constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
-		if (SUCCEEDED(hr)) {
-			ScopeConstantBuffer* cbData = (ScopeConstantBuffer*)mappedResource.pData;
+		// 准备常量缓冲区数据
+		ScopeConstantBuffer newCBData = {};
+		newCBData.screenWidth = static_cast<float>(screenWidth);
+		newCBData.screenHeight = static_cast<float>(screenHeight);
+		newCBData.cameraPosition[0] = cameraPos.x;
+		newCBData.cameraPosition[1] = cameraPos.y;
+		newCBData.cameraPosition[2] = cameraPos.z;
+		newCBData.scopePosition[0] = scopePos.x;
+		newCBData.scopePosition[1] = scopePos.y;
+		newCBData.scopePosition[2] = scopePos.z;
+		newCBData.reticleScale = s_ReticleScale;
+		newCBData.reticleOffsetX = s_ReticleOffsetX;
+		newCBData.reticleOffsetY = s_ReticleOffsetY;
+		newCBData.enableNightVision = s_EnableNightVision;
+		newCBData.enableThermalVision = s_EnableThermalVision;
 
-			// 填充常量缓冲区数据
-			cbData->screenWidth = static_cast<float>(screenWidth);
-			cbData->screenHeight = static_cast<float>(screenHeight);
+		// 只在数据真正改变时才更新常量缓冲区
+		if (s_CachedConstantBufferData.NeedsUpdate(newCBData)) {
+			D3D11_MAPPED_SUBRESOURCE mappedResource;
+			HRESULT hr = pContext->Map(constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
+			if (SUCCEEDED(hr)) {
+				ScopeConstantBuffer* cbData = (ScopeConstantBuffer*)mappedResource.pData;
 
-			cbData->cameraPosition[0] = cameraPos.x;
-			cbData->cameraPosition[1] = cameraPos.y;
-			cbData->cameraPosition[2] = cameraPos.z;
+				// 填充常量缓冲区数据
+				*cbData = newCBData; // 复制基础数据
+				
+				// 填充其他数据
+				cbData->lastCameraPosition[0] = lastCameraPos.x;
+				cbData->lastCameraPosition[1] = lastCameraPos.y;
+				cbData->lastCameraPosition[2] = lastCameraPos.z;
 
-			cbData->scopePosition[0] = scopePos.x;
-			cbData->scopePosition[1] = scopePos.y;
-			cbData->scopePosition[2] = scopePos.z;
-
-			cbData->lastCameraPosition[0] = lastCameraPos.x;
-			cbData->lastCameraPosition[1] = lastCameraPos.y;
-			cbData->lastCameraPosition[2] = lastCameraPos.z;
-
-			cbData->lastScopePosition[0] = lastScopePos.x;
-			cbData->lastScopePosition[1] = lastScopePos.y;
-			cbData->lastScopePosition[2] = lastScopePos.z;
-
-			cbData->reticleScale = s_ReticleScale;
-			cbData->reticleOffsetX = s_ReticleOffsetX;
-			cbData->reticleOffsetY = s_ReticleOffsetY;
+				cbData->lastScopePosition[0] = lastScopePos.x;
+				cbData->lastScopePosition[1] = lastScopePos.y;
+				cbData->lastScopePosition[2] = lastScopePos.z;
 
 			DirectX::XMFLOAT4X4 rotationMatrix = {
 				1, 0, 0, 0,
@@ -1393,33 +1438,35 @@ namespace ThroughScope {
 			rotationMatrix._33 = playerCamera->world.rotate.entry[2].z;
 			rotationMatrix._34 = playerCamera->world.rotate.entry[2].w;
 
-			cbData->parallax_Radius = s_CurrentRadius;                        // 折射强度
-			cbData->parallax_relativeFogRadius = s_CurrentRelativeFogRadius;  // 视差强度
-			cbData->parallax_scopeSwayAmount = s_CurrentScopeSwayAmount;      // 暗角强度
-			cbData->parallax_maxTravel = s_CurrentMaxTravel;                  // 折射强度
+				cbData->parallax_Radius = s_CurrentRadius;                        // 折射强度
+				cbData->parallax_relativeFogRadius = s_CurrentRelativeFogRadius;  // 视差强度
+				cbData->parallax_scopeSwayAmount = s_CurrentScopeSwayAmount;      // 暗角强度
+				cbData->parallax_maxTravel = s_CurrentMaxTravel;                  // 折射强度
 
-			// 更新夜视效果参数
-			cbData->nightVisionIntensity = s_NightVisionIntensity;
-			cbData->nightVisionNoiseScale = s_NightVisionNoiseScale;
-			cbData->nightVisionNoiseAmount = s_NightVisionNoiseAmount;
-			cbData->nightVisionGreenTint = s_NightVisionGreenTint;
-			cbData->enableNightVision = s_EnableNightVision;
+				// 更新夜视效果参数
+				cbData->nightVisionIntensity = s_NightVisionIntensity;
+				cbData->nightVisionNoiseScale = s_NightVisionNoiseScale;
+				cbData->nightVisionNoiseAmount = s_NightVisionNoiseAmount;
+				cbData->nightVisionGreenTint = s_NightVisionGreenTint;
 
-			// 更新热成像效果参数
-			cbData->thermalIntensity = s_EnableThermalVision ? s_ThermalIntensity : 0.0f;
-			cbData->thermalThreshold = s_ThermalThreshold;
-			cbData->thermalContrast = s_ThermalContrast;
-			cbData->thermalNoiseAmount = s_ThermalNoiseAmount;
-			cbData->enableThermalVision = s_EnableThermalVision;
+				// 更新热成像效果参数
+				cbData->thermalIntensity = s_EnableThermalVision ? s_ThermalIntensity : 0.0f;
+				cbData->thermalThreshold = s_ThermalThreshold;
+				cbData->thermalContrast = s_ThermalContrast;
+				cbData->thermalNoiseAmount = s_ThermalNoiseAmount;
 
-			// 设置LUT权重
-			for (int i = 0; i < 4; i++) {
-				cbData->lutWeights[i] = s_LUTWeights[i];
+				// 设置LUT权重
+				for (int i = 0; i < 4; i++) {
+					cbData->lutWeights[i] = s_LUTWeights[i];
+				}
+
+				auto camMat = RE::PlayerCamera::GetSingleton()->cameraRoot->local.rotate.entry[0];
+				memcpy_s(&cbData->CameraRotation, sizeof(cbData->CameraRotation), &rotationMatrix, sizeof(rotationMatrix));
+				pContext->Unmap(constantBuffer, 0);
+				
+				// 更新缓存
+				s_CachedConstantBufferData.UpdateFrom(newCBData);
 			}
-
-			auto camMat = RE::PlayerCamera::GetSingleton()->cameraRoot->local.rotate.entry[0];
-			memcpy_s(&cbData->CameraRotation, sizeof(cbData->CameraRotation), &rotationMatrix, sizeof(rotationMatrix));
-			pContext->Unmap(constantBuffer, 0);
 		}
 
 		float blendFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
@@ -1447,6 +1494,7 @@ namespace ThroughScope {
 		ID3D11SamplerState* samplers[2] = { samplerState, lutSamplerState };
 		pContext->PSSetSamplers(0, 2, samplers);
 
+		// 确保释放设备引用
 		device->Release();
 	}
 
@@ -1456,11 +1504,12 @@ namespace ThroughScope {
 		if (s_InPresent) {
 			return s_OriginalPresent(pSwapChain, SyncInterval, Flags);
 		}
-
+#ifdef _DEBUG
 		if (GetAsyncKeyState(VK_F3) & 1) {
 			logger::info("Frame capture requested");
 			rdoc_api->TriggerCapture();
 		}
+#endif
 
 		s_InPresent = true;
 		HRESULT result = S_OK;
@@ -1801,5 +1850,39 @@ namespace ThroughScope {
 
 		// 设置单个RenderTarget，保持原有的DepthStencil
 		m_Context->OMSetRenderTargets(1, &targetRTV, s_CachedOMState.depthStencilView.Get());
+	}
+
+	void D3DHooks::CleanupStaticResources()
+	{
+		// 清理静态全局资源
+		SAFE_RELEASE(stagingTexture);
+		SAFE_RELEASE(stagingSRV);
+		SAFE_RELEASE(scopePixelShader);
+		SAFE_RELEASE(samplerState);
+		SAFE_RELEASE(lutSamplerState);
+		SAFE_RELEASE(blendState);
+		SAFE_RELEASE(constantBuffer);
+
+		// 清理ComPtr管理的资源（会自动调用Reset）
+		s_ReticleTexture.Reset();
+		s_ReticleSRV.Reset();
+		
+		// 清理ImageSpaceEffect相关资源
+		s_ImageSpaceEffectVS.Reset();
+		s_ImageSpaceEffectPS.Reset();
+		s_ImageSpaceEffectRS.Reset();
+		s_ImageSpaceEffectDSS.Reset();
+		
+		for (int i = 0; i < 4; i++) {
+			s_ImageSpaceEffectSamplers[i].Reset();
+			s_CapturedLUTs[i].Reset();
+		}
+		
+		s_ImageSpaceEffectOutputTexture.Reset();
+		s_ImageSpaceEffectOutputRTV.Reset();
+		s_ImageSpaceEffectOutputSRV.Reset();
+		s_ImageSpaceEffectConstantBuffer.Reset();
+		
+		logger::info("D3DHooks static resources cleaned up successfully");
 	}
 }
