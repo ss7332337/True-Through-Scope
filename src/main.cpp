@@ -15,7 +15,6 @@
 #include "ImGuiManager.h"
 
 
-
 using namespace RE;
 using namespace RE::BSGraphics;
 
@@ -69,6 +68,7 @@ REL::Relocation<uintptr_t> MapDynamicTriShapeDynamicData_Ori{ REL::ID(732935) };
 REL::Relocation<uintptr_t> BSStreamLoad_Ori{ REL::ID(160035) };
 
 REL::Relocation<uintptr_t> MainPreRender_Ori{ REL::ID(378257) };
+REL::Relocation<uintptr_t> BSCullingGroupAdd_Ori{ REL::ID(1175493) };
 
 
 
@@ -106,8 +106,8 @@ static REL::Relocation<uint32_t*> FPAlphaTestZPrePassDrawDataCount{ REL::ID(3826
 static REL::Relocation<uint32_t*> AlphaTestZPrePassDrawDataCount{ REL::ID(1064092) };
 static REL::Relocation<uint32_t*> AlphaTestMergeInstancedZPrePassDrawDataCount{ REL::ID(602241) };
 
-static REL::Relocation<NiCullingProcess**> DrawWorldGeomListCullProc0{ REL::ID(865470) };
-static REL::Relocation<NiCullingProcess**> DrawWorldGeomListCullProc1{ REL::ID(1084947) };
+static REL::Relocation<BSGeometryListCullingProcess**> DrawWorldGeomListCullProc0{ REL::ID(865470) };
+static REL::Relocation<BSGeometryListCullingProcess**> DrawWorldGeomListCullProc1{ REL::ID(1084947) };
 
 static REL::Relocation<BSCullingProcess**> DrawWorldCullingProcess{ REL::ID(520184) };
 static REL::Relocation<BSShaderManagerState**> BSM_ST{ REL::ID(1327069) };
@@ -144,6 +144,7 @@ typedef void (*FnDrawTriShape)(BSGraphics::Renderer* thisPtr, BSGraphics::TriSha
 typedef void(__fastcall* FnDrawIndexed)(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
 typedef void(__fastcall* FnMainPreRender)(Main* thisptr, int auiDestination);
 typedef void (*FnTAA)(ImageSpaceEffectTemporalAA*, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param);
+typedef void (*FnBSCullingGroupAdd)(BSCullingGroup* ,NiAVObject* apObj,const NiBound* aBound,const unsigned int aFlags);
 
 
 	// 存储原始函数的指针
@@ -183,6 +184,7 @@ FnDrawTriShape g_DrawTriShape = nullptr;
 FnDrawIndexed g_DrawIndexed = nullptr;
 FnMainPreRender g_MainPreRender = nullptr;
 FnTAA g_TAA = nullptr;
+FnBSCullingGroupAdd g_BSCullingGroupAdd = nullptr;
 
 bool isFirstCopy = false;
 bool isRenderReady = false;
@@ -195,6 +197,9 @@ NIFLoader* nifloader;
 static std::chrono::steady_clock::time_point delayStartTime;
 
 PlayerCharacter* g_pchar = nullptr;
+
+NiFrustum originalCamera1stviewFrustum{};
+uint64_t savedDrawWorld = 0;
 
 static RendererShadowState* GetRendererShadowState()
 {
@@ -232,8 +237,33 @@ using namespace ThroughScope::Utilities;
 //	g_originalBSBatchRendererDraw(apRenderPass);
 //}
 
-NiFrustum originalCamera1stviewFrustum{};
-uint64_t savedDrawWorld = 0;
+bool IsValidObject(NiAVObject* apObj)
+{
+	if (!apObj || apObj->refCount == 0)
+		return false;
+
+	uintptr_t vtable = *(uintptr_t*)apObj;
+	if (vtable < 0x10000 || vtable == 0xFFFFFFFFFFFFFFFF) {
+		return false;
+	}
+
+	// 检查虚函数指针
+	uintptr_t funcPtr = *(uintptr_t*)(vtable + 0x40);
+	return (funcPtr != 0 && funcPtr != 0xFFFFFFFFFFFFFFFF);
+}
+
+void hkBSCullingGroupAdd(BSCullingGroup* thisPtr,
+	NiAVObject* apObj,
+	const NiBound* aBound,
+	const unsigned int aFlags)
+{
+	if (!IsValidObject(apObj)) {
+		logger::error("Invalid object: 0x{:X}", (uintptr_t)apObj);
+		return;
+	}
+	g_BSCullingGroupAdd(thisPtr, apObj, aBound, aFlags);
+}
+
 
 //renderTargets[0] = SwapChainImage RenderTarget(Only rtView and srView)
 //renderTargets[4] = Main Render_PreUI RenderTarget
@@ -460,19 +490,6 @@ void __fastcall hkMainPreRender(Main* thisPtr, int auiDestination)
 void __fastcall hkBegin(uint64_t ptr_drawWorld)
 {
 	g_BeginOriginal(ptr_drawWorld);
-
-	if (D3DHooks::IsEnableRender())
-	{
-		auto drawWorldCullingProcess = *DrawWorldCullingProcess;
-		float scopeViewSize = 0.275f;
-		NiFrustum scopeFrustum{};
-		scopeFrustum.left = -scopeViewSize;
-		scopeFrustum.right = scopeViewSize;
-		scopeFrustum.top = scopeViewSize;
-		scopeFrustum.bottom = -scopeViewSize;
-		drawWorldCullingProcess->m_kFrustum = scopeFrustum;
-	}
-	
 }
 
 void hkDrawTriShape(BSGraphics::Renderer* thisPtr, BSGraphics::TriShape* apTriShape, unsigned int auiStartIndex, unsigned int auiNumTriangles)
@@ -924,16 +941,16 @@ void RegisterHooks()
 
 	CreateAndEnableHook((LPVOID)Renderer_DoZPrePass_Ori.address(), &hkRenderer_DoZPrePass, reinterpret_cast<LPVOID*>(&g_pDoZPrePassOriginal), "DoZPrePass");
 	CreateAndEnableHook((LPVOID)BSGraphics_RenderZPrePass_Ori.address(), &hkRenderZPrePass, reinterpret_cast<LPVOID*>(&g_RenderZPrePassOriginal), "RenderZPrePass");
-	CreateAndEnableHook((LPVOID)BSGraphics_RenderAlphaTestZPrePass_Ori.address(), &hkRenderAlphaTestZPrePass, reinterpret_cast<LPVOID*>(&g_RenderAlphaTestZPrePassOriginal), "RenderAlphaTestZPrePass");
+	/*CreateAndEnableHook((LPVOID)BSGraphics_RenderAlphaTestZPrePass_Ori.address(), &hkRenderAlphaTestZPrePass, reinterpret_cast<LPVOID*>(&g_RenderAlphaTestZPrePassOriginal), "RenderAlphaTestZPrePass");*/
 
-	CreateAndEnableHook((LPVOID)BSShaderAccumulator_ResetSunOcclusion_Ori.address(), &hkBSShaderAccumulator_ResetSunOcclusion,
-		reinterpret_cast<LPVOID*>(&g_ResetSunOcclusionOriginal), "ResetSunOcclusion");
+	/*CreateAndEnableHook((LPVOID)BSShaderAccumulator_ResetSunOcclusion_Ori.address(), &hkBSShaderAccumulator_ResetSunOcclusion,
+		reinterpret_cast<LPVOID*>(&g_ResetSunOcclusionOriginal), "ResetSunOcclusion");*/
 
-	CreateAndEnableHook((LPVOID)BSDistantObjectInstanceRenderer_Render_Ori.address(), &hkBSDistantObjectInstanceRenderer_Render,
-		reinterpret_cast<LPVOID*>(&g_BSDistantObjectInstanceRenderer_RenderOriginal), "BSDistantObjectInstanceRenderer_Render");
+	/*CreateAndEnableHook((LPVOID)BSDistantObjectInstanceRenderer_Render_Ori.address(), &hkBSDistantObjectInstanceRenderer_Render,
+		reinterpret_cast<LPVOID*>(&g_BSDistantObjectInstanceRenderer_RenderOriginal), "BSDistantObjectInstanceRenderer_Render");*/
 
-	CreateAndEnableHook((LPVOID)RenderTargetManager_DecompressDepthStencilTarget_Ori.address(), &hkDecompressDepthStencilTarget,
-		reinterpret_cast<LPVOID*>(&g_DecompressDepthStencilTargetOriginal), "DecompressDepthStencilTarget");
+	/*CreateAndEnableHook((LPVOID)RenderTargetManager_DecompressDepthStencilTarget_Ori.address(), &hkDecompressDepthStencilTarget,
+		reinterpret_cast<LPVOID*>(&g_DecompressDepthStencilTargetOriginal), "DecompressDepthStencilTarget");*/
 
 	CreateAndEnableHook((LPVOID)DrawWorld_Render_PreUI_Ori.address(), &hkRender_PreUI,
 		reinterpret_cast<LPVOID*>(&g_RenderPreUIOriginal), "Render_PreUI");
@@ -941,29 +958,29 @@ void RegisterHooks()
 	CreateAndEnableHook((LPVOID)DrawWorld_Begin_Ori.address(), &hkBegin,
 		reinterpret_cast<LPVOID*>(&g_BeginOriginal), "Begin");
 
-	CreateAndEnableHook((LPVOID)Main_DrawWorldAndUI_Ori.address(), &hkMain_DrawWorldAndUI,
-		reinterpret_cast<LPVOID*>(&g_DrawWorldAndUIOriginal), "Main_DrawWorldAndUI");
+	/*CreateAndEnableHook((LPVOID)Main_DrawWorldAndUI_Ori.address(), &hkMain_DrawWorldAndUI,
+		reinterpret_cast<LPVOID*>(&g_DrawWorldAndUIOriginal), "Main_DrawWorldAndUI");*/
 
-	CreateAndEnableHook((LPVOID)BSCullingGroup_Process_Ori.address(), &hkBSCullingGroup_Process,
-		reinterpret_cast<LPVOID*>(&g_BSCullingGroupProcessOriginal), "BSCullingGroup_Process");
+	//CreateAndEnableHook((LPVOID)BSCullingGroup_Process_Ori.address(), &hkBSCullingGroup_Process,
+	//	reinterpret_cast<LPVOID*>(&g_BSCullingGroupProcessOriginal), "BSCullingGroup_Process");
 
-	CreateAndEnableHook((LPVOID)DrawWorld_MainAccum_Ori.address(), &hkMainAccum,
-		reinterpret_cast<LPVOID*>(&g_MainAccumOriginal), "MainAccum");
+	//CreateAndEnableHook((LPVOID)DrawWorld_MainAccum_Ori.address(), &hkMainAccum,
+	//	reinterpret_cast<LPVOID*>(&g_MainAccumOriginal), "MainAccum");
 
-	CreateAndEnableHook((LPVOID)DrawWorld_MainRenderSetup_Ori.address(), &hkMainRenderSetup,
-		reinterpret_cast<LPVOID*>(&g_MainRenderSetupOriginal), "MainRenderSetup");
+	/*CreateAndEnableHook((LPVOID)DrawWorld_MainRenderSetup_Ori.address(), &hkMainRenderSetup,
+		reinterpret_cast<LPVOID*>(&g_MainRenderSetupOriginal), "MainRenderSetup");*/
 
-	CreateAndEnableHook((LPVOID)DrawWorld_OpaqueWireframe_Ori.address(), &hkOpaqueWireframe,
-		reinterpret_cast<LPVOID*>(&g_OpaqueWireframeOriginal), "OpaqueWireframe");
+	/*CreateAndEnableHook((LPVOID)DrawWorld_OpaqueWireframe_Ori.address(), &hkOpaqueWireframe,
+		reinterpret_cast<LPVOID*>(&g_OpaqueWireframeOriginal), "OpaqueWireframe");*/
 
-	CreateAndEnableHook((LPVOID)DrawWorld_DeferredPrePass_Ori.address(), &hkDeferredPrePass,
-		reinterpret_cast<LPVOID*>(&g_DeferredPrePassOriginal), "DeferredPrePass");
+	/*CreateAndEnableHook((LPVOID)DrawWorld_DeferredPrePass_Ori.address(), &hkDeferredPrePass,
+		reinterpret_cast<LPVOID*>(&g_DeferredPrePassOriginal), "DeferredPrePass");*/
 
-	CreateAndEnableHook((LPVOID)DrawWorld_DeferredLightsImpl_Ori.address(), &hkDeferredLightsImpl,
-		reinterpret_cast<LPVOID*>(&g_DeferredLightsImplOriginal), "DeferredLightsImpl");
+	/*CreateAndEnableHook((LPVOID)DrawWorld_DeferredLightsImpl_Ori.address(), &hkDeferredLightsImpl,
+		reinterpret_cast<LPVOID*>(&g_DeferredLightsImplOriginal), "DeferredLightsImpl");*/
 
-	CreateAndEnableHook((LPVOID)DrawWorld_DeferredComposite_Ori.address(), &hkDeferredComposite,
-		reinterpret_cast<LPVOID*>(&g_DeferredCompositeOriginal), "DeferredComposite");
+	/*CreateAndEnableHook((LPVOID)DrawWorld_DeferredComposite_Ori.address(), &hkDeferredComposite,
+		reinterpret_cast<LPVOID*>(&g_DeferredCompositeOriginal), "DeferredComposite");*/
 
 	CreateAndEnableHook((LPVOID)DrawWorld_Forward_Ori.address(), &hkDrawWorld_Forward,
 		reinterpret_cast<LPVOID*>(&g_ForwardOriginal), "DrawWorld_Forward");
@@ -974,8 +991,8 @@ void RegisterHooks()
 	CreateAndEnableHook((LPVOID)DrawWorld_Add1stPersonGeomToCuller_Ori.address(), &hkAdd1stPersonGeomToCuller,
 		reinterpret_cast<LPVOID*>(&g_Add1stPersonGeomToCullerOriginal), "Add1stPersonGeomToCuller");
 
-	CreateAndEnableHook((LPVOID)RTM_CreateRenderTarget_Ori.address(), &hkRTManager_CreateRenderTarget,
-		reinterpret_cast<LPVOID*>(&g_RTManagerCreateRenderTargetOriginal), "RTManager_CreateRenderTarget");
+	/*CreateAndEnableHook((LPVOID)RTM_CreateRenderTarget_Ori.address(), &hkRTManager_CreateRenderTarget,
+		reinterpret_cast<LPVOID*>(&g_RTManagerCreateRenderTargetOriginal), "RTManager_CreateRenderTarget");*/
 
 	/*CreateAndEnableHook((LPVOID)BSBatchRenderer_Draw_Ori.address(), &hkBSBatchRenderer_Draw,
 		reinterpret_cast<LPVOID*>(&g_originalBSBatchRendererDraw), "BSBatchRenderer_Draw");*/
@@ -991,8 +1008,11 @@ void RegisterHooks()
 	 CreateAndEnableHook((LPVOID)PCUpdateMainThread_Ori.address(), &hkPCUpdateMainThread,
 		reinterpret_cast<LPVOID*>(&g_PCUpdateMainThread), "PCUpdateMainThread");
 
-	 CreateAndEnableHook((LPVOID)MainPreRender_Ori.address(), &hkMainPreRender,
-		 reinterpret_cast<LPVOID*>(&g_MainPreRender), "MainPreRender");
+	 /*CreateAndEnableHook((LPVOID)MainPreRender_Ori.address(), &hkMainPreRender,
+		 reinterpret_cast<LPVOID*>(&g_MainPreRender), "MainPreRender");*/
+
+	 CreateAndEnableHook((LPVOID)BSCullingGroupAdd_Ori.address(), &hkBSCullingGroupAdd,
+		 reinterpret_cast<LPVOID*>(&g_BSCullingGroupAdd), "BSCullingGroupAdd");
 
 	 /* CreateAndEnableHook((LPVOID)DrawTriShape_Ori.address(), &hkDrawTriShape,
 		  reinterpret_cast<LPVOID*>(&g_DrawTriShape), "DrawTriShape");*/
@@ -1138,7 +1158,6 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 	d3dHooks->PreInit();
 
     F4SE::Init(a_f4se);
-    
     // Register plugin for F4SE messages
     const F4SE::MessagingInterface* message = F4SE::GetMessagingInterface();
     if (!message) {
@@ -1161,14 +1180,6 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 		else if (msg->type == F4SE::MessagingInterface::kNewGame)
 		{
 			ResetFirstSpawnState();
-		}
-		else if (msg->type == F4SE::MessagingInterface::kPreLoadGame ||
-				 msg->type == F4SE::MessagingInterface::kDeleteGame)
-		{
-			// 游戏关闭前或删除存档时清理资源
-			logger::info("Cleaning up resources before game shutdown");
-			ThroughScope::D3DHooks::CleanupStaticResources();
-			ThroughScope::RenderUtilities::CleanupBackBufferResources();
 		}
     });
 
