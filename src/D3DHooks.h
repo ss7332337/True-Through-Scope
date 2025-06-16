@@ -155,6 +155,14 @@ namespace ThroughScope {
 
 			// Color Grading LUT权重
 			float lutWeights[4];  // 4个LUT的混合权重
+
+			float sphericalDistortionStrength;  // 球形畸变强度 (0.0 = 无畸变, 正值 = 桶形畸变, 负值 = 枕形畸变)
+			float sphericalDistortionRadius;    // 畸变作用半径 (0.0-1.0)
+			float sphericalDistortionCenter[2];
+
+			int enableSphericalDistortion;      // 是否启用球形畸变 (0 = 禁用, 1 = 启用)
+			int enableChromaticAberration;      // 是否启用色散效果 (0 = 禁用, 1 = 启用)
+			float sphericalDistortionPadding[2];  // 填充对齐
 		};
 
 		// 缓存的常量缓冲区数据，用于比较是否需要更新
@@ -169,6 +177,11 @@ namespace ThroughScope {
 			float reticleScale = 0;
 			float reticleOffsetX = 0;
 			float reticleOffsetY = 0;
+			float sphericalDistortionStrength = 0;
+			float sphericalDistortionRadius = 0;
+			float sphericalDistortionCenter[2] = {0, 0};
+			int enableSphericalDistortion = 0;
+			int enableChromaticAberration = 0;
 			
 			bool NeedsUpdate(const ScopeConstantBuffer& newData) const {
 				return screenWidth != newData.screenWidth ||
@@ -179,7 +192,12 @@ namespace ThroughScope {
 					   memcmp(scopePosition, newData.scopePosition, sizeof(scopePosition)) != 0 ||
 					   reticleScale != newData.reticleScale ||
 					   reticleOffsetX != newData.reticleOffsetX ||
-					   reticleOffsetY != newData.reticleOffsetY;
+					   reticleOffsetY != newData.reticleOffsetY ||
+					   sphericalDistortionStrength != newData.sphericalDistortionStrength ||
+					   sphericalDistortionRadius != newData.sphericalDistortionRadius ||
+					   memcmp(sphericalDistortionCenter, newData.sphericalDistortionCenter, sizeof(sphericalDistortionCenter)) != 0 ||
+					   enableSphericalDistortion != newData.enableSphericalDistortion ||
+					   enableChromaticAberration != newData.enableChromaticAberration;
 			}
 			
 			void UpdateFrom(const ScopeConstantBuffer& newData) {
@@ -192,6 +210,11 @@ namespace ThroughScope {
 				reticleScale = newData.reticleScale;
 				reticleOffsetX = newData.reticleOffsetX;
 				reticleOffsetY = newData.reticleOffsetY;
+				sphericalDistortionStrength = newData.sphericalDistortionStrength;
+				sphericalDistortionRadius = newData.sphericalDistortionRadius;
+				memcpy(sphericalDistortionCenter, newData.sphericalDistortionCenter, sizeof(sphericalDistortionCenter));
+				enableSphericalDistortion = newData.enableSphericalDistortion;
+				enableChromaticAberration = newData.enableChromaticAberration;
 			}
 		};
 
@@ -223,6 +246,8 @@ namespace ThroughScope {
 		static void UpdateScopeParallaxSettings(float relativeFogRadius, float scopeSwayAmount, float maxTravel, float radius);
 		static void UpdateNightVisionSettings(float intensity, float noiseScale, float noiseAmount, float greenTint);
 		static void UpdateThermalVisionSettings(float intensity, float threshold, float contrast, float noiseAmount);
+		static void UpdateSphericalDistortionSettings(float strength, float radius, float centerX, float centerY);
+		static void ForceConstantBufferUpdate(); // 强制更新常量缓冲区
 		static void SetReticleScale(float scale)
 		{
 			s_ReticleScale = std::clamp(scale, 0.1f, 32.0f);
@@ -243,6 +268,29 @@ namespace ThroughScope {
 		static float GetReticleScale() { return s_ReticleScale; }
 		static float GetReticleOffsetX() { return s_ReticleOffsetX; }
 		static float GetReticleOffsetY() { return s_ReticleOffsetY; }
+
+		// 球形畸变设置的Getter和Setter函数
+		static void SetSphericalDistortionStrength(float strength) { s_SphericalDistortionStrength = strength; }
+		static void SetSphericalDistortionRadius(float radius) { s_SphericalDistortionRadius = std::clamp(radius, 0.0f, 1.0f); }
+		static void SetSphericalDistortionCenter(float centerX, float centerY) { 
+			s_SphericalDistortionCenterX = std::clamp(centerX, -0.5f, 0.5f);
+			s_SphericalDistortionCenterY = std::clamp(centerY, -0.5f, 0.5f);
+		}
+		static void SetEnableSphericalDistortion(bool enable) { 
+			s_EnableSphericalDistortion = enable ? 1 : 0; 
+			s_CachedConstantBufferData.screenWidth = -1.0f; // 强制更新
+		}
+		static void SetEnableChromaticAberration(bool enable) { 
+			s_EnableChromaticAberration = enable ? 1 : 0; 
+			s_CachedConstantBufferData.screenWidth = -1.0f; // 强制更新
+		}
+
+		static float GetSphericalDistortionStrength() { return s_SphericalDistortionStrength; }
+		static float GetSphericalDistortionRadius() { return s_SphericalDistortionRadius; }
+		static float GetSphericalDistortionCenterX() { return s_SphericalDistortionCenterX; }
+		static float GetSphericalDistortionCenterY() { return s_SphericalDistortionCenterY; }
+		static bool GetEnableSphericalDistortion() { return s_EnableSphericalDistortion != 0; }
+		static bool GetEnableChromaticAberration() { return s_EnableChromaticAberration != 0; }
 		static bool isSelfDrawCall;
 
 		// LUT纹理捕获相关
@@ -302,10 +350,28 @@ namespace ThroughScope {
 		static float s_ThermalThreshold;
 		static float s_ThermalContrast;
 		static float s_ThermalNoiseAmount;
+
+		// 球形畸变效果参数
+		static float s_SphericalDistortionStrength;
+		static float s_SphericalDistortionRadius;
+		static float s_SphericalDistortionCenterX;
+		static float s_SphericalDistortionCenterY;
+		static int s_EnableSphericalDistortion;
+		static int s_EnableChromaticAberration;
 		
 	public:
 		static int s_EnableThermalVision;
 		static int s_EnableNightVision;
+		
+		// 夜视和热成像开关的安全setter
+		static void SetEnableNightVision(bool enable) { 
+			s_EnableNightVision = enable ? 1 : 0; 
+			s_CachedConstantBufferData.screenWidth = -1.0f; // 强制更新
+		}
+		static void SetEnableThermalVision(bool enable) { 
+			s_EnableThermalVision = enable ? 1 : 0; 
+			s_CachedConstantBufferData.screenWidth = -1.0f; // 强制更新
+		}
 
 	private:
 		static bool s_EnableFOVAdjustment;

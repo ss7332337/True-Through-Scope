@@ -200,6 +200,7 @@ PlayerCharacter* g_pchar = nullptr;
 
 NiFrustum originalCamera1stviewFrustum{};
 uint64_t savedDrawWorld = 0;
+HMODULE upscalerModular;
 
 static RendererShadowState* GetRendererShadowState()
 {
@@ -305,6 +306,8 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 	}
 
 	auto RTVs = rendererData->renderTargets;
+	auto RTVMain = ((ID3D11RenderTargetView*)(RTVs[4].rtView));
+	auto RTVSwap= ((ID3D11RenderTargetView*)(RTVs[0].rtView));
 	ID3D11RenderTargetView* mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
 	ID3D11DepthStencilView* mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
 	ID3D11Texture2D* mainRTTexture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
@@ -382,7 +385,7 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 	//清理主输出，准备第二次渲染
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 
-	for (size_t i = 0; i < sizeof(RTVs); i++)
+	for (size_t i = 0; i < 4; i++)
 	{
 		context->ClearRenderTargetView((ID3D11RenderTargetView*)RTVs[i].rtView, clearColor);
 	}
@@ -435,13 +438,11 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 		// Restore the original render target content for normal display
 		context->CopyResource(mainRTTexture, RenderUtilities::GetFirstPassColorTexture());
 		context->CopyResource(mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
-		}
-
+	}
 
 	/*visCamera->viewFrustum = originalCamera1stviewFrustum;
 	nData.camera = visCamera;
 	visCamera->Update(nData);*/
-
 	context->OMSetRenderTargets(1, &savedRTVs[1], nullptr);
 
 	int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
@@ -1169,6 +1170,7 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
     message->RegisterListener([](F4SE::MessagingInterface::Message* msg) -> void {
 		if (msg->type == F4SE::MessagingInterface::kGameDataReady) {
             // Game data is ready - this is when we should initialize
+			upscalerModular = LoadLibraryA("Data/F4SE/Plugins/Fallout4Upscaler.dll");
             logger::info("Game data ready, initializing plugin");
 			d3dHooks->Initialize();
             InitializePlugin();

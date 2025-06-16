@@ -153,6 +153,16 @@ namespace ThroughScope
 			config->scopeSettings.thermalNoiseAmount
 		);
 
+		D3DHooks::UpdateSphericalDistortionSettings(
+			config->scopeSettings.sphericalDistortionStrength,
+			config->scopeSettings.sphericalDistortionRadius,
+			config->scopeSettings.sphericalDistortionCenterX,
+			config->scopeSettings.sphericalDistortionCenterY
+		);
+
+		D3DHooks::SetEnableSphericalDistortion(config->scopeSettings.enableSphericalDistortion);
+		D3DHooks::SetEnableChromaticAberration(config->scopeSettings.enableChromaticAberration);
+
 		// 设置摄像头FOV
 		ScopeCamera::SetFOVMinMax(config->scopeSettings.minFOV, config->scopeSettings.maxFOV);
 

@@ -99,6 +99,14 @@ namespace ThroughScope {
 	float D3DHooks::s_ThermalNoiseAmount = 0.03f;
 	int D3DHooks::s_EnableThermalVision = 0;
 
+	// 球形畸变效果参数初始化
+	float D3DHooks::s_SphericalDistortionStrength = 0.0f;
+	float D3DHooks::s_SphericalDistortionRadius = 0.8f;
+	float D3DHooks::s_SphericalDistortionCenterX = 0.0f;
+	float D3DHooks::s_SphericalDistortionCenterY = 0.0f;
+	int D3DHooks::s_EnableSphericalDistortion = 0;
+	int D3DHooks::s_EnableChromaticAberration = 0;
+
 	// LUT纹理捕获相关
 	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> D3DHooks::s_CapturedLUTs[4] = { nullptr, nullptr, nullptr, nullptr };
 	float D3DHooks::s_LUTWeights[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -136,6 +144,7 @@ namespace ThroughScope {
 	IDXGISwapChain* m_SwapChain = nullptr;
 
 	bool D3DHooks::isSelfDrawCall = false;
+	HMODULE upscalerModular = 0;
 
 	ImGuiIO io;
 
@@ -188,6 +197,9 @@ namespace ThroughScope {
 		s_NightVisionNoiseScale = noiseScale;
 		s_NightVisionNoiseAmount = noiseAmount;
 		s_NightVisionGreenTint = greenTint;
+		
+		// 强制下次更新
+		s_CachedConstantBufferData.screenWidth = -1.0f;
 	}
 
 	void D3DHooks::UpdateThermalVisionSettings(float intensity, float threshold, float contrast, float noiseAmount)
@@ -196,6 +208,26 @@ namespace ThroughScope {
 		s_ThermalThreshold = threshold;
 		s_ThermalContrast = contrast;
 		s_ThermalNoiseAmount = noiseAmount;
+		
+		// 强制下次更新
+		s_CachedConstantBufferData.screenWidth = -1.0f;
+	}
+
+	void D3DHooks::UpdateSphericalDistortionSettings(float strength, float radius, float centerX, float centerY)
+	{
+		s_SphericalDistortionStrength = strength;
+		s_SphericalDistortionRadius = std::clamp(radius, 0.0f, 1.0f);
+		s_SphericalDistortionCenterX = std::clamp(centerX, -0.5f, 0.5f);
+		s_SphericalDistortionCenterY = std::clamp(centerY, -0.5f, 0.5f);
+		
+		// 立即标记缓存为无效，强制下次更新
+		s_CachedConstantBufferData.sphericalDistortionStrength = -999.0f; // 设置一个不可能的值
+	}
+
+	void D3DHooks::ForceConstantBufferUpdate()
+	{
+		// 通过修改缓存的screenWidth来强制更新
+		s_CachedConstantBufferData.screenWidth = -1.0f;
 	}
 
 	void D3DHooks::CaptureLUTTextures(ID3D11DeviceContext* context)
@@ -793,9 +825,20 @@ namespace ThroughScope {
 		}
 #endif
 		logger::info("AHYEEEEERT!");
+		upscalerModular = LoadLibraryA("Data/F4SE/Plugins/Fallout4Upscaler.dll");
+
+		//if (!upscalerModular)
+		//{
+		//	REL::Relocation<uintptr_t> D3D11CreateDeviceAndSwapChainAddress{ REL::ID(438126) };
+		//	Utilities::CreateAndEnableHook((LPVOID)D3D11CreateDeviceAndSwapChainAddress.address(), &D3DHooks::D3D11CreateDeviceAndSwapChain_Hook,
+		//		reinterpret_cast<LPVOID*>(&m_D3D11CreateDeviceAndSwapChain_O), "D3D11CreateDeviceAndSwapChainAddress");
+		//}
+
 		REL::Relocation<uintptr_t> D3D11CreateDeviceAndSwapChainAddress{ REL::ID(438126) };
 		Utilities::CreateAndEnableHook((LPVOID)D3D11CreateDeviceAndSwapChainAddress.address(), &D3DHooks::D3D11CreateDeviceAndSwapChain_Hook,
 			reinterpret_cast<LPVOID*>(&m_D3D11CreateDeviceAndSwapChain_O), "D3D11CreateDeviceAndSwapChainAddress");
+
+		
 		return true;
 	}
 
@@ -804,15 +847,6 @@ namespace ThroughScope {
     bool D3DHooks::Initialize() 
 	{
 		
-
-	/*	if (isRenderDocDll)
-		{
-			const auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-			m_SwapChain = (IDXGISwapChain*)static_cast<void*>(rendererData->renderWindow->swapChain);
-			m_Device = (ID3D11Device*)static_cast<void*>(rendererData->device);
-			m_Context = (ID3D11DeviceContext*)static_cast<void*>(rendererData->context);
-		}*/
-
 		logger::info("Initializing D3D11 hooks...");
 		if (!m_SwapChain) {
 			logger::error("Failed to get SwapChain");
@@ -858,7 +892,6 @@ namespace ThroughScope {
 
 		Utilities::CreateAndEnableHook(presentFunc, reinterpret_cast<void*>(hkPresent), reinterpret_cast<void**>(&s_OriginalPresent), "Present");
 		Utilities::CreateAndEnableHook(&ClipCursor, ClipCursorHook, reinterpret_cast<LPVOID*>(&phookClipCursor), "ClipCursorHook");
-		
 		Utilities::CreateAndEnableHook(rsSetViewportsFunc, reinterpret_cast<void*>(hkRSSetViewports), reinterpret_cast<void**>(&phookD3D11RSSetViewports), "RSSetViewportsHook");
 
 		logger::info("D3D11 hooks initialized successfully");
@@ -1396,9 +1429,31 @@ namespace ThroughScope {
 		newCBData.reticleOffsetY = s_ReticleOffsetY;
 		newCBData.enableNightVision = s_EnableNightVision;
 		newCBData.enableThermalVision = s_EnableThermalVision;
+		
+		// 添加球形畸变参数到变化检测中
+		newCBData.sphericalDistortionStrength = s_SphericalDistortionStrength;
+		newCBData.sphericalDistortionRadius = s_SphericalDistortionRadius;
+		newCBData.sphericalDistortionCenter[0] = s_SphericalDistortionCenterX;
+		newCBData.sphericalDistortionCenter[1] = s_SphericalDistortionCenterY;
+		newCBData.enableSphericalDistortion = s_EnableSphericalDistortion;
+		newCBData.enableChromaticAberration = s_EnableChromaticAberration;
 
-		// 只在数据真正改变时才更新常量缓冲区
-		if (s_CachedConstantBufferData.NeedsUpdate(newCBData)) {
+		// 检查是否需要更新常量缓冲区
+		// 为了确保实时调整的响应性，我们添加强制更新机制
+		static int s_ForceUpdateCounter = 0;
+		bool forceUpdate = (s_ForceUpdateCounter++ % 60 == 0); // 每60帧强制更新一次
+		bool needsUpdate = s_CachedConstantBufferData.NeedsUpdate(newCBData);
+		
+		// 调试日志（可选）
+#ifdef _DEBUG
+		static int s_LogCounter = 0;
+		if (s_LogCounter++ % 300 == 0) { // 每5秒记录一次
+			logger::info("ConstantBuffer Update - NeedsUpdate: {}, ForceUpdate: {}, SphericalDistortion: {} (enabled: {})", 
+				needsUpdate, forceUpdate, s_SphericalDistortionStrength, s_EnableSphericalDistortion);
+		}
+#endif
+		
+		if (needsUpdate || forceUpdate) {
 			D3D11_MAPPED_SUBRESOURCE mappedResource;
 			HRESULT hr = pContext->Map(constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
 			if (SUCCEEDED(hr)) {
@@ -1444,7 +1499,7 @@ namespace ThroughScope {
 				cbData->parallax_maxTravel = s_CurrentMaxTravel;                  // 折射强度
 
 				// 更新夜视效果参数
-				cbData->nightVisionIntensity = s_NightVisionIntensity;
+				cbData->nightVisionIntensity = s_EnableNightVision ? s_NightVisionIntensity : 0.0f;
 				cbData->nightVisionNoiseScale = s_NightVisionNoiseScale;
 				cbData->nightVisionNoiseAmount = s_NightVisionNoiseAmount;
 				cbData->nightVisionGreenTint = s_NightVisionGreenTint;
@@ -1459,6 +1514,14 @@ namespace ThroughScope {
 				for (int i = 0; i < 4; i++) {
 					cbData->lutWeights[i] = s_LUTWeights[i];
 				}
+
+				// 更新球形畸变参数
+				cbData->sphericalDistortionStrength = s_SphericalDistortionStrength;
+				cbData->sphericalDistortionRadius = s_SphericalDistortionRadius;
+				cbData->sphericalDistortionCenter[0] = s_SphericalDistortionCenterX;
+				cbData->sphericalDistortionCenter[1] = s_SphericalDistortionCenterY;
+				cbData->enableSphericalDistortion = s_EnableSphericalDistortion;
+				cbData->enableChromaticAberration = s_EnableChromaticAberration;
 
 				auto camMat = RE::PlayerCamera::GetSingleton()->cameraRoot->local.rotate.entry[0];
 				memcpy_s(&cbData->CameraRotation, sizeof(cbData->CameraRotation), &rotationMatrix, sizeof(rotationMatrix));

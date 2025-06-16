@@ -69,6 +69,14 @@ namespace ThroughScope
 			float thermalThreshold = 0.5f;
 			float thermalContrast = 1.2f;
 			float thermalNoiseAmount = 0.03f;
+
+			// 球形畸变效果参数
+			bool enableSphericalDistortion = false;
+			bool enableChromaticAberration = false;
+			float sphericalDistortionStrength = 0.0f;   // 畸变强度 (-0.5 到 0.5)
+			float sphericalDistortionRadius = 0.8f;     // 畸变半径 (0.1 到 1.0)
+			float sphericalDistortionCenterX = 0.0f;    // X轴中心偏移 (-0.5 到 0.5)
+			float sphericalDistortionCenterY = 0.0f;    // Y轴中心偏移 (-0.5 到 0.5)
 		};
 
 		struct ReticleSettings

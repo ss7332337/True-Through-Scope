@@ -56,6 +56,15 @@ cbuffer ScopeConstants : register(b0)
 
     // Color Grading LUT权重
     float4 lutWeights;           // 4个LUT的混合权重
+
+    // 球形畸变参数
+    float sphericalDistortionStrength;  // 球形畸变强度 (0.0 = 无畸变, 正值 = 桶形畸变, 负值 = 枕形畸变)
+    float sphericalDistortionRadius;    // 畸变作用半径 (0.0-1.0)
+    float2 sphericalDistortionCenter;   // 畸变中心位置 (相对于屏幕中心的偏移)
+    
+    int enableSphericalDistortion;      // 是否启用球形畸变 (0 = 禁用, 1 = 启用)
+    int enableChromaticAberration;      // 是否启用色散效果 (0 = 禁用, 1 = 启用)
+    float2 sphericalDistortionPadding;  // 填充对齐
 }
             
 struct PS_INPUT
@@ -202,6 +211,103 @@ float4 applyThermal(float4 color, float2 texcoord)
     return float4(thermalColor, color.a);
 }
 
+// 球形畸变函数
+float2 applySphericalDistortion(float2 texcoord)
+{
+    // 将纹理坐标转换为以屏幕中心为原点的坐标系
+    float2 center = float2(0.5, 0.5) + sphericalDistortionCenter;
+    float2 uv = texcoord - center;
+    
+    // 应用宽高比校正，确保畸变是圆形的而不是椭圆形
+    uv.x *= screenWidth / screenHeight;
+    
+    // 计算到中心的距离
+    float distance = length(uv);
+    
+    // 应用球形畸变
+    // 使用二次函数来模拟球形透镜的畸变效果
+    float distortionFactor = 1.0 + sphericalDistortionStrength * distance * distance;
+    
+    // 限制畸变作用的半径范围
+    float radiusMask = smoothstep(sphericalDistortionRadius, sphericalDistortionRadius * 0.8, distance);
+    distortionFactor = lerp(distortionFactor, 1.0, radiusMask);
+    
+    // 应用畸变
+    uv *= distortionFactor;
+    
+    // 恢复宽高比校正
+    uv.x /= screenWidth / screenHeight;
+    
+    // 转换回纹理坐标
+    return uv + center;
+}
+
+// 带有色散效果的球形畸变函数（无分支版本）
+float4 sampleWithSphericalDistortionAndChromatic(Texture2D tex, SamplerState samp, float2 texcoord)
+{
+    // 基础畸变
+    float2 center = float2(0.5, 0.5) + sphericalDistortionCenter;
+    float2 uv = texcoord - center;
+    
+    // 应用宽高比校正
+    uv.x *= screenWidth / screenHeight;
+    
+    float distance = length(uv);
+    
+    // 柔化边界处理，避免硬边界
+    float edgeFade = smoothstep(sphericalDistortionRadius, sphericalDistortionRadius * 0.9, distance);
+    
+    // 不同颜色通道使用不同的畸变强度来模拟色散
+    float distortionR = 1.0 + sphericalDistortionStrength * 1.02 * distance * distance;  // 红色通道稍强
+    float distortionG = 1.0 + sphericalDistortionStrength * distance * distance;         // 绿色通道标准
+    float distortionB = 1.0 + sphericalDistortionStrength * 0.98 * distance * distance;  // 蓝色通道稍弱
+    
+    // 在边界区域减少畸变强度
+    distortionR = lerp(1.0, distortionR, edgeFade);
+    distortionG = lerp(1.0, distortionG, edgeFade);
+    distortionB = lerp(1.0, distortionB, edgeFade);
+    
+    // 应用畸变到不同颜色通道
+    float2 uvR = uv * distortionR;
+    float2 uvG = uv * distortionG;
+    float2 uvB = uv * distortionB;
+    
+    // 恢复宽高比校正
+    uvR.x /= screenWidth / screenHeight;
+    uvG.x /= screenWidth / screenHeight;
+    uvB.x /= screenWidth / screenHeight;
+    
+    // 转换回纹理坐标
+    uvR += center;
+    uvG += center;
+    uvB += center;
+    
+    // 计算边界掩码（无分支方式）
+    // 检查原始畸变坐标是否在有效范围内
+    float2 validR = step(0.0, uvR) * step(uvR, 1.0);
+    float2 validG = step(0.0, uvG) * step(uvG, 1.0);
+    float2 validB = step(0.0, uvB) * step(uvB, 1.0);
+    float borderMask = validR.x * validR.y * validG.x * validG.y * validB.x * validB.y;
+    
+    // 使用saturate来安全地限制坐标范围
+    uvR = saturate(uvR);
+    uvG = saturate(uvG);
+    uvB = saturate(uvB);
+    
+    // 分别采样各颜色通道
+    float4 distortedSample;
+    distortedSample.r = tex.Sample(samp, uvR).r;
+    distortedSample.g = tex.Sample(samp, uvG).g;
+    distortedSample.b = tex.Sample(samp, uvB).b;
+    distortedSample.a = tex.Sample(samp, uvG).a;
+    
+    // 原始采样作为备用
+    float4 originalSample = tex.Sample(samp, texcoord);
+    
+    // 无分支混合：根据边界掩码选择使用哪个采样结果
+    return lerp(originalSample, distortedSample, borderMask);
+}
+
 float4 main(PS_INPUT input) : SV_TARGET
 {
     float2 texCoord = input.position.xy / float2(screenWidth, screenHeight);
@@ -217,8 +323,26 @@ float4 main(PS_INPUT input) : SV_TARGET
     else if (abseyeDirectionLerp.y >= 0 && abseyeDirectionLerp.y <= 0.001)
         abseyeDirectionLerp.y = 0.001;
 
-    // Get original texture
-    float4 color = scopeTexture.Sample(scopeSampler, texCoord);
+    // 无分支球形畸变效果应用
+    // 使用step函数创建选择掩码
+    float useDistortion = step(0.5, float(enableSphericalDistortion));
+    float useChromatic = step(0.5, float(enableChromaticAberration));
+    
+    // 预先计算基础畸变坐标
+    float2 distortedTexCoord = lerp(texCoord, applySphericalDistortion(texCoord), useDistortion);
+    
+    // 根据设置选择采样方法
+    float useChromaticSampling = useDistortion * useChromatic;
+    
+    // 基础采样（原始或基础畸变）
+    float4 basicColor = scopeTexture.Sample(scopeSampler, distortedTexCoord);
+    
+    // 色散采样（仅当需要时）
+    float4 chromaticColor = lerp(basicColor, 
+                                sampleWithSphericalDistortionAndChromatic(scopeTexture, scopeSampler, texCoord), 
+                                useChromaticSampling);
+    
+    float4 color = chromaticColor;
 
     float2 eye_velocity = clampMagnitude(abseyeDirectionLerp.xy, 1.5f);
 

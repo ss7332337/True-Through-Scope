@@ -51,6 +51,14 @@ namespace ThroughScope
 
 			int minFov = 5;
 			int maxFov = 100;
+
+			// 球形畸变设置
+			float sphericalDistortionStrength = 0.0f;
+			float sphericalDistortionRadius = 0.8f;
+			float sphericalDistortionCenterX = 0.0f;
+			float sphericalDistortionCenterY = 0.0f;
+			bool enableSphericalDistortion = false;
+			bool enableChromaticAberration = false;
         };
         
         const AdjustmentValues& GetCurrentValues() const { return m_CurrentValues; }
@@ -99,6 +107,14 @@ namespace ThroughScope
         float m_ThermalContrast = 1.2f;
         float m_ThermalNoiseAmount = 0.03f;
         bool m_EnableThermalVision = false;
+
+        // 球形畸变效果设置
+        float m_SphericalDistortionStrength = 0.0f;
+        float m_SphericalDistortionRadius = 0.8f;
+        float m_SphericalDistortionCenterX = 0.0f;
+        float m_SphericalDistortionCenterY = 0.0f;
+        bool m_EnableSphericalDistortion = false;
+        bool m_EnableChromaticAberration = false;
         
         // 渲染函数
         void RenderWeaponInformation();
@@ -108,6 +124,7 @@ namespace ThroughScope
         void RenderParallaxSettings();
         void RenderNightVisionSettings();
         void RenderThermalVisionSettings();
+        void RenderSphericalDistortionSettings();
         void RenderActionButtons();
         
         // 应用调整

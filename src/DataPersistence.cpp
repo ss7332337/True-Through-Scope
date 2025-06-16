@@ -232,6 +232,14 @@ namespace ThroughScope
 			config.scopeSettings.thermalContrast = getValue(scopeJson, "thermalContrast", 1.2f);
 			config.scopeSettings.thermalNoiseAmount = getValue(scopeJson, "thermalNoiseAmount", 0.03f);
 
+			// 加载球形畸变效果参数
+			config.scopeSettings.enableSphericalDistortion = getValue(scopeJson, "enableSphericalDistortion", false);
+			config.scopeSettings.enableChromaticAberration = getValue(scopeJson, "enableChromaticAberration", false);
+			config.scopeSettings.sphericalDistortionStrength = getValue(scopeJson, "sphericalDistortionStrength", 0.0f);
+			config.scopeSettings.sphericalDistortionRadius = getValue(scopeJson, "sphericalDistortionRadius", 0.8f);
+			config.scopeSettings.sphericalDistortionCenterX = getValue(scopeJson, "sphericalDistortionCenterX", 0.0f);
+			config.scopeSettings.sphericalDistortionCenterY = getValue(scopeJson, "sphericalDistortionCenterY", 0.0f);
+
 			// Add to multimap
 			m_Configurations.emplace(config.weaponConfig.GetKey(), config);
 
@@ -295,7 +303,14 @@ namespace ThroughScope
 				{ "thermalIntensity", config.scopeSettings.thermalIntensity },
 				{ "thermalThreshold", config.scopeSettings.thermalThreshold },
 				{ "thermalContrast", config.scopeSettings.thermalContrast },
-				{ "thermalNoiseAmount", config.scopeSettings.thermalNoiseAmount }
+				{ "thermalNoiseAmount", config.scopeSettings.thermalNoiseAmount },
+				// 保存球形畸变效果参数
+				{ "enableSphericalDistortion", config.scopeSettings.enableSphericalDistortion },
+				{ "enableChromaticAberration", config.scopeSettings.enableChromaticAberration },
+				{ "sphericalDistortionStrength", config.scopeSettings.sphericalDistortionStrength },
+				{ "sphericalDistortionRadius", config.scopeSettings.sphericalDistortionRadius },
+				{ "sphericalDistortionCenterX", config.scopeSettings.sphericalDistortionCenterX },
+				{ "sphericalDistortionCenterY", config.scopeSettings.sphericalDistortionCenterY }
 			};
 
 			// Reticle settings
@@ -359,12 +374,30 @@ namespace ThroughScope
 		};
 
 		// Set default scope settings
-		presetConfig.scopeSettings = {
-			5,      // minFOV
-			90,     // maxFOV
-			false,  // nightVision
-			false   // thermalVision
-		};
+		presetConfig.scopeSettings.minFOV = 5;
+		presetConfig.scopeSettings.maxFOV = 90;
+		presetConfig.scopeSettings.nightVision = false;
+		presetConfig.scopeSettings.thermalVision = false;
+
+		// 设置夜视效果默认参数
+		presetConfig.scopeSettings.nightVisionIntensity = 1.0f;
+		presetConfig.scopeSettings.nightVisionNoiseScale = 0.05f;
+		presetConfig.scopeSettings.nightVisionNoiseAmount = 0.05f;
+		presetConfig.scopeSettings.nightVisionGreenTint = 1.2f;
+
+		// 设置热成像效果默认参数
+		presetConfig.scopeSettings.thermalIntensity = 1.0f;
+		presetConfig.scopeSettings.thermalThreshold = 0.5f;
+		presetConfig.scopeSettings.thermalContrast = 1.2f;
+		presetConfig.scopeSettings.thermalNoiseAmount = 0.03f;
+
+		// 设置球形畸变效果默认参数
+		presetConfig.scopeSettings.enableSphericalDistortion = false;
+		presetConfig.scopeSettings.enableChromaticAberration = false;
+		presetConfig.scopeSettings.sphericalDistortionStrength = 0.0f;
+		presetConfig.scopeSettings.sphericalDistortionRadius = 0.8f;
+		presetConfig.scopeSettings.sphericalDistortionCenterX = 0.0f;
+		presetConfig.scopeSettings.sphericalDistortionCenterY = 0.0f;
 
 		// Default reticle settings
 		presetConfig.reticleSettings.customReticlePath = "";

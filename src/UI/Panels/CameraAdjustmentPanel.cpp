@@ -41,11 +41,35 @@ namespace ThroughScope
 		RenderParallaxSettings();
 		RenderNightVisionSettings();
 		RenderThermalVisionSettings();
+		RenderSphericalDistortionSettings();
 		RenderActionButtons();
 	}
 
 	void CameraAdjustmentPanel::Update()
 	{
+		// 同步UI值到CurrentValues结构（无论是否启用实时调整）
+		m_CurrentValues.sphericalDistortionStrength = m_SphericalDistortionStrength;
+		m_CurrentValues.sphericalDistortionRadius = m_SphericalDistortionRadius;
+		m_CurrentValues.sphericalDistortionCenterX = m_SphericalDistortionCenterX;
+		m_CurrentValues.sphericalDistortionCenterY = m_SphericalDistortionCenterY;
+		m_CurrentValues.enableSphericalDistortion = m_EnableSphericalDistortion;
+		m_CurrentValues.enableChromaticAberration = m_EnableChromaticAberration;
+
+		// 同步其他UI值
+		m_CurrentValues.enableNightVision = m_EnableNightVision;
+		m_CurrentValues.enableThermalVision = m_EnableThermalVision;
+		m_CurrentValues.nightVisionIntensity = m_NightVisionIntensity;
+		m_CurrentValues.nightVisionNoiseScale = m_NightVisionNoiseScale;
+		m_CurrentValues.nightVisionNoiseAmount = m_NightVisionNoiseAmount;
+		m_CurrentValues.nightVisionGreenTint = m_NightVisionGreenTint;
+		m_CurrentValues.thermalIntensity = m_ThermalIntensity;
+		m_CurrentValues.thermalThreshold = m_ThermalThreshold;
+		m_CurrentValues.thermalContrast = m_ThermalContrast;
+		m_CurrentValues.thermalNoiseAmount = m_ThermalNoiseAmount;
+
+		// 无论是否启用实时调整，都应用设置以确保D3DHooks获得最新参数
+		ApplySettings();
+
 		if (!m_RealTimeAdjustment)
 			return;
 
@@ -395,6 +419,84 @@ namespace ThroughScope
 		}
 	}
 
+	void CameraAdjustmentPanel::RenderSphericalDistortionSettings()
+	{
+		if (ImGui::CollapsingHeader("球形畸变设置", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			ImGui::Checkbox("启用球形畸变", &m_EnableSphericalDistortion);
+			ImGui::SameLine();
+			ImGui::Text("(模拟真实镜头的光学畸变)");
+			
+			ImGui::PushID("SphericalDistortion");
+			if (m_EnableSphericalDistortion)
+			{
+				ImGui::SliderFloat("畸变强度", &m_SphericalDistortionStrength, -0.5f, 0.5f, "%.3f");
+				ImGui::Text("正值=桶形畸变，负值=枕形畸变");
+				
+				ImGui::SliderFloat("畸变半径", &m_SphericalDistortionRadius, 0.1f, 1.0f, "%.2f");
+				ImGui::Text("控制畸变作用的范围");
+				
+				ImGui::Text("畸变中心偏移:");
+				ImGui::SliderFloat("X偏移", &m_SphericalDistortionCenterX, -0.5f, 0.5f, "%.3f");
+				ImGui::SliderFloat("Y偏移", &m_SphericalDistortionCenterY, -0.5f, 0.5f, "%.3f");
+				
+				ImGui::Separator();
+				ImGui::Checkbox("启用色散效果", &m_EnableChromaticAberration);
+				ImGui::SameLine();
+				ImGui::Text("(高质量畸变，模拟RGB分离)");
+				
+				ImGui::Separator();
+				ImGui::Text("快速预设:");
+				
+				// 预设按钮
+				if (ImGui::Button("轻微桶形")) {
+					m_SphericalDistortionStrength = 0.1f;
+					m_SphericalDistortionRadius = 0.8f;
+					m_SphericalDistortionCenterX = 0.0f;
+					m_SphericalDistortionCenterY = 0.0f;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("中等桶形")) {
+					m_SphericalDistortionStrength = 0.2f;
+					m_SphericalDistortionRadius = 0.9f;
+					m_SphericalDistortionCenterX = 0.0f;
+					m_SphericalDistortionCenterY = 0.0f;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("强烈桶形")) {
+					m_SphericalDistortionStrength = 0.3f;
+					m_SphericalDistortionRadius = 1.0f;
+					m_SphericalDistortionCenterX = 0.0f;
+					m_SphericalDistortionCenterY = 0.0f;
+				}
+				
+				if (ImGui::Button("轻微枕形")) {
+					m_SphericalDistortionStrength = -0.1f;
+					m_SphericalDistortionRadius = 0.8f;
+					m_SphericalDistortionCenterX = 0.0f;
+					m_SphericalDistortionCenterY = 0.0f;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("中等枕形")) {
+					m_SphericalDistortionStrength = -0.2f;
+					m_SphericalDistortionRadius = 0.9f;
+					m_SphericalDistortionCenterX = 0.0f;
+					m_SphericalDistortionCenterY = 0.0f;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("重置畸变")) {
+					m_SphericalDistortionStrength = 0.0f;
+					m_SphericalDistortionRadius = 0.8f;
+					m_SphericalDistortionCenterX = 0.0f;
+					m_SphericalDistortionCenterY = 0.0f;
+					m_EnableSphericalDistortion = false;
+					m_EnableChromaticAberration = false;
+				}
+			}
+			ImGui::PopID();
+		}
+	}
+
 	void CameraAdjustmentPanel::RenderActionButtons()
 	{
 		ImGui::Spacing();
@@ -485,6 +587,14 @@ namespace ThroughScope
 		config.scopeSettings.minFOV = m_MinFov;
 		config.scopeSettings.maxFOV = m_MaxFov;
 
+		// 保存球形畸变设置
+		config.scopeSettings.enableSphericalDistortion = m_EnableSphericalDistortion;
+		config.scopeSettings.enableChromaticAberration = m_EnableChromaticAberration;
+		config.scopeSettings.sphericalDistortionStrength = m_SphericalDistortionStrength;
+		config.scopeSettings.sphericalDistortionRadius = m_SphericalDistortionRadius;
+		config.scopeSettings.sphericalDistortionCenterX = m_SphericalDistortionCenterX;
+		config.scopeSettings.sphericalDistortionCenterY = m_SphericalDistortionCenterY;
+
 	}
 
 	void CameraAdjustmentPanel::LoadFromConfig(const DataPersistence::ScopeConfig* config)
@@ -522,6 +632,22 @@ namespace ThroughScope
 		m_MinFov = config->scopeSettings.minFOV;
 		m_MaxFov = config->scopeSettings.maxFOV;
 
+		// 加载球形畸变设置
+		m_EnableSphericalDistortion = config->scopeSettings.enableSphericalDistortion;
+		m_EnableChromaticAberration = config->scopeSettings.enableChromaticAberration;
+		m_SphericalDistortionStrength = config->scopeSettings.sphericalDistortionStrength;
+		m_SphericalDistortionRadius = config->scopeSettings.sphericalDistortionRadius;
+		m_SphericalDistortionCenterX = config->scopeSettings.sphericalDistortionCenterX;
+		m_SphericalDistortionCenterY = config->scopeSettings.sphericalDistortionCenterY;
+
+		// 同步到CurrentValues
+		m_CurrentValues.sphericalDistortionStrength = m_SphericalDistortionStrength;
+		m_CurrentValues.sphericalDistortionRadius = m_SphericalDistortionRadius;
+		m_CurrentValues.sphericalDistortionCenterX = m_SphericalDistortionCenterX;
+		m_CurrentValues.sphericalDistortionCenterY = m_SphericalDistortionCenterY;
+		m_CurrentValues.enableSphericalDistortion = m_EnableSphericalDistortion;
+		m_CurrentValues.enableChromaticAberration = m_EnableChromaticAberration;
+
 		ApplySettings();
 
 		UpdatePreviousValues();
@@ -543,10 +669,26 @@ namespace ThroughScope
 		m_CurrentValues.deltaRot[2] = 0.0f;
 		m_CurrentValues.deltaScale = 1.5f;
 
+		// 重置球形畸变设置
+		m_SphericalDistortionStrength = 0.0f;
+		m_SphericalDistortionRadius = 0.8f;
+		m_SphericalDistortionCenterX = 0.0f;
+		m_SphericalDistortionCenterY = 0.0f;
+		m_EnableSphericalDistortion = false;
+		m_EnableChromaticAberration = false;
+
+		m_CurrentValues.sphericalDistortionStrength = m_SphericalDistortionStrength;
+		m_CurrentValues.sphericalDistortionRadius = m_SphericalDistortionRadius;
+		m_CurrentValues.sphericalDistortionCenterX = m_SphericalDistortionCenterX;
+		m_CurrentValues.sphericalDistortionCenterY = m_SphericalDistortionCenterY;
+		m_CurrentValues.enableSphericalDistortion = m_EnableSphericalDistortion;
+		m_CurrentValues.enableChromaticAberration = m_EnableChromaticAberration;
+
 		if (m_RealTimeAdjustment) {
 			ApplyAllAdjustments();
 		}
 
+		ApplySettings(); // 应用重置后的设置
 		UpdatePreviousValues();
 		m_Manager->SetDebugText("All adjustments reset!");
 	}
@@ -575,7 +717,15 @@ namespace ThroughScope
 		       std::abs(m_CurrentValues.thermalContrast - m_PreviousValues.thermalContrast) > epsilon ||
 		       std::abs(m_CurrentValues.thermalNoiseAmount - m_PreviousValues.thermalNoiseAmount) > epsilon ||
 		       m_CurrentValues.enableNightVision != m_PreviousValues.enableNightVision ||
-		       m_CurrentValues.enableThermalVision != m_PreviousValues.enableThermalVision;
+		       m_CurrentValues.enableThermalVision != m_PreviousValues.enableThermalVision ||
+
+		       // 球形畸变参数变化检测
+		       std::abs(m_CurrentValues.sphericalDistortionStrength - m_PreviousValues.sphericalDistortionStrength) > epsilon ||
+		       std::abs(m_CurrentValues.sphericalDistortionRadius - m_PreviousValues.sphericalDistortionRadius) > epsilon ||
+		       std::abs(m_CurrentValues.sphericalDistortionCenterX - m_PreviousValues.sphericalDistortionCenterX) > epsilon ||
+		       std::abs(m_CurrentValues.sphericalDistortionCenterY - m_PreviousValues.sphericalDistortionCenterY) > epsilon ||
+		       m_CurrentValues.enableSphericalDistortion != m_PreviousValues.enableSphericalDistortion ||
+		       m_CurrentValues.enableChromaticAberration != m_PreviousValues.enableChromaticAberration;
 	}
 
 	void CameraAdjustmentPanel::UpdatePreviousValues()
@@ -791,6 +941,7 @@ namespace ThroughScope
 		);
 
 		// 应用夜视设置
+		D3DHooks::SetEnableNightVision(m_EnableNightVision);
 		D3DHooks::UpdateNightVisionSettings(
 			m_NightVisionIntensity,
 			m_NightVisionNoiseScale,
@@ -799,12 +950,28 @@ namespace ThroughScope
 		);
 
 		// 应用热成像设置
+		D3DHooks::SetEnableThermalVision(m_EnableThermalVision);
 		D3DHooks::UpdateThermalVisionSettings(
 			m_ThermalIntensity,
 			m_ThermalThreshold,
 			m_ThermalContrast,
 			m_ThermalNoiseAmount
 		);
+
+		// 应用球形畸变设置
+		D3DHooks::UpdateSphericalDistortionSettings(
+			m_SphericalDistortionStrength,
+			m_SphericalDistortionRadius,
+			m_SphericalDistortionCenterX,
+			m_SphericalDistortionCenterY
+		);
+		
+		// 设置球形畸变开关
+		D3DHooks::SetEnableSphericalDistortion(m_EnableSphericalDistortion);
+		D3DHooks::SetEnableChromaticAberration(m_EnableChromaticAberration);
+		
+		// 强制更新常量缓冲区以确保实时响应
+		D3DHooks::ForceConstantBufferUpdate();
 	}
 
 	
