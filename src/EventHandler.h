@@ -6,6 +6,9 @@
 #include <RE/Bethesda/BSAnimationGraph.hpp>
 #include <RE/Bethesda/BSTEvent.hpp>
 #include <RE/Bethesda/Events.hpp>
+#include <thread>
+#include <atomic>
+#include <mutex>
 
 #include "DataPersistence.h"
 
@@ -24,7 +27,9 @@ namespace ThroughScope
 		//void SetupScopeForWeapon(const DataPersistence::WeaponInfo& weaponInfo);
 	private:
 		EquipWatcher() = default;
-		~EquipWatcher() = default;
+		~EquipWatcher() { 
+			CancelPendingSetup();
+		}
 
 		void RegisterForEvents();
 		void UnregisterForEvents();
@@ -36,6 +41,10 @@ namespace ThroughScope
 		//void ApplyScopeTransform(RE::NiNode* scopeNode, const DataPersistence::CameraAdjustments& adjustments);
 		//void ApplyScopeSettings(const DataPersistence::ScopeConfig& config);
 
+		// 延迟执行SetupScopeForWeapon的方法
+		void DelayedSetupScopeForWeapon();
+		void CancelPendingSetup();
+
 		// Static instance
 		static EquipWatcher* s_Instance;
 		//static RE::NiNode* s_CurrentScopeNode;
@@ -45,6 +54,11 @@ namespace ThroughScope
 		//static RE::TESFormID s_EquippedWeaponFormID;
 		static std::string s_LastAnimEvent;
 
+		// 延迟执行相关的成员变量
+		std::atomic<bool> m_PendingSetup{false};
+		std::atomic<bool> m_CancelPending{false};
+		std::mutex m_SetupMutex;
+		std::thread m_SetupThread;
 
 		// Animation event names to track
 		inline static const std::string ANIM_EVENT_WEAPON_FIRE = "weaponFire";

@@ -4,6 +4,7 @@
 #include <NiFLoader.h>
 #include "D3DHooks.h"
 #include "ScopeCamera.h"
+#include <chrono>
 
 namespace ThroughScope
 {
@@ -62,6 +63,7 @@ namespace ThroughScope
 	void EquipWatcher::Shutdown()
 	{
 		if (s_Instance) {
+			s_Instance->CancelPendingSetup();
 			s_Instance->UnregisterForEvents();
 			delete s_Instance;
 			s_Instance = nullptr;
@@ -83,7 +85,53 @@ namespace ThroughScope
 		}
 	}
 
-	// Modify EventHandler.cpp to properly handle weapon switching
+	void EquipWatcher::DelayedSetupScopeForWeapon()
+	{
+		std::lock_guard<std::mutex> lock(m_SetupMutex);
+
+		// 等待150ms
+		std::this_thread::sleep_for(std::chrono::milliseconds(150));
+		
+		// 检查是否被取消
+		if (m_CancelPending.load()) {
+			logger::info("DelayedSetupScopeForWeapon cancelled");
+			m_PendingSetup = false;
+			m_CancelPending = false;
+			return;
+		}
+		
+		// 执行SetupScopeForWeapon逻辑
+		logger::info("Executing delayed SetupScopeForWeapon");
+		ScopeCamera::CleanupScopeResources();
+		auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+		if (weaponInfo.currentConfig) {
+			ScopeCamera::SetupScopeForWeapon(weaponInfo);
+			isQuerySpawnNode = false;
+			if (!ScopeCamera::hasFirstSpawnNode) {
+				ScopeCamera::hasFirstSpawnNode = true;
+				logger::warn("FirstSpawn Finish: EquipWatcher DelayedSetup");
+			}
+		} else {
+			logger::info("No scope configuration found for this weapon in delayed setup");
+		}
+		
+		m_PendingSetup = false;
+	}
+
+	void EquipWatcher::CancelPendingSetup()
+	{
+		if (m_PendingSetup.load()) {
+			logger::info("Cancelling pending setup");
+			m_CancelPending = true;
+			
+			// 等待线程完成
+			if (m_SetupThread.joinable()) {
+				m_SetupThread.join();
+			}
+		}
+	}
+
+	//Modify EventHandler.cpp to properly handle weapon switching
 
 	RE::BSEventNotifyControl EquipWatcher::ProcessEvent(const RE::TESEquipEvent& a_event, RE::BSTEventSource<RE::TESEquipEvent>* a_eventSource)
 	{
@@ -105,6 +153,9 @@ namespace ThroughScope
 			// When a weapon is equipped, check for scope configuration
 			logger::info("Weapon equipped: FormID {:08X}", weapon->formID);
 
+			// 取消之前的延迟执行
+			CancelPendingSetup();
+
 			// Get current weapon info including available modifications
 			auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
 
@@ -125,13 +176,23 @@ namespace ThroughScope
 				isQuerySpawnNode = true;
 				s_IsScopeActive = true;
 
-				if (ScopeCamera::isFirstSpawnNode)
+				if (!ScopeCamera::hasFirstSpawnNode)
 				{
-					ScopeCamera::isFirstSpawnNode = true;
+					ScopeCamera::hasFirstSpawnNode = true;
 					logger::warn("FirstSpawn Finish: EquipWatcher");
 				}
 				
 				ScopeCamera::s_EquippedWeaponFormID = weapon->formID;
+
+				// 启动延迟执行
+				m_PendingSetup = true;
+				m_CancelPending = false;
+				
+				// 创建新线程执行延迟任务
+				if (m_SetupThread.joinable()) {
+					m_SetupThread.join();
+				}
+				m_SetupThread = std::thread(&EquipWatcher::DelayedSetupScopeForWeapon, this);
 
 			} else {
 				// No configuration found - do nothing as requested
@@ -142,6 +203,10 @@ namespace ThroughScope
 		} else {
 			// Weapon unequipped, clean up resources
 			logger::info("Weapon unequipped, cleaning up scope resources");
+			
+			// 取消延迟执行
+			CancelPendingSetup();
+			
 			s_IsScopeActive = false;
 			ScopeCamera::s_EquippedWeaponFormID = 0;
 			ScopeCamera::CleanupScopeResources();
@@ -176,7 +241,6 @@ namespace ThroughScope
 		return s_Instance;
 	}
 
-
 	RE::BSEventNotifyControl AnimationGraphEventWatcher::hkProcessEvent(RE::BSAnimationGraphEvent& evn, RE::BSTEventSource<RE::BSAnimationGraphEvent>* src)
 	{
 		FnProcessEvent fn = fnHash.at(*(uint64_t*)this);
@@ -184,23 +248,23 @@ namespace ThroughScope
 		// logger::info("Event Name: {}", eventName.c_str());
 		// Get current weapon info including available modifications
 		
-		if (std::strcmp(eventName.c_str(), "weaponDraw") == 0)
-		{
-			ScopeCamera::CleanupScopeResources();
-			auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
-			if (weaponInfo.currentConfig) {
-				ScopeCamera::SetupScopeForWeapon(weaponInfo);
-				isQuerySpawnNode = false;
-				if (ScopeCamera::isFirstSpawnNode) {
-					ScopeCamera::isFirstSpawnNode = true;
-					logger::warn("FirstSpawn Finish: AnimationGraphEventWatcher");
-				}
-				
-			} else {
-				// No configuration found - do nothing as requested
-				logger::info("No scope configuration found for this weapon - no action taken");
-			}
-		}
+		//if (std::strcmp(eventName.c_str(), "weaponDraw") == 0)
+		//{
+		//	ScopeCamera::CleanupScopeResources();
+		//	auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+		//	if (weaponInfo.currentConfig) {
+		//		ScopeCamera::SetupScopeForWeapon(weaponInfo);
+		//		isQuerySpawnNode = false;
+		//		if (!ScopeCamera::hasFirstSpawnNode) {
+		//			ScopeCamera::hasFirstSpawnNode = true;
+		//			logger::warn("FirstSpawn Finish: AnimationGraphEventWatcher");
+		//		}
+		//		
+		//	} else {
+		//		// No configuration found - do nothing as requested
+		//		logger::info("No scope configuration found for this weapon - no action taken");
+		//	}
+		//}
 		
 
 		return fn ? (this->*fn)(evn, src) : BSEventNotifyControl::kContinue;
