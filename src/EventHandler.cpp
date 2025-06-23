@@ -88,7 +88,7 @@ namespace ThroughScope
 	void EquipWatcher::DelayedSetupScopeForWeapon()
 	{
 		std::lock_guard<std::mutex> lock(m_SetupMutex);
-
+		
 		// 等待150ms
 		std::this_thread::sleep_for(std::chrono::milliseconds(150));
 		
@@ -222,9 +222,6 @@ namespace ThroughScope
 
 		return false;
 	}
-
-	
-
 
 	bool AnimationGraphEventWatcher::Initialize()
 	{

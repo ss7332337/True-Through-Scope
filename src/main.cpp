@@ -10,6 +10,9 @@
 #include <thread>
 #include <Windows.h>
 #include <winternl.h>
+#include <cmath>
+#include <algorithm>
+#include <cstring>
 
 #include "DataPersistence.h"
 #include "ImGuiManager.h"
@@ -69,7 +72,9 @@ REL::Relocation<uintptr_t> BSStreamLoad_Ori{ REL::ID(160035) };
 
 REL::Relocation<uintptr_t> MainPreRender_Ori{ REL::ID(378257) };
 REL::Relocation<uintptr_t> BSCullingGroupAdd_Ori{ REL::ID(1175493) };
+REL::Relocation<uintptr_t> BSCullingGroup_SetCompoundFrustum_Ori{ REL::ID(158202) };
 
+REL::Relocation<uintptr_t> DrawWorld_Move1stPersonToOrigin_Ori{ REL::ID(76526) };
 
 
 
@@ -85,7 +90,7 @@ REL::Relocation<BSShaderAccumulator**> ptr_Draw1stPersonAccum{ REL::ID(1430301) 
 REL::Relocation<BSShaderAccumulator**> ptr_DrawWorldAccum{ REL::ID(1211381) };
 REL::Relocation<BSCullingGroup**> ptr_k1stPersonCullingGroup{ REL::ID(731482) };
 REL::Relocation<NiCamera**> ptr_BSShaderManagerSpCamera{ REL::ID(543218) };
-REL::Relocation<NiCamera**> ptr_DrawWorldCamera{ REL::ID(1444212) };
+REL::Relocation<NiCamera**> ptr_DrawWorldCamera{ REL::ID(1444212) }; //pCam
 REL::Relocation<NiCamera**> ptr_DrawWorldVisCamera{ REL::ID(81406) };
 REL::Relocation<NiCamera**> ptr_DrawWorld1stCamera{ REL::ID(380177) };
 REL::Relocation<NiCamera**> ptr_DrawWorldSpCamera{ REL::ID(543218) };
@@ -145,6 +150,9 @@ typedef void(__fastcall* FnDrawIndexed)(ID3D11DeviceContext* pContext, UINT Inde
 typedef void(__fastcall* FnMainPreRender)(Main* thisptr, int auiDestination);
 typedef void (*FnTAA)(ImageSpaceEffectTemporalAA*, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param);
 typedef void (*FnBSCullingGroupAdd)(BSCullingGroup* ,NiAVObject* apObj,const NiBound* aBound,const unsigned int aFlags);
+typedef void (*FnBSShaderAccumulator_RenderBatches)(BSShaderAccumulator*, int, bool, int);
+typedef void (*FnBSCullingGroup_SetCompoundFrustum)(BSCullingGroup*, BSCompoundFrustum*);
+typedef void (*FnDrawWorld_Move1stPersonToOrigin)(uint64_t);
 
 
 	// 存储原始函数的指针
@@ -164,6 +172,7 @@ BSEffectShaderProperty_GetRenderPasses_Original g_BSEffectShaderGetRenderPassesO
 FnRender_PreUI g_RenderPreUIOriginal = nullptr;
 FnBegin g_BeginOriginal = nullptr;
 FnMain_DrawWorldAndUI g_DrawWorldAndUIOriginal = nullptr;
+FnMainPreRender g_MainPreRender = nullptr;
 FnBSCullingGroup_Process g_BSCullingGroupProcessOriginal = nullptr;
 Fn g_MainAccumOriginal = nullptr;
 Fn g_OcclusionMapRenderOriginal = nullptr;
@@ -182,9 +191,12 @@ BSStreamLoad g_BSStreamLoad = nullptr;
 PCUpdateMainThread g_PCUpdateMainThread = nullptr;
 FnDrawTriShape g_DrawTriShape = nullptr;
 FnDrawIndexed g_DrawIndexed = nullptr;
-FnMainPreRender g_MainPreRender = nullptr;
 FnTAA g_TAA = nullptr;
 FnBSCullingGroupAdd g_BSCullingGroupAdd = nullptr;
+FnBSShaderAccumulator_RenderBatches g_BSShaderAccumulatorRenderBatches = nullptr;
+FnBSCullingGroup_SetCompoundFrustum g_BSCullingGroup_SetCompoundFrustum = nullptr;
+FnDrawWorld_Move1stPersonToOrigin g_DrawWorld_Move1stPersonToOrigin = nullptr;
+
 
 bool isFirstCopy = false;
 bool isRenderReady = false;
@@ -199,8 +211,20 @@ static std::chrono::steady_clock::time_point delayStartTime;
 PlayerCharacter* g_pchar = nullptr;
 
 NiFrustum originalCamera1stviewFrustum{};
+NiFrustum originalFrustum{};
+NiFrustum scopeFrustum{};
+NiRect<float> scopeViewPort{};
+
+extern NiCamera* ggg_ScopeCamera = nullptr;
+
+// 用于frustum剔除的全局变量
+static NiFrustum g_BackupFrustum{};
+static bool g_FrustumBackedUp = false;
+
 uint64_t savedDrawWorld = 0;
 HMODULE upscalerModular;
+
+NiCamera* g_worldFirstCam = *ptr_DrawWorld1stCamera;
 
 static RendererShadowState* GetRendererShadowState()
 {
@@ -221,22 +245,31 @@ static RendererShadowState* GetRendererShadowState()
 using namespace ThroughScope;
 using namespace ThroughScope::Utilities;
 
-//void hkBSBatchRenderer_Draw(BSRenderPass* apRenderPass)
-//{
-//	auto geometry = apRenderPass->pGeometry;
-//	auto trishape = apRenderPass->pGeometry->IsTriShape();
-//	auto vertxInfo = (D3D11_BUFFER_DESC*)apRenderPass->pGeometry->vertexDesc.desc;
-//	if (trishape)
-//	{
-//		if (trishape->numTriangles == 32 && trishape->numVertices == 33)
-//		{
-//			D3DHooks::CacheAllStates();
-//			logger::info("FOUND");
-//			return;
-//		}
-//	}
-//	g_originalBSBatchRendererDraw(apRenderPass);
-//}
+
+
+void hkDrawWorld_Move1stPersonToOrigin(uint64_t thisPtr)
+{
+	g_DrawWorld_Move1stPersonToOrigin(thisPtr);
+	//if (ScopeCamera::IsRenderingForScope()) {
+	//	auto scopeCamera = ScopeCamera::GetScopeCamera();
+	//	//scopeCamera->SetViewFrustum(&scopeFrustum);
+	//	/*scopeCamera->port.left = 0.4;
+	//	scopeCamera->port.right = 0.6f;*/
+	//	//scopeCamera->lodAdjust = 0.6f;
+	//	//BSShaderUtil::SetCameraFOV(scopeCamera, ScopeCamera::GetTargetFOV(), 15.0f, 353840.0f);
+	//	//BSShaderManager::SetFOV(ScopeCamera::GetTargetFOV());
+	//}
+}
+
+void hkBSBatchRenderer_Draw(BSRenderPass* apRenderPass)
+{
+	g_originalBSBatchRendererDraw(apRenderPass);
+}
+
+void hkBSCullingGroup_SetCompoundFrustum(BSCullingGroup* thisPtr, BSCompoundFrustum* apCompoundFrustum)
+{
+	g_BSCullingGroup_SetCompoundFrustum(thisPtr, apCompoundFrustum);
+}
 
 bool IsValidObject(NiAVObject* apObj)
 {
@@ -262,9 +295,9 @@ void hkBSCullingGroupAdd(BSCullingGroup* thisPtr,
 		logger::error("Invalid object: 0x{:X}", (uintptr_t)apObj);
 		return;
 	}
+
 	g_BSCullingGroupAdd(thisPtr, apObj, aBound, aFlags);
 }
-
 
 //renderTargets[0] = SwapChainImage RenderTarget(Only rtView and srView)
 //renderTargets[4] = Main Render_PreUI RenderTarget
@@ -275,9 +308,12 @@ void hkBSCullingGroupAdd(BSCullingGroup* thisPtr,
 //renderTargets[69] = 1x1 的小像素
 
 
+// 添加一个标志来区分瞄具专用渲染
+static bool g_IsScopeOnlyRender = false;
 
+void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld);
 
-void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param)
+void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param)
 {
 	// 在执行TAA之前捕获LUT纹理
 	ID3D11DeviceContext* context = d3dHooks->GetContext();
@@ -288,7 +324,9 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 
 	// 1. 先执行原本的TAA
 	g_TAA(thisPtr, a_geometry, a_param);
-	
+
+	//if (ScopeCamera::IsRenderingForScope())
+	//	return;
 
 	if (!isScopCamReady || !isRenderReady || !D3DHooks::IsEnableRender())
 		return;
@@ -366,22 +404,12 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 	NiCamera* originalCamera = (NiCamera*)((*ptr_DrawWorldCamera)->CreateClone(tempP));
 
 	auto originalCamera1st = *ptr_DrawWorldCamera;
-	//originalCamera1stviewFrustum = originalCamera1st->viewFrustum;
-	originalCamera1stviewFrustum.bottom = originalCamera1st->viewFrustum.bottom;
-	originalCamera1stviewFrustum.top = originalCamera1st->viewFrustum.top;
-	originalCamera1stviewFrustum.left = originalCamera1st->viewFrustum.left;
-	originalCamera1stviewFrustum.right = originalCamera1st->viewFrustum.right;
 
 	auto originalCamera1stport = (*ptr_DrawWorld1stCamera)->port;
 	scopeCamera->local.translate = originalCamera->local.translate;
 	scopeCamera->local.rotate = originalCamera->local.rotate;
 	scopeCamera->local.translate.y += 15;
 
-	auto drawWorldCullingProcess = *DrawWorldCullingProcess;
-
-	
-
-	
 	//清理主输出，准备第二次渲染
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 
@@ -396,38 +424,53 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 
 	context->ClearDepthStencilView(mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-
 	D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
 	DrawWorld::SetCamera(scopeCamera);
 	DrawWorld::SetUpdateCameraFOV(true);
 	DrawWorld::SetAdjusted1stPersonFOV(ScopeCamera::GetTargetFOV());
 	DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
 
-
-	float scopeViewSize = 0.275f;
-	NiFrustum scopeFrustum{};
-	scopeFrustum.left = -scopeViewSize;
-	scopeFrustum.right = scopeViewSize;
-	scopeFrustum.top = scopeViewSize;
-	scopeFrustum.bottom = -scopeViewSize;
-	scopeFrustum.farPlane = 20480;
-	scopeFrustum.nearPlane = 10;
-
-
 	NiUpdateData nData;
-	//originalCamera1st->viewFrustum = scopeFrustum;
-	nData.camera = scopeCamera;
-	scopeCamera->Update(nData);
-
-	nData.camera = originalCamera1st;
-	originalCamera1st->Update(nData);
-
 	ScopeCamera::SetRenderingForScope(true);
-	g_RenderPreUIOriginal(savedDrawWorld);  //第二次渲染输出到临时RenderTarget
+
+	auto SpCam = *ptr_DrawWorldSpCamera; 
+	auto fpsCam = *ptr_DrawWorld1stCamera;
+	auto DrawWorldCamera = *ptr_DrawWorldCamera;	
+	auto DrawWorldVisCamera = *ptr_DrawWorldVisCamera;
+	NiFrustum modifiedFrustum = scopeFrustum;
+	
+	*ptr_DrawWorldCamera = scopeCamera;
+	*ptr_DrawWorldVisCamera = scopeCamera;
+
+	// 8. 设置culling process
+	//auto geomListCullProc0 = *DrawWorldGeomListCullProc0;
+	//auto geomListCullProc1 = *DrawWorldGeomListCullProc1;
+
+	//if (geomListCullProc0 && scopeCamera) {
+	//	geomListCullProc0->m_pkCamera = scopeCamera;
+	//	geomListCullProc0->SetFrustum(&scopeCamera->viewFrustum);
+	//}
+
+	//if (geomListCullProc1 && scopeCamera) {
+	//	geomListCullProc1->m_pkCamera = scopeCamera;
+	//	geomListCullProc1->SetFrustum(&scopeCamera->viewFrustum);
+	//}
+
+	//(*ptr_DrawWorldVisCamera)->viewFrustum = scopeFrustum;
+	/*scopeCamera->SetViewFrustum(&scopeFrustum);
+	BSShaderUtil::SetCameraFOV(scopeCamera, ScopeCamera::GetTargetFOV(), 15.0f, 353840.0f);
+	BSShaderManager::SetFOV(ScopeCamera::GetTargetFOV());*/
+
+	//scopeCamera->port = scopeViewPort;
+	NiUpdateData updateData{};
+	updateData.camera = scopeCamera;
+	//updateData.time = 0.0f;
+	//updateData.flags = 0;
+	scopeCamera->Update(updateData);
+	g_RenderPreUIOriginal(savedDrawWorld);  //第二次渲染输出到临时RenderTarget，会应用frustum剔除
+
 	ScopeCamera::SetRenderingForScope(false);
 	D3DPERF_EndEvent();
-
-
 
 	context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), mainRTTexture);
 	context->CopyResource(rtTexture2D, tempBackBufferTex);
@@ -440,9 +483,6 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 		context->CopyResource(mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
 	}
 
-	/*visCamera->viewFrustum = originalCamera1stviewFrustum;
-	nData.camera = visCamera;
-	visCamera->Update(nData);*/
 	context->OMSetRenderTargets(1, &savedRTVs[1], nullptr);
 
 	int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
@@ -460,12 +500,12 @@ void __fastcall hkHookTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geo
 		}
 	}
 
-	DrawWorld::SetCamera(originalCamera1st);
+	*ptr_DrawWorldCamera = originalCamera;
+	DrawWorld::SetCamera(originalCamera);
 	DrawWorld::SetUpdateCameraFOV(true);
 
-	//originalCamera1st->viewFrustum = originalCamera1stviewFrustum;
-	nData.camera = originalCamera1st;
-	originalCamera1st->Update(nData);
+	nData.camera = originalCamera;
+	originalCamera->Update(nData);
 
 	// === 资源清理部分 ===
 	// 清理临时创建的D3D资源
@@ -514,162 +554,12 @@ void hkBSStreamLoad(BSStream* stream, const char* apFileName, NiBinaryStream* ap
 	g_BSStreamLoad(stream, apFileName, apStream);
 }
 
-
-
 // ------ Main Render Hooks ------
 void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 {
-	//先正常渲染主场景
 	savedDrawWorld = ptr_drawWorld;
-	D3DEventNode(g_RenderPreUIOriginal(ptr_drawWorld), L"First Render_PreUI");
-	
-
-	//if (!isScopCamReady || !isRenderReady || !D3DHooks::IsEnableRender())
-	//	return;
-
-	//auto playerCamera = *ptr_DrawWorldCamera;
-	//auto scopeCamera = ScopeCamera::GetScopeCamera();
-
-	//if (!scopeCamera || !scopeCamera->parent)
-	//	return;
-
-	//auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-	//if (!rendererData || !rendererData->context) {
-	//	logger::error("Renderer data or context is null");
-	//	return;
-	//}
-
-	////ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
-	//ID3D11DeviceContext* context = d3dHooks->GetContext();
-
-	//auto RTVs = rendererData->renderTargets;
-	//ID3D11RenderTargetView* mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
-	//ID3D11DepthStencilView* mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
-	//ID3D11Texture2D* mainRTTexture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
-	//ID3D11Texture2D* mainDSTexture = (ID3D11Texture2D*)rendererData->depthStencilTargets[2].texture;
-
-	//if (mainRTTexture) {
-	//	// Copy the render target to our texture
-	//	context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), mainRTTexture);
-	//	context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), mainDSTexture);
-	//	RenderUtilities::SetFirstPassComplete(true);
-	//} else {
-	//	logger::error("Failed to find a valid render target texture");
-	//}
-
-	////更新瞄具镜头
-	//NiCloningProcess tempP{};
-	//NiCamera* originalCamera = (NiCamera*)((*ptr_DrawWorldCamera)->CreateClone(tempP));
-
-	//auto originalCamera1st = *ptr_DrawWorldCamera;
-	//originalCamera1stviewFrustum = originalCamera1st->viewFrustum;
-	//auto originalCamera1stport = (*ptr_DrawWorld1stCamera)->port;
-	//scopeCamera->local.translate = originalCamera->local.translate;
-	//scopeCamera->local.rotate = originalCamera->local.rotate;
-	//scopeCamera->local.translate.y += 15;
-
-
-	//auto visCamera = *ptr_DrawWorldVisCamera;
-	//float scopeViewSize = 0.275f;
-	//NiFrustum scopeFrustum{};
-	//scopeFrustum.left = -scopeViewSize;
-	//scopeFrustum.right = scopeViewSize;
-	//scopeFrustum.top = scopeViewSize;
-	//scopeFrustum.bottom = -scopeViewSize;
-
-	//auto drawWorldCullingProcess = *DrawWorldCullingProcess;
-	//drawWorldCullingProcess->m_kFrustum = scopeFrustum;
-
-	//NiUpdateData nData;
-
-	//visCamera->viewFrustum = scopeFrustum;
-
-	//nData.camera = visCamera;
-	//visCamera->Update(nData);
-
-	//nData.camera = scopeCamera;
-	//scopeCamera->Update(nData);
-
-	//nData.camera = originalCamera1st;
-	//originalCamera1st->Update(nData);
-
-	//
-	////清理主输出，准备第二次渲染
-	//float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-
-	//for (size_t i = 0; i < sizeof(RTVs); i++)
-	//{
-	//	context->ClearRenderTargetView((ID3D11RenderTargetView*)RTVs[i].rtView, clearColor);
-	//}
-
-	//context->ClearDepthStencilView(mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
-
-	//D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
-	//DrawWorld::SetCamera(scopeCamera);
-	//DrawWorld::SetUpdateCameraFOV(true);
-	//DrawWorld::SetAdjusted1stPersonFOV(ScopeCamera::GetTargetFOV());
-	//DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
-
-	//// 更新裁剪处理器的视锥体（使用已优化的视锥体）
-	////(*DrawWorldGeomListCullProc0)->SetFrustum(&visCamera->viewFrustum);
-	////(*DrawWorldGeomListCullProc1)->SetFrustum(&visCamera->viewFrustum);
-	////(*DrawWorldGeomListCullProc0)->bCustomCullPlanes = true;
-	////(*DrawWorldGeomListCullProc1)->bCustomCullPlanes = true;
-
-	//nData.camera = scopeCamera;
-	//scopeCamera->Update(nData);
-
-	////Main::GetSingleton()->DrawWorld_PreRender(0);
-	////DrawWorld::DoUmbraQuery(ptr_drawWorld);
-
-	//ScopeCamera::SetRenderingForScope(true);
-	//(*BSM_ST)->ForceDisableSSR = true;
-	//g_RenderPreUIOriginal(ptr_drawWorld);  //第二次渲染
-	//(*BSM_ST)->ForceDisableSSR = false;
-	//ScopeCamera::SetRenderingForScope(false);
-	//D3DPERF_EndEvent();
-
-	//context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), mainRTTexture);
-	//RenderUtilities::SetSecondPassComplete(true);
-	//ID3D11ShaderResourceView* scopeSRV = nullptr;
-
-
-	//visCamera->viewFrustum = originalCamera1stviewFrustum;
-	//nData.camera = visCamera;
-	//visCamera->Update(nData);
-
-	///*originalCamera1st->viewFrustum = originalCamera1stviewFrustum;
-	//nData.camera = originalCamera1st;
-	//originalCamera1st->Update(nData);*/
-
-	//DrawWorld::SetCamera(originalCamera);
-	//DrawWorld::SetUpdateCameraFOV(true);
-
-	//int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
-	//if (scopeNodeIndexCount != -1) {
-	//	try {
-	//		RenderUtilities::SetRender_PreUIComplete(true);
-	//		d3dHooks->RestoreAllCachedStates();
-	//		d3dHooks->SetScopeTexture(context);
-	//		D3DHooks::isSelfDrawCall = true;
-	//		context->DrawIndexed(scopeNodeIndexCount, 0, 0);
-	//		D3DHooks::isSelfDrawCall = false;
-	//		RenderUtilities::SetRender_PreUIComplete(false);
-	//	} catch (...) {
-	//		logger::error("Exception during scope quad rendering");
-	//		RenderUtilities::SetRender_PreUIComplete(false);
-	//	}
-	//}
-
-	//DrawWorld::Render_UI(ptr_drawWorld);
-
-	//if (originalCamera) {
-	//	if (originalCamera->DecRefCount() == 0) {
-	//		originalCamera->DeleteThis();
-	//	}
-	//}
+	D3DEventNode(g_RenderPreUIOriginal(ptr_drawWorld), L"Render_PreUI");
 }
-
 
 void __fastcall hkRenderZPrePass(BSGraphics::RendererShadowState* rshadowState, BSGraphics::ZPrePassDrawData* aZPreData,
 	unsigned __int64* aVertexDesc, unsigned __int16* aCullmode, unsigned __int16* aDepthBiasMode)
@@ -796,8 +686,6 @@ void __fastcall hkDrawWorld_Refraction(uint64_t this_ptr)
 	D3DEventNode(g_RefractionOriginal(this_ptr), L"hkDrawWorld_Refraction");
 }
 
-
-
 void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground)
 {
 	D3DEventNode(g_DrawWorldAndUIOriginal(ptr_drawWorld, abBackground), L"hkMain_DrawWorldAndUI");
@@ -817,7 +705,7 @@ namespace FirstSpawnDelay
 
 void ResetFirstSpawnState()
 {
-	ScopeCamera::isFirstSpawnNode = false;
+	ScopeCamera::hasFirstSpawnNode = false;
 	ScopeCamera::isDelayStarted = false;
 	ScopeCamera::isFirstScopeRender = true;
 }
@@ -887,7 +775,7 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 	}
 
 
-	if (!ScopeCamera::isFirstSpawnNode) {
+	if (!ScopeCamera::hasFirstSpawnNode) {
 		if (!FirstSpawnDelay::delayStarted) {
 			// 开始延迟计时
 			FirstSpawnDelay::delayStarted = true;
@@ -902,7 +790,7 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 				ScopeCamera::CleanupScopeResources();
 				ScopeCamera::SetupScopeForWeapon(weaponInfo);
 				d3dHooks->SetScopeTexture((ID3D11DeviceContext*)RE::BSGraphics::RendererData::GetSingleton()->context);
-				ScopeCamera::isFirstSpawnNode = true;
+				ScopeCamera::hasFirstSpawnNode = true;
 				logger::warn("FirstSpawn Finish");
 			}
 		}
@@ -959,17 +847,17 @@ void RegisterHooks()
 	CreateAndEnableHook((LPVOID)DrawWorld_Begin_Ori.address(), &hkBegin,
 		reinterpret_cast<LPVOID*>(&g_BeginOriginal), "Begin");
 
-	/*CreateAndEnableHook((LPVOID)Main_DrawWorldAndUI_Ori.address(), &hkMain_DrawWorldAndUI,
-		reinterpret_cast<LPVOID*>(&g_DrawWorldAndUIOriginal), "Main_DrawWorldAndUI");*/
+	CreateAndEnableHook((LPVOID)Main_DrawWorldAndUI_Ori.address(), &hkMain_DrawWorldAndUI,
+		reinterpret_cast<LPVOID*>(&g_DrawWorldAndUIOriginal), "Main_DrawWorldAndUI");
 
 	//CreateAndEnableHook((LPVOID)BSCullingGroup_Process_Ori.address(), &hkBSCullingGroup_Process,
 	//	reinterpret_cast<LPVOID*>(&g_BSCullingGroupProcessOriginal), "BSCullingGroup_Process");
 
-	//CreateAndEnableHook((LPVOID)DrawWorld_MainAccum_Ori.address(), &hkMainAccum,
-	//	reinterpret_cast<LPVOID*>(&g_MainAccumOriginal), "MainAccum");
+	CreateAndEnableHook((LPVOID)DrawWorld_MainAccum_Ori.address(), &hkMainAccum,
+		reinterpret_cast<LPVOID*>(&g_MainAccumOriginal), "MainAccum");
 
-	/*CreateAndEnableHook((LPVOID)DrawWorld_MainRenderSetup_Ori.address(), &hkMainRenderSetup,
-		reinterpret_cast<LPVOID*>(&g_MainRenderSetupOriginal), "MainRenderSetup");*/
+	CreateAndEnableHook((LPVOID)DrawWorld_MainRenderSetup_Ori.address(), &hkMainRenderSetup,
+		reinterpret_cast<LPVOID*>(&g_MainRenderSetupOriginal), "MainRenderSetup");
 
 	/*CreateAndEnableHook((LPVOID)DrawWorld_OpaqueWireframe_Ori.address(), &hkOpaqueWireframe,
 		reinterpret_cast<LPVOID*>(&g_OpaqueWireframeOriginal), "OpaqueWireframe");*/
@@ -995,40 +883,38 @@ void RegisterHooks()
 	/*CreateAndEnableHook((LPVOID)RTM_CreateRenderTarget_Ori.address(), &hkRTManager_CreateRenderTarget,
 		reinterpret_cast<LPVOID*>(&g_RTManagerCreateRenderTargetOriginal), "RTManager_CreateRenderTarget");*/
 
-	/*CreateAndEnableHook((LPVOID)BSBatchRenderer_Draw_Ori.address(), &hkBSBatchRenderer_Draw,
-		reinterpret_cast<LPVOID*>(&g_originalBSBatchRendererDraw), "BSBatchRenderer_Draw");*/
-
-	//CreateAndEnableHook((LPVOID)MapDynamicTriShapeDynamicData_Ori.address(), &hkMapDynamicTriShapeDynamicData,
-	//	reinterpret_cast<LPVOID*>(&g_MapDynamicTriShapeDynamicData), "MapDynamicTriShapeDynamicData");
-
-
-	/* CreateAndEnableHook((LPVOID)BSStreamLoad_Ori.address(), &hkBSStreamLoad,
-		reinterpret_cast<LPVOID*>(&g_BSStreamLoad), "BSStreamLoad");*/
-	 
+	// 重新启用BSBatchRenderer_Draw hook，在其中添加剔除逻辑
+	CreateAndEnableHook((LPVOID)BSBatchRenderer_Draw_Ori.address(), &hkBSBatchRenderer_Draw,
+		reinterpret_cast<LPVOID*>(&g_originalBSBatchRendererDraw), "BSBatchRenderer_Draw");
 	 
 	 CreateAndEnableHook((LPVOID)PCUpdateMainThread_Ori.address(), &hkPCUpdateMainThread,
 		reinterpret_cast<LPVOID*>(&g_PCUpdateMainThread), "PCUpdateMainThread");
 
-	 /*CreateAndEnableHook((LPVOID)MainPreRender_Ori.address(), &hkMainPreRender,
-		 reinterpret_cast<LPVOID*>(&g_MainPreRender), "MainPreRender");*/
+	 CreateAndEnableHook((LPVOID)MainPreRender_Ori.address(), &hkMainPreRender,
+		 reinterpret_cast<LPVOID*>(&g_MainPreRender), "MainPreRender");
 
 	 CreateAndEnableHook((LPVOID)BSCullingGroupAdd_Ori.address(), &hkBSCullingGroupAdd,
 		 reinterpret_cast<LPVOID*>(&g_BSCullingGroupAdd), "BSCullingGroupAdd");
 
+	 CreateAndEnableHook((LPVOID)BSCullingGroup_SetCompoundFrustum_Ori.address(), &hkBSCullingGroup_SetCompoundFrustum,
+		 reinterpret_cast<LPVOID*>(&g_BSCullingGroup_SetCompoundFrustum), "BSCullingGroup_SetCompoundFrustum");
+	 
+	 
+	 CreateAndEnableHook((LPVOID)DrawWorld_Move1stPersonToOrigin_Ori.address(), &hkDrawWorld_Move1stPersonToOrigin,
+		 reinterpret_cast<LPVOID*>(&g_DrawWorld_Move1stPersonToOrigin), "DrawWorld_Move1stPersonToOrigin");
+
 	 /* CreateAndEnableHook((LPVOID)DrawTriShape_Ori.address(), &hkDrawTriShape,
 		  reinterpret_cast<LPVOID*>(&g_DrawTriShape), "DrawTriShape");*/
-
 
 	  //F4SE::Trampoline& trampoline = F4SE::GetTrampoline();
 	  //g_DrawIndexed = (FnDrawIndexed)trampoline.write_branch<5>(DrawIndexed_Ori.address(), reinterpret_cast<uintptr_t>(hkDrawIndexed));
 	  //
 
-	  /*CreateAndEnableHook((LPVOID)DrawIndexed_Ori.address(), &hkDrawIndexed,
-		  reinterpret_cast<LPVOID*>(&g_DrawIndexed), "DrawIndexed");*/
-
 	 REL::Relocation<std::uintptr_t> vtable_TAA(RE::ImageSpaceEffectTemporalAA::VTABLE[0]);
-	 const auto oldFuncTAA = vtable_TAA.write_vfunc(1, reinterpret_cast<std::uintptr_t>(&hkHookTAA));
-	 g_TAA = decltype(&hkHookTAA)(oldFuncTAA);
+	 const auto oldFuncTAA = vtable_TAA.write_vfunc(1, reinterpret_cast<std::uintptr_t>(&hkTAA));
+	 g_TAA = decltype(&hkTAA)(oldFuncTAA);
+
+	
 
 	logger::info("Hooks registered successfully");
 }
@@ -1061,7 +947,7 @@ DWORD WINAPI InitThread(HMODULE hModule)
 
     isScopCamReady = ThroughScope::ScopeCamera::Initialize();
 	isRenderReady = ThroughScope::RenderUtilities::Initialize();
-
+	ggg_ScopeCamera = ThroughScope::ScopeCamera::GetScopeCamera();
 
     logger::info("ThroughScope initialization completed");
     return 0;
@@ -1077,6 +963,30 @@ void InitializePlugin()
 	
     // Start initialization thread for components that need the game world
     HANDLE hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)InitThread, (HMODULE)REX::W32::GetCurrentModule(), 0, NULL);
+
+	originalCamera1stviewFrustum.bottom = -0.84f;
+	originalCamera1stviewFrustum.top = 0.84f;
+	originalCamera1stviewFrustum.left = 0.472f;
+	originalCamera1stviewFrustum.right = -0.472f;
+	originalCamera1stviewFrustum.nearPlane = 10;
+	originalCamera1stviewFrustum.farPlane = 10240.0f;
+
+	float scopeViewSize = 0.125f;
+	scopeFrustum.left = -scopeViewSize * 2;
+	scopeFrustum.right = scopeViewSize * 2;
+	scopeFrustum.top = scopeViewSize;
+	scopeFrustum.bottom = -scopeViewSize;
+	scopeFrustum.nearPlane = 15;
+	scopeFrustum.farPlane = 353840.0f;
+	scopeFrustum.ortho = false;
+
+	scopeViewPort.left = 0.4f;
+	scopeViewPort.right = 0.6f;
+	scopeViewPort.top = 0.6f;
+	scopeViewPort.bottom = 0.4f;
+
+	originalFrustum = originalCamera1stviewFrustum;
+
 }
 
 // F4SE Query plugin

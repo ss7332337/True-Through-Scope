@@ -1439,20 +1439,10 @@ namespace ThroughScope {
 		newCBData.enableChromaticAberration = s_EnableChromaticAberration;
 
 		// 检查是否需要更新常量缓冲区
-		// 为了确保实时调整的响应性，我们添加强制更新机制
 		static int s_ForceUpdateCounter = 0;
 		bool forceUpdate = (s_ForceUpdateCounter++ % 60 == 0); // 每60帧强制更新一次
 		bool needsUpdate = s_CachedConstantBufferData.NeedsUpdate(newCBData);
-		
-		// 调试日志（可选）
-#ifdef _DEBUG
-		static int s_LogCounter = 0;
-		if (s_LogCounter++ % 300 == 0) { // 每5秒记录一次
-			logger::info("ConstantBuffer Update - NeedsUpdate: {}, ForceUpdate: {}, SphericalDistortion: {} (enabled: {})", 
-				needsUpdate, forceUpdate, s_SphericalDistortionStrength, s_EnableSphericalDistortion);
-		}
-#endif
-		
+
 		if (needsUpdate || forceUpdate) {
 			D3D11_MAPPED_SUBRESOURCE mappedResource;
 			HRESULT hr = pContext->Map(constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);

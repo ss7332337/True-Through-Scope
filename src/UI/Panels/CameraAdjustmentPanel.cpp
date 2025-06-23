@@ -973,7 +973,4 @@ namespace ThroughScope
 		// 强制更新常量缓冲区以确保实时响应
 		D3DHooks::ForceConstantBufferUpdate();
 	}
-
-	
-
 }

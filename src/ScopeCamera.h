@@ -49,12 +49,12 @@ namespace ThroughScope
 		static RE::TESFormID s_EquippedWeaponFormID;
 		static RE::NiNode* s_CurrentScopeNode;
 
-		static bool isFirstSpawnNode;
+		static bool hasFirstSpawnNode;
 		static bool isDelayStarted;
 		static bool isFirstScopeRender;
 		static int s_enableThermalVision;
 		static int s_enableNightVision;
-        
+
     private:
         // Camera objects
         static RE::NiCamera* s_ScopeCamera;

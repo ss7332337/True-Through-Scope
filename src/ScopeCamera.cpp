@@ -36,7 +36,7 @@ namespace ThroughScope
     bool ScopeCamera::s_OriginalRenderDecals = false;
     bool ScopeCamera::s_IsRenderingForScope = false;
 
-	bool ScopeCamera::isFirstSpawnNode = false;
+	bool ScopeCamera::hasFirstSpawnNode = false;
 	bool ScopeCamera::isDelayStarted = false;
 	bool ScopeCamera::isFirstScopeRender = true;
 
@@ -102,6 +102,9 @@ namespace ThroughScope
 	void ScopeCamera::CleanupScopeResources()
 	{
 		if (s_CurrentScopeNode) {
+			if (s_CurrentScopeNode->DecRefCount() == 0) {
+				s_CurrentScopeNode->DeleteThis();
+			}
 			s_CurrentScopeNode = nullptr;
 		}
 		
