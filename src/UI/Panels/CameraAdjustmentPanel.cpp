@@ -151,7 +151,34 @@ namespace ThroughScope
 			comboLabel = LOC("camera.config.base_weapon");
 		} else if (createOption <= static_cast<int>(weaponInfo.availableMods.size())) {
 			auto modForm = weaponInfo.availableMods[createOption - 1];
-			comboLabel = fmt::format(fmt::runtime(LOC("camera.config.modification")), createOption, modForm->GetFormEditorID());
+
+			// 使用相同的EditorID获取逻辑（简化版）
+			std::string editorIdStr;
+			const char* editorID = modForm->GetFormEditorID();
+			if (editorID && strlen(editorID) > 0) {
+				editorIdStr = editorID;
+			} else {
+				// 尝试反查全局EditorID映射
+				try {
+					auto [editorIDMap, lock] = RE::TESForm::GetAllFormsByEditorID();
+					if (editorIDMap) {
+						// 注意：这里先不使用锁，如果需要可以添加
+						for (auto& [key, value] : *editorIDMap) {
+							if (value == modForm) {
+								editorIdStr = key.c_str();
+								break;
+							}
+						}
+					}
+				} catch (...) {
+					// 如果访问失败，继续使用FormID
+				}
+				if (editorIdStr.empty()) {
+					editorIdStr = fmt::format("Mod[{:08X}]", modForm->GetLocalFormID());
+				}
+			}
+
+			comboLabel = fmt::format(fmt::runtime(LOC("camera.config.modification")), createOption, editorIdStr);
 		} else {
 			comboLabel = "Invalid Selection";
 			createOption = 0;  // Force reset to base weapon
@@ -167,8 +194,51 @@ namespace ThroughScope
 			// Modification options
 			for (size_t i = 0; i < weaponInfo.availableMods.size(); i++) {
 				auto modForm = weaponInfo.availableMods[i];
+				// 获取EditorID的替代方法
+				auto getEditorID = [](RE::TESForm* form) -> std::string {
+					if (!form) return "<null>";
+
+					// 方法1: 使用标准GetFormEditorID
+					const char* editorID = form->GetFormEditorID();
+					if (editorID && strlen(editorID) > 0) {
+						return std::string(editorID);
+					}
+
+					//// 方法2: 通过全局EditorID映射反查
+					//try {
+					//	auto [editorIDMap, lock] = RE::TESForm::GetAllFormsByEditorID();
+					//	if (editorIDMap) {
+					//		// 注意：这里先不使用锁，如果需要可以添加
+					//		for (auto& [key, value] : *editorIDMap) {
+					//			if (value == form) {
+					//				return std::string(key.c_str());
+					//			}
+					//		}
+					//	}
+					//} catch (...) {
+					//	// 如果访问失败，继续下一个方法
+					//}
+
+					// 方法3: 对于BGSMod类型，尝试直接访问formEditorID成员
+					if (auto modAttach = form->As<RE::BGSMod::Attachment::Mod>()) {
+						modAttach->GetFormEditorID();
+					}
+
+					//// 方法4: 如果是BGSKeyword类型，直接访问formEditorID
+					//if (auto keyword = form->As<RE::BGSKeyword>()) {
+					//	if (keyword->formEditorID.c_str() && strlen(keyword->formEditorID.c_str()) > 0) {
+					//		return std::string(keyword->formEditorID.c_str());
+					//	}
+					//}
+
+					return fmt::format("<NoEditorID[{:08X}]>", form->GetLocalFormID());
+				};
+
+				std::string editorIdStr = getEditorID(modForm);
+				logger::info("Available mod[{:08X}] EditorID: {}", modForm->GetLocalFormID(), editorIdStr);
+
 				std::string label = fmt::format(fmt::runtime(LOC("camera.config.modification")),
-					i + 1, modForm->GetFormEditorID());
+					i + 1, editorIdStr);
 
 				if (ImGui::Selectable(label.c_str(), createOption == static_cast<int>(i + 1))) {
 					createOption = static_cast<int>(i + 1);
@@ -854,6 +924,8 @@ namespace ThroughScope
 				return false;
 			}
 
+			// 设置节点名称，确保与渲染流程中的查找一致
+			loadedNode->name = "TTSNode";
 			ScopeCamera::s_CurrentScopeNode = loadedNode;
 
 			// 设置初始变换

@@ -244,6 +244,8 @@ namespace ThroughScope
 				return false;
 			}
 
+			// 设置节点名称，确保与渲染流程中的查找一致
+			loadedNode->name = "TTSNode";
 			ScopeCamera::s_CurrentScopeNode = loadedNode;
 
 			// 设置变换

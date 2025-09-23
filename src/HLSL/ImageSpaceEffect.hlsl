@@ -28,7 +28,7 @@ SamplerState sampler3 : register(s3);
 float4 main(VSOutput input) : SV_TARGET
 {
     float2 uv = input.texCoord;
-    
+
     // 0-1: 采样颜色纹理和遮罩纹理
     float3 color1 = texture1.Sample(sampler1, uv).xyz;
     float mask = texture3.Sample(sampler3, uv).w;

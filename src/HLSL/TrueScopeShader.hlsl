@@ -311,6 +311,7 @@ float4 sampleWithSphericalDistortionAndChromatic(Texture2D tex, SamplerState sam
 float4 main(PS_INPUT input) : SV_TARGET
 {
     float2 texCoord = input.position.xy / float2(screenWidth, screenHeight);
+
     float2 aspectCorrectTex = aspect_ratio_correction(texCoord);
 
     float3 virDir = scopePosition - cameraPosition;
@@ -360,7 +361,7 @@ float4 main(PS_INPUT input) : SV_TARGET
     
     // 应用Color Grading色彩分级（替代原来的亮度提升）
     color = applyColorGrading(color);
-    color *= 1.25f;
+    color *= 1.3f;
     
     // 计算夜视和热成像效果（无分支）
     float4 nightVisionColor = applyNightVision(color, texCoord);

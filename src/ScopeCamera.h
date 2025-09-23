@@ -26,6 +26,7 @@ namespace ThroughScope
 		static void SetupScopeForWeapon(const DataPersistence::WeaponInfo& weaponInfo);
 		static int GetScopeNodeIndexCount();
 		static void CleanupScopeResources();
+		static void RestoreZoomDataForCurrentWeapon();  // 恢复ZoomData的方法
         // Get target FOV
         static float GetTargetFOV() { return s_TargetFOV; }
 		static void SetTargetFOV(float fov)
@@ -55,6 +56,10 @@ namespace ThroughScope
 		static int s_enableThermalVision;
 		static int s_enableNightVision;
 
+		// ZoomData管理
+		static void SetZoomDataUserAdjusting(bool adjusting) { s_IsUserAdjustingZoomData = adjusting; }
+		static bool IsUserAdjustingZoomData() { return s_IsUserAdjustingZoomData; }
+
     private:
         // Camera objects
         static RE::NiCamera* s_ScopeCamera;
@@ -69,6 +74,7 @@ namespace ThroughScope
         static bool s_OriginalFirstPerson;
         static bool s_OriginalRenderDecals;
         static bool s_IsRenderingForScope;
+		static bool s_IsUserAdjustingZoomData;  // 标记用户是否正在调整ZoomData
 
 		
 		static RE::BGSKeyword* an_45;

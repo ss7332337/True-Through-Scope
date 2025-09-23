@@ -67,6 +67,8 @@ namespace ThroughScope
 				auto objectInstanceExtra = extraDataList->GetByType<RE::BGSObjectInstanceExtra>();
 
 				if (objectInstanceExtra) {
+					if (objectInstanceExtra->values == NULL)
+						continue;
 					auto indexData = objectInstanceExtra->GetIndexData();
 					if (!indexData.empty()) {
 						// Collect available modifications
@@ -174,7 +176,7 @@ namespace ThroughScope
 			const auto& cameraJson = configJson.value("camera", nlohmann::json::object());
 			config.cameraAdjustments.deltaPosX = getValue(cameraJson, "deltaPosX", 0.0f);
 			config.cameraAdjustments.deltaPosY = getValue(cameraJson, "deltaPosY", 0.0f);
-			config.cameraAdjustments.deltaPosZ = getValue(cameraJson, "deltaPosZ", 0.0f);
+			config.cameraAdjustments.deltaPosZ = getValue(cameraJson, "deltaPosZ", 7.0f);
 
 			// Handle rotation array
 			if (cameraJson.contains("deltaRot") && cameraJson["deltaRot"].is_array() && cameraJson["deltaRot"].size() == 3) {
@@ -184,7 +186,7 @@ namespace ThroughScope
 			} else {
 				config.cameraAdjustments.deltaRot[0] = 0.0f;
 				config.cameraAdjustments.deltaRot[1] = 0.0f;
-				config.cameraAdjustments.deltaRot[2] = 0.0f;
+				config.cameraAdjustments.deltaRot[2] = 7.0f;
 			}
 
 			config.cameraAdjustments.deltaScale = getValue(cameraJson, "deltaScale", 1.0f);
@@ -192,9 +194,9 @@ namespace ThroughScope
 			// Load parallax settings with defaults
 			const auto& parallaxJson = configJson.value("parallax", nlohmann::json::object());
 			config.parallaxSettings.relativeFogRadius = getValue(parallaxJson, "relativeFogRadius", 0.5f);
-			config.parallaxSettings.scopeSwayAmount = getValue(parallaxJson, "scopeSwayAmount", 0.1f);
-			config.parallaxSettings.maxTravel = getValue(parallaxJson, "maxTravel", 0.05f);
-			config.parallaxSettings.radius = getValue(parallaxJson, "radius", 0.3f);
+			config.parallaxSettings.scopeSwayAmount = getValue(parallaxJson, "scopeSwayAmount", 0.5f);
+			config.parallaxSettings.maxTravel = getValue(parallaxJson, "maxTravel", 0.5f);
+			config.parallaxSettings.radius = getValue(parallaxJson, "radius", 0.5f);
 
 			// Load scope settings with defaults
 			const auto& scopeJson = configJson.value("scopeSettings", nlohmann::json::object());

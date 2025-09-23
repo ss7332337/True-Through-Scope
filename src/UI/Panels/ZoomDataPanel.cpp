@@ -1,4 +1,5 @@
 #include "ZoomDataPanel.h"
+#include "../../ScopeCamera.h"
 
 namespace ThroughScope
 {
@@ -77,7 +78,12 @@ namespace ThroughScope
         RenderSectionHeader(LOC("zoom.settings_title"));
 
         // FOV Multiplier
-        ImGui::SliderFloat(LOC("zoom.fov_multiplier"), &m_CurrentValues.fovMult, 0.1f, 5.0f, "%.2f");
+        if (ImGui::SliderFloat(LOC("zoom.fov_multiplier"), &m_CurrentValues.fovMult, 0.1f, 5.0f, "%.2f")) {
+            ScopeCamera::SetZoomDataUserAdjusting(true);
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            ScopeCamera::SetZoomDataUserAdjusting(false);
+        }
         RenderHelpTooltip(LOC("tooltip.fov_multiplier"));
 
         // Position Offsets
@@ -87,11 +93,26 @@ namespace ThroughScope
             // Left column - Sliders
             ImGui::Text(LOC("zoom.precise_adjustment"));
             ImGui::SetNextItemWidth(-1);
-            ImGui::SliderFloat("##X", &m_CurrentValues.offsetX, -50.0f, 50.0f, "X: %.3f");
+            if (ImGui::SliderFloat("##X", &m_CurrentValues.offsetX, -50.0f, 50.0f, "X: %.3f")) {
+                ScopeCamera::SetZoomDataUserAdjusting(true);
+            }
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                ScopeCamera::SetZoomDataUserAdjusting(false);
+            }
             ImGui::SetNextItemWidth(-1);
-            ImGui::SliderFloat("##Y", &m_CurrentValues.offsetY, -50.0f, 50.0f, "Y: %.3f");
+            if (ImGui::SliderFloat("##Y", &m_CurrentValues.offsetY, -50.0f, 50.0f, "Y: %.3f")) {
+                ScopeCamera::SetZoomDataUserAdjusting(true);
+            }
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                ScopeCamera::SetZoomDataUserAdjusting(false);
+            }
             ImGui::SetNextItemWidth(-1);
-            ImGui::SliderFloat("##Z", &m_CurrentValues.offsetZ, -50.0f, 50.0f, "Z: %.3f");
+            if (ImGui::SliderFloat("##Z", &m_CurrentValues.offsetZ, -50.0f, 50.0f, "Z: %.3f")) {
+                ScopeCamera::SetZoomDataUserAdjusting(true);
+            }
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                ScopeCamera::SetZoomDataUserAdjusting(false);
+            }
 
             ImGui::NextColumn();
 
@@ -212,10 +233,16 @@ namespace ThroughScope
 
 		if (weaponInfo.instanceData && weaponInfo.instanceData->zoomData)
 		{
+			// 设置标志表示用户正在调整
+			ScopeCamera::SetZoomDataUserAdjusting(true);
+
 			weaponInfo.instanceData->zoomData->zoomData.fovMult = m_CurrentValues.fovMult;
 			weaponInfo.instanceData->zoomData->zoomData.cameraOffset.x = m_CurrentValues.offsetX;
 			weaponInfo.instanceData->zoomData->zoomData.cameraOffset.y = m_CurrentValues.offsetY;
 			weaponInfo.instanceData->zoomData->zoomData.cameraOffset.z = m_CurrentValues.offsetZ;
+
+			// 应用完成后清除标志
+			ScopeCamera::SetZoomDataUserAdjusting(false);
 		}
     }
 }

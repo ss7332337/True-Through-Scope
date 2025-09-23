@@ -189,7 +189,7 @@ namespace ThroughScope::Utilities
 
 		// Check if scope node exists
 		auto scopeNode = weaponNode->IsNode() ?
-		                     static_cast<RE::NiNode*>(weaponNode)->GetObjectByName("ScopeNode") :
+		                     static_cast<RE::NiNode*>(weaponNode)->GetObjectByName("TTSNode") :
 		                     nullptr;
 
 		if (scopeNode) {
@@ -256,8 +256,9 @@ namespace ThroughScope::Utilities
 								auto modForm = RE::TESForm::GetFormByID(modData.objectID);
 								auto modFormLocal = modForm->GetLocalFormID();
 								const char* modFormStr = modForm->GetFormEditorID();
-								auto modFilename = modForm->GetFile()->filename;
-								logger::info("  Mod[{:08X}], EditorID: {}, FileName: {}", modFormLocal, modFormStr, modFilename);
+								std::string editorIdStr = (modFormStr && strlen(modFormStr) > 0) ? modFormStr : "<No EditorID>";
+								auto modFilename = modForm->GetFile() ? modForm->GetFile()->filename : "<Unknown File>";
+								logger::info("  Mod[{:08X}], EditorID: {}, FileName: {}", modFormLocal, editorIdStr, modFilename);
 							}
 						} else {
 							logger::info("No modifications found in index data");

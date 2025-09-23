@@ -8,6 +8,7 @@
 #include <NiFLoader.h>
 #include <string>
 #include <thread>
+#include <chrono>
 #include <Windows.h>
 #include <winternl.h>
 #include <cmath>
@@ -53,6 +54,7 @@ REL::Relocation<uintptr_t> BSCullingGroup_Process_Ori{ REL::ID(1147875) };
 REL::Relocation<uintptr_t> Renderer_CreateRenderTarget_Ori{ REL::ID(425575) };
 REL::Relocation<uintptr_t> RTM_CreateRenderTarget_Ori{ REL::ID(43433) };
 
+REL::Relocation<uintptr_t> DrawWorld_LightUpdate_Ori{ REL::ID(918638) };  // DrawWorld::LightUpdate
 REL::Relocation<uintptr_t> Renderer_DoZPrePass_Ori{ REL::ID(1491502) };
 REL::Relocation<uintptr_t> BSGraphics_RenderZPrePass_Ori{ REL::ID(901559) };
 REL::Relocation<uintptr_t> BSGraphics_RenderAlphaTestZPrePass_Ori{ REL::ID(767228) };
@@ -81,9 +83,8 @@ REL::Relocation<uintptr_t> DrawWorld_Move1stPersonToOrigin_Ori{ REL::ID(76526) }
 #pragma endregion
 
 #pragma region Pointer
-REL::Relocation<uintptr_t**> ptr_DrawWorldShadowNode{ REL::ID(1327069) };
+REL::Relocation<ShadowSceneNode**> ptr_DrawWorldShadowNode{ REL::ID(1327069) };  // DrawWorld::pShadowSceneNode
 REL::Relocation<NiAVObject**> ptr_DrawWorld1stPerson{ REL::ID(1491228) };
-REL::Relocation<BSShaderManagerState**> ptr_BSShaderManager_State{ REL::ID(1327069) };
 REL::Relocation<bool*> ptr_DrawWorld_b1stPersonEnable{ REL::ID(922366) };
 REL::Relocation<bool*> ptr_DrawWorld_b1stPersonInWorld{ REL::ID(34473) };
 REL::Relocation<BSShaderAccumulator**> ptr_Draw1stPersonAccum{ REL::ID(1430301) };
@@ -120,6 +121,7 @@ static REL::Relocation<BSShaderManagerState**> BSM_ST{ REL::ID(1327069) };
 
 #pragma endregion
 
+typedef void (*FnDrawWorldLightUpdate)(uint64_t);  // DrawWorld::LightUpdate
 typedef void (*DoZPrePassOriginalFuncType)(uint64_t, NiCamera*, NiCamera*, float, float, float, float);
 typedef void (*RenderZPrePassOriginalFuncType)(RendererShadowState*, ZPrePassDrawData*, unsigned __int64*, unsigned __int16*, unsigned __int16*);
 typedef void (*RenderAlphaTestZPrePassOriginalFuncType)(RendererShadowState*, AlphaTestZPrePassDrawData*, unsigned __int64*, unsigned __int16*, unsigned __int16*, ID3D11SamplerState**);
@@ -148,7 +150,7 @@ typedef void (*PCUpdateMainThread)(PlayerCharacter*);
 typedef void (*FnDrawTriShape)(BSGraphics::Renderer* thisPtr, BSGraphics::TriShape* apTriShape, unsigned int auiStartIndex, unsigned int auiNumTriangles);
 typedef void(__fastcall* FnDrawIndexed)(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
 typedef void(__fastcall* FnMainPreRender)(Main* thisptr, int auiDestination);
-typedef void (*FnTAA)(ImageSpaceEffectTemporalAA*, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param);
+typedef void (__fastcall *FnTAA)(ImageSpaceEffectTemporalAA*, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param);
 typedef void (*FnBSCullingGroupAdd)(BSCullingGroup* ,NiAVObject* apObj,const NiBound* aBound,const unsigned int aFlags);
 typedef void (*FnBSShaderAccumulator_RenderBatches)(BSShaderAccumulator*, int, bool, int);
 typedef void (*FnBSCullingGroup_SetCompoundFrustum)(BSCullingGroup*, BSCompoundFrustum*);
@@ -156,6 +158,7 @@ typedef void (*FnDrawWorld_Move1stPersonToOrigin)(uint64_t);
 
 
 	// 存储原始函数的指针
+FnDrawWorldLightUpdate g_DrawWorldLightUpdateOriginal = nullptr;
 DoZPrePassOriginalFuncType g_pDoZPrePassOriginal = nullptr;
 RenderZPrePassOriginalFuncType g_RenderZPrePassOriginal = nullptr;
 RenderAlphaTestZPrePassOriginalFuncType g_RenderAlphaTestZPrePassOriginal = nullptr;
@@ -315,6 +318,26 @@ void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld);
 
 void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param)
 {
+	// 调试日志 - 验证函数是否被调用
+	static bool firstCall = true;
+	static int callCount = 0;
+	callCount++;
+
+	if (firstCall) {  // 第一次调用或每100次输出一次
+		logger::info("hkTAA called! Count: {}, thisPtr: {:X}, geometry: {:X}, param: {:X}",
+		            callCount,
+		            reinterpret_cast<uintptr_t>(thisPtr),
+		            reinterpret_cast<uintptr_t>(a_geometry),
+		            reinterpret_cast<uintptr_t>(a_param));
+		firstCall = false;
+	}
+
+	// 检查原始函数指针是否有效
+	if (!g_TAA) {
+		logger::error("g_TAA is null! Cannot call original function");
+		return;
+	}
+
 	// 在执行TAA之前捕获LUT纹理
 	ID3D11DeviceContext* context = d3dHooks->GetContext();
 	if (context && D3DHooks::IsEnableRender()) {
@@ -442,6 +465,37 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	*ptr_DrawWorldCamera = scopeCamera;
 	*ptr_DrawWorldVisCamera = scopeCamera;
 
+	// 同步光照累积器的眼睛位置，确保全方向光源的距离判断正确
+	// 注：DrawWorld::LightUpdate已经在hkDrawWorld_LightUpdate中被跳过了
+	auto pDrawWorldAccum = *ptr_DrawWorldAccum;
+	auto p1stPersonAccum = *ptr_Draw1stPersonAccum;
+	auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
+
+	// 保存原始的眼睛位置以便后续恢复
+	NiPoint3 originalAccumEyePos;
+	NiPoint3 originalShadowNodeEyePos;
+
+	if (pDrawWorldAccum) {
+		originalAccumEyePos = pDrawWorldAccum->kEyePosition;
+		// 使用原始相机位置进行光照计算
+		pDrawWorldAccum->kEyePosition.x = DrawWorldCamera->world.translate.x;
+		pDrawWorldAccum->kEyePosition.y = DrawWorldCamera->world.translate.y;
+		pDrawWorldAccum->kEyePosition.z = DrawWorldCamera->world.translate.z;
+	}
+	if (p1stPersonAccum) {
+		p1stPersonAccum->kEyePosition.x = DrawWorldCamera->world.translate.x;
+		p1stPersonAccum->kEyePosition.y = DrawWorldCamera->world.translate.y;
+		p1stPersonAccum->kEyePosition.z = DrawWorldCamera->world.translate.z;
+	}
+
+	// 同步ShadowSceneNode的眼睛位置
+	if (pShadowSceneNode) {
+		originalShadowNodeEyePos = pShadowSceneNode->kEyePosition;
+		pShadowSceneNode->kEyePosition.x = DrawWorldCamera->world.translate.x;
+		pShadowSceneNode->kEyePosition.y = DrawWorldCamera->world.translate.y;
+		pShadowSceneNode->kEyePosition.z = DrawWorldCamera->world.translate.z;
+	}
+
 	// 8. 设置culling process
 	//auto geomListCullProc0 = *DrawWorldGeomListCullProc0;
 	//auto geomListCullProc1 = *DrawWorldGeomListCullProc1;
@@ -470,6 +524,15 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	g_RenderPreUIOriginal(savedDrawWorld);  //第二次渲染输出到临时RenderTarget，会应用frustum剔除
 
 	ScopeCamera::SetRenderingForScope(false);
+
+	// 恢复原始的眼睛位置
+	if (pDrawWorldAccum) {
+		pDrawWorldAccum->kEyePosition = originalAccumEyePos;
+	}
+	if (pShadowSceneNode) {
+		pShadowSceneNode->kEyePosition = originalShadowNodeEyePos;
+	}
+
 	D3DPERF_EndEvent();
 
 	context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), mainRTTexture);
@@ -577,6 +640,55 @@ void __fastcall hkRenderAlphaTestZPrePass(BSGraphics::RendererShadowState* rshad
 	g_RenderAlphaTestZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode, aCurSamplerState);
 }
 
+void __fastcall hkDrawWorld_LightUpdate(uint64_t ptr_drawWorld)
+{
+	// 在瞄具渲染时，我们需要执行LightUpdate但要确保使用正确的相机位置
+	if (ScopeCamera::IsRenderingForScope()) {
+		auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
+		auto pDrawWorldAccum = *ptr_DrawWorldAccum;
+		auto mainCamera = *ptr_DrawWorldCamera;  // 这应该是瞄具相机
+
+		// 临时禁用光源列表更新，但仍执行其他必要的光照设置
+		bool originalDisableLightUpdate = false;
+		NiPoint3 originalEyePos;
+		NiPoint3 originalAccumEyePos;
+
+		if (pShadowSceneNode) {
+			originalDisableLightUpdate = pShadowSceneNode->bDisableLightUpdate;
+			originalEyePos = pShadowSceneNode->kEyePosition;
+			pShadowSceneNode->bDisableLightUpdate = true;
+
+			// 使用主相机位置进行光照计算
+			if (mainCamera) {
+				pShadowSceneNode->kEyePosition.x = mainCamera->world.translate.x;
+				pShadowSceneNode->kEyePosition.y = mainCamera->world.translate.y - 15.0f; // 补偿Y轴偏移
+				pShadowSceneNode->kEyePosition.z = mainCamera->world.translate.z;
+			}
+		}
+
+		if (pDrawWorldAccum && mainCamera) {
+			originalAccumEyePos = pDrawWorldAccum->kEyePosition;
+			pDrawWorldAccum->kEyePosition.x = mainCamera->world.translate.x;
+			pDrawWorldAccum->kEyePosition.y = mainCamera->world.translate.y - 15.0f; // 补偿Y轴偏移
+			pDrawWorldAccum->kEyePosition.z = mainCamera->world.translate.z;
+		}
+
+		// 执行光照更新（但光源列表不会被重新计算）
+		g_DrawWorldLightUpdateOriginal(ptr_drawWorld);
+
+		// 恢复原始状态
+		if (pShadowSceneNode) {
+			pShadowSceneNode->bDisableLightUpdate = originalDisableLightUpdate;
+			pShadowSceneNode->kEyePosition = originalEyePos;
+		}
+		if (pDrawWorldAccum) {
+			pDrawWorldAccum->kEyePosition = originalAccumEyePos;
+		}
+		return;
+	}
+	g_DrawWorldLightUpdateOriginal(ptr_drawWorld);
+}
+
 void __fastcall hkRenderer_DoZPrePass(uint64_t thisPtr, NiCamera* apFirstPersonCamera, NiCamera* apWorldCamera, float afFPNear, float afFPFar, float afNear, float afFar)
 {
 	if (ScopeCamera::IsRenderingForScope()) {
@@ -591,6 +703,8 @@ void __fastcall hkBSDistantObjectInstanceRenderer_Render(uint64_t thisPtr)
 }
 void __fastcall hkBSShaderAccumulator_ResetSunOcclusion(BSShaderAccumulator* thisPtr)
 {
+	// 瞄具渲染时的处理已经在hkRender_PreUI中完成了眼睛位置同步
+	// 这里直接执行原始函数即可
 	D3DEventNode(g_ResetSunOcclusionOriginal(thisPtr), L"hkBSShaderAccumulator_ResetSunOcclusion");
 }
 void __fastcall hkDecompressDepthStencilTarget(RenderTargetManager* thisPtr, int index)
@@ -666,6 +780,34 @@ void __fastcall hkDeferredPrePass(uint64_t ptr_drawWorld)
 
 void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
 {
+	// 在瞄具渲染时，需要确保使用正确的光照参数
+	if (ScopeCamera::IsRenderingForScope()) {
+		auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
+		auto pDrawWorldAccum = *ptr_DrawWorldAccum;
+		auto originalCamera = *ptr_DrawWorldCamera;
+
+		// 保存并同步关键的光照参数
+		NiPoint3 savedEyePos;
+		if (pShadowSceneNode) {
+			savedEyePos = pShadowSceneNode->kEyePosition;
+			// 使用主相机位置进行光照计算，确保光照强度和范围正确
+			if (originalCamera) {
+				pShadowSceneNode->kEyePosition.x = originalCamera->world.translate.x;
+				pShadowSceneNode->kEyePosition.y = originalCamera->world.translate.y;
+				pShadowSceneNode->kEyePosition.z = originalCamera->world.translate.z;
+			}
+		}
+
+		// 执行延迟光照渲染
+		g_DeferredLightsImplOriginal(ptr_drawWorld);
+
+		// 恢复原始位置
+		if (pShadowSceneNode) {
+			pShadowSceneNode->kEyePosition = savedEyePos;
+		}
+		return;
+	}
+
 	D3DEventNode(g_DeferredLightsImplOriginal(ptr_drawWorld), L"hkDeferredLightsImpl");
 }
 
@@ -708,6 +850,13 @@ void ResetFirstSpawnState()
 	ScopeCamera::hasFirstSpawnNode = false;
 	ScopeCamera::isDelayStarted = false;
 	ScopeCamera::isFirstScopeRender = true;
+
+	// 读档后立即恢复ZoomData
+	std::thread([]() {
+		std::this_thread::sleep_for(std::chrono::milliseconds(1000));  // 等待武器完全加载
+		ScopeCamera::RestoreZoomDataForCurrentWeapon();
+		logger::info("Restored ZoomData after load game");
+	}).detach();
 }
 
 void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
@@ -774,6 +923,9 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 		return g_PCUpdateMainThread(pChar);
 	}
 
+	// 定期检查并恢复ZoomData（防止游戏重置）
+	ScopeCamera::RestoreZoomDataForCurrentWeapon();
+
 
 	if (!ScopeCamera::hasFirstSpawnNode) {
 		if (!FirstSpawnDelay::delayStarted) {
@@ -792,6 +944,8 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 				d3dHooks->SetScopeTexture((ID3D11DeviceContext*)RE::BSGraphics::RendererData::GetSingleton()->context);
 				ScopeCamera::hasFirstSpawnNode = true;
 				logger::warn("FirstSpawn Finish");
+				// 确保ZoomData被正确设置
+				ScopeCamera::RestoreZoomDataForCurrentWeapon();
 			}
 		}
 		return g_PCUpdateMainThread(pChar);
@@ -823,17 +977,55 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 	g_PCUpdateMainThread(pChar);
 }
 
+// 延迟 hook TAA 的函数
+void DelayedTAAHook()
+{
+	static int retryCount = 0;
+	const int maxRetries = 5;
+
+	REL::Relocation<std::uintptr_t> TAAFunc(REL::ID(528052));
+	void* targetAddr = reinterpret_cast<void*>(TAAFunc.address());
+
+	// 检查 hook 是否已经生效
+	if (g_TAA != nullptr) {
+		logger::info("TAA hook already active");
+		return;
+	}
+
+	retryCount++;
+	logger::info("Attempting TAA hook (attempt {}/{})", retryCount, maxRetries);
+
+	// 尝试创建 hook
+	MH_STATUS status = MH_CreateHook(targetAddr,
+	                                 reinterpret_cast<void*>(&hkTAA),
+	                                 reinterpret_cast<void**>(&g_TAA));
+
+	if (status == MH_OK && MH_EnableHook(targetAddr) == MH_OK) {
+		logger::info("TAA hook successfully created on attempt {}", retryCount);
+	} else if (retryCount < maxRetries) {
+		// 如果失败且未达到最大重试次数，设置定时器重试
+		std::thread([targetAddr]() {
+			std::this_thread::sleep_for(std::chrono::seconds(2));
+			DelayedTAAHook();
+		}).detach();
+	} else {
+		logger::error("Failed to create TAA hook after {} attempts", maxRetries);
+	}
+}
+
 void RegisterHooks()
 {
 	logger::info("Registering hooks...");
 	using namespace Utilities;
 
+	CreateAndEnableHook((LPVOID)DrawWorld_LightUpdate_Ori.address(), &hkDrawWorld_LightUpdate, reinterpret_cast<LPVOID*>(&g_DrawWorldLightUpdateOriginal), "DrawWorld_LightUpdate");
+
 	CreateAndEnableHook((LPVOID)Renderer_DoZPrePass_Ori.address(), &hkRenderer_DoZPrePass, reinterpret_cast<LPVOID*>(&g_pDoZPrePassOriginal), "DoZPrePass");
 	CreateAndEnableHook((LPVOID)BSGraphics_RenderZPrePass_Ori.address(), &hkRenderZPrePass, reinterpret_cast<LPVOID*>(&g_RenderZPrePassOriginal), "RenderZPrePass");
 	/*CreateAndEnableHook((LPVOID)BSGraphics_RenderAlphaTestZPrePass_Ori.address(), &hkRenderAlphaTestZPrePass, reinterpret_cast<LPVOID*>(&g_RenderAlphaTestZPrePassOriginal), "RenderAlphaTestZPrePass");*/
 
-	/*CreateAndEnableHook((LPVOID)BSShaderAccumulator_ResetSunOcclusion_Ori.address(), &hkBSShaderAccumulator_ResetSunOcclusion,
-		reinterpret_cast<LPVOID*>(&g_ResetSunOcclusionOriginal), "ResetSunOcclusion");*/
+	CreateAndEnableHook((LPVOID)BSShaderAccumulator_ResetSunOcclusion_Ori.address(), &hkBSShaderAccumulator_ResetSunOcclusion,
+		reinterpret_cast<LPVOID*>(&g_ResetSunOcclusionOriginal), "ResetSunOcclusion");
 
 	/*CreateAndEnableHook((LPVOID)BSDistantObjectInstanceRenderer_Render_Ori.address(), &hkBSDistantObjectInstanceRenderer_Render,
 		reinterpret_cast<LPVOID*>(&g_BSDistantObjectInstanceRenderer_RenderOriginal), "BSDistantObjectInstanceRenderer_Render");*/
@@ -865,8 +1057,8 @@ void RegisterHooks()
 	/*CreateAndEnableHook((LPVOID)DrawWorld_DeferredPrePass_Ori.address(), &hkDeferredPrePass,
 		reinterpret_cast<LPVOID*>(&g_DeferredPrePassOriginal), "DeferredPrePass");*/
 
-	/*CreateAndEnableHook((LPVOID)DrawWorld_DeferredLightsImpl_Ori.address(), &hkDeferredLightsImpl,
-		reinterpret_cast<LPVOID*>(&g_DeferredLightsImplOriginal), "DeferredLightsImpl");*/
+	CreateAndEnableHook((LPVOID)DrawWorld_DeferredLightsImpl_Ori.address(), &hkDeferredLightsImpl,
+		reinterpret_cast<LPVOID*>(&g_DeferredLightsImplOriginal), "DeferredLightsImpl");
 
 	/*CreateAndEnableHook((LPVOID)DrawWorld_DeferredComposite_Ori.address(), &hkDeferredComposite,
 		reinterpret_cast<LPVOID*>(&g_DeferredCompositeOriginal), "DeferredComposite");*/
@@ -910,11 +1102,91 @@ void RegisterHooks()
 	  //g_DrawIndexed = (FnDrawIndexed)trampoline.write_branch<5>(DrawIndexed_Ori.address(), reinterpret_cast<uintptr_t>(hkDrawIndexed));
 	  //
 
-	 REL::Relocation<std::uintptr_t> vtable_TAA(RE::ImageSpaceEffectTemporalAA::VTABLE[0]);
-	 const auto oldFuncTAA = vtable_TAA.write_vfunc(1, reinterpret_cast<std::uintptr_t>(&hkTAA));
-	 g_TAA = decltype(&hkTAA)(oldFuncTAA);
+	// Hook TAA render function with conflict detection
+	REL::Relocation<std::uintptr_t> TAAFunc(REL::ID(528052));  // 直接使用函数ID
+	void* targetAddr = reinterpret_cast<void*>(TAAFunc.address());
 
-	
+	// 1. 检测是否已经被其他 mod hook 了
+	uint8_t* funcBytes = reinterpret_cast<uint8_t*>(targetAddr);
+	bool alreadyHooked = false;
+
+	// 检查常见的 hook 模式 (JMP, CALL 等)
+	if (funcBytes[0] == 0xE9 || funcBytes[0] == 0xFF || funcBytes[0] == 0x48) {
+		logger::warn("TAA function may already be hooked by another mod. First bytes: {:02X} {:02X} {:02X} {:02X} {:02X}",
+		            funcBytes[0], funcBytes[1], funcBytes[2], funcBytes[3], funcBytes[4]);
+		alreadyHooked = true;
+	}
+
+	// 2. 尝试移除已存在的 hook (如果有)
+	if (alreadyHooked) {
+		logger::info("Attempting to remove existing hook...");
+		MH_DisableHook(targetAddr);
+		MH_RemoveHook(targetAddr);
+	}
+
+	// 输出调试信息
+	logger::info("Target TAA function address: {:X}", reinterpret_cast<uintptr_t>(targetAddr));
+	logger::info("Hook function (hkTAA) address: {:X}", reinterpret_cast<uintptr_t>(&hkTAA));
+
+	// 3. 创建我们的 hook
+	MH_STATUS status = MH_CreateHook(targetAddr,
+	                                 reinterpret_cast<void*>(&hkTAA),
+	                                 reinterpret_cast<void**>(&g_TAA));
+
+	if (status != MH_OK) {
+		logger::error("Failed to create TAA hook. Status: {}", static_cast<int>(status));
+
+		// 4. 如果失败，尝试使用虚函数表 hook 作为后备方案
+		logger::info("Attempting vtable hook as fallback...");
+		REL::Relocation<std::uintptr_t> vtable_TAA(RE::ImageSpaceEffectTemporalAA::VTABLE[0]);
+		void** vtablePtr = reinterpret_cast<void**>(vtable_TAA.address());
+		void* originalFunc = vtablePtr[1];
+
+		// 检查虚函数表是否指向我们期望的函数
+		if (reinterpret_cast<uintptr_t>(originalFunc) == TAAFunc.address()) {
+			logger::info("Vtable points to expected function, modifying vtable directly");
+		} else {
+			logger::warn("Vtable function differs from expected. Vtable: {:X}, Expected: {:X}",
+			            reinterpret_cast<uintptr_t>(originalFunc), TAAFunc.address());
+		}
+
+		// 保存原始函数
+		g_TAA = reinterpret_cast<FnTAA>(originalFunc);
+
+		// 修改虚函数表
+		DWORD oldProtect;
+		if (VirtualProtect(&vtablePtr[1], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect)) {
+			vtablePtr[1] = reinterpret_cast<void*>(&hkTAA);
+			VirtualProtect(&vtablePtr[1], sizeof(void*), oldProtect, &oldProtect);
+			logger::info("TAA vtable hook applied successfully");
+		}
+	} else if (MH_EnableHook(targetAddr) != MH_OK) {
+		logger::error("Failed to enable TAA hook");
+	} else {
+		logger::info("TAA hook created successfully at address: {:X} (ID: 528052)", TAAFunc.address());
+		logger::info("Original function (g_TAA) points to: {:X}", reinterpret_cast<uintptr_t>(g_TAA));
+
+		// 5. 验证 hook 是否真正生效
+		funcBytes = reinterpret_cast<uint8_t*>(targetAddr);
+		logger::info("After hook - First bytes: {:02X} {:02X} {:02X} {:02X} {:02X}",
+		            funcBytes[0], funcBytes[1], funcBytes[2], funcBytes[3], funcBytes[4]);
+
+		// 验证 g_TAA 是否可调用
+		if (g_TAA) {
+			logger::info("g_TAA is valid and points to trampoline");
+		} else {
+			logger::error("g_TAA is null after successful hook!");
+		}
+	}
+
+	// 6. 如果初始 hook 失败，启动延迟 hook
+	if (g_TAA == nullptr) {
+		logger::warn("Initial TAA hook failed, starting delayed hook attempts...");
+		std::thread([]() {
+			std::this_thread::sleep_for(std::chrono::seconds(3));
+			DelayedTAAHook();
+		}).detach();
+	}
 
 	logger::info("Hooks registered successfully");
 }
@@ -1044,8 +1316,8 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_f4se, F4
 // F4SE Load plugin
 F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 {
-	SetConsoleOutputCP(CP_UTF8);
-	SetConsoleCP(CP_UTF8);
+	//SetConsoleOutputCP(CP_UTF8);
+	//SetConsoleCP(CP_UTF8);
 
 #ifdef _DEBUG
     while (!IsDebuggerPresent()) {

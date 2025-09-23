@@ -7,6 +7,9 @@
 
 #include "D3DHooks.h"
 
+#include <cmath>
+#include <map>
+
 namespace ThroughScope
 {
 	using namespace RE;
@@ -35,6 +38,7 @@ namespace ThroughScope
     bool ScopeCamera::s_OriginalFirstPerson = false;
     bool ScopeCamera::s_OriginalRenderDecals = false;
     bool ScopeCamera::s_IsRenderingForScope = false;
+	bool ScopeCamera::s_IsUserAdjustingZoomData = false;
 
 	bool ScopeCamera::hasFirstSpawnNode = false;
 	bool ScopeCamera::isDelayStarted = false;
@@ -102,12 +106,10 @@ namespace ThroughScope
 	void ScopeCamera::CleanupScopeResources()
 	{
 		if (s_CurrentScopeNode) {
-			if (s_CurrentScopeNode->DecRefCount() == 0) {
-				s_CurrentScopeNode->DeleteThis();
-			}
-			s_CurrentScopeNode = nullptr;
+			s_CurrentScopeNode->DecRefCount();
+			s_CurrentScopeNode = nullptr;  // 重要：设置为nullptr避免悬空指针
 		}
-		
+
 		// 清理D3D相关资源
 		ThroughScope::D3DHooks::CleanupStaticResources();
 		logger::info("Scope resources cleaned up successfully");
@@ -227,29 +229,36 @@ namespace ThroughScope
 		const auto& config = *weaponInfo.currentConfig;
 		logger::info("Setting up scope with model: {}", config.modelName);
 
+		// 保存原始ZoomData值，用于后续恢复
+		static std::map<TESFormID, BGSZoomData::Data> originalZoomDataCache;
+
 		// 1. 加载NIF模型（如果指定了modelName）
 		if (!config.modelName.empty()) {
 			std::string fullPath = "Meshes\\TTS\\ScopeShape\\" + config.modelName;
 			auto scopeNode = nifLoader->LoadNIF(fullPath.c_str());
-			s_CurrentScopeNode = scopeNode;
-			auto weaponnode = RE::PlayerCharacter::GetSingleton()->Get3D(true)->GetObjectByName("Weapon")->IsNode();
-			weaponnode->AttachChild(scopeNode, false);
-			scopeNode->local.translate = RE::NiPoint3(0, 0, 10);
-			scopeNode->local.rotate.MakeIdentity();
-
-			RE::NiUpdateData updateData{};
-			updateData.camera = ScopeCamera::GetScopeCamera();
-			if (updateData.camera) {
-				scopeNode->Update(updateData);
-				weaponnode->Update(updateData);
-			}
-
 			if (scopeNode) {
+				// 设置节点名称，这对于后续查找至关重要
+				scopeNode->name = "TTSNode";
+				s_CurrentScopeNode = scopeNode;
+				auto weaponnode = RE::PlayerCharacter::GetSingleton()->Get3D(true)->GetObjectByName("Weapon")->IsNode();
+				weaponnode->AttachChild(scopeNode, false);
+				scopeNode->local.translate = RE::NiPoint3(0, 0, 10);
+				scopeNode->local.rotate.MakeIdentity();
+
+
+				RE::NiUpdateData updateData{};
+				updateData.camera = ScopeCamera::GetScopeCamera();
+				if (updateData.camera) {
+					scopeNode->Update(updateData);
+					weaponnode->Update(updateData);
+				}
+
 				// 应用变换
 				ApplyScopeTransform(scopeNode, config.cameraAdjustments);
 				logger::info("Successfully loaded and positioned scope model: {}", config.modelName);
 			} else {
 				logger::error("Failed to load scope model: {}", config.modelName);
+				return; // 如果NIF加载失败，退出函数
 			}
 		}
 
@@ -268,13 +277,26 @@ namespace ThroughScope
 		if (weaponIns->flags.any(WEAPON_FLAGS::kHasScope)) {
 			weaponIns->flags.set(false, WEAPON_FLAGS::kHasScope);
 		}
-		
+
 		if (weaponIns->zoomData)
 		{
+			// 首次设置时，缓存原始值
+			if (s_EquippedWeaponFormID != 0 && originalZoomDataCache.find(s_EquippedWeaponFormID) == originalZoomDataCache.end()) {
+				originalZoomDataCache[s_EquippedWeaponFormID] = weaponIns->zoomData->zoomData;
+				logger::info("Cached original ZoomData for weapon FormID: {:08X}", s_EquippedWeaponFormID);
+			}
+
+			// 应用配置的ZoomData
 			weaponIns->zoomData->zoomData.fovMult = config.zoomDataSettings.fovMult;
 			weaponIns->zoomData->zoomData.cameraOffset.x = config.zoomDataSettings.offsetX;
 			weaponIns->zoomData->zoomData.cameraOffset.y = config.zoomDataSettings.offsetY;
 			weaponIns->zoomData->zoomData.cameraOffset.z = config.zoomDataSettings.offsetZ;
+
+			logger::info("Applied ZoomData - FOV: {}, Offset: ({}, {}, {})",
+				config.zoomDataSettings.fovMult,
+				config.zoomDataSettings.offsetX,
+				config.zoomDataSettings.offsetY,
+				config.zoomDataSettings.offsetZ);
 		}
 
 		logger::info("Scope setup completed for weapon");
@@ -282,11 +304,29 @@ namespace ThroughScope
 
 	int ScopeCamera::GetScopeNodeIndexCount()
 	{
-		if (!s_CurrentScopeNode || !s_CurrentScopeNode->GetObjectByName("TTSEffectShape"))
-		{
+		// 使用局部变量避免潜在的竞态条件
+		auto* currentNode = s_CurrentScopeNode;
+		if (!currentNode) {
 			return -1;
 		}
-		return ScopeCamera::s_CurrentScopeNode->GetObjectByName("TTSEffectShape")->IsTriShape()->numTriangles * 3;
+
+		try {
+			auto* effectShape = currentNode->GetObjectByName("TTSEffectShape");
+			if (!effectShape) {
+				return -1;
+			}
+
+			auto* triShape = effectShape->IsTriShape();
+			if (!triShape) {
+				return -1;
+			}
+
+			return triShape->numTriangles * 3;
+		}
+		catch (...) {
+			logger::error("Exception in GetScopeNodeIndexCount - returning -1");
+			return -1;
+		}
 	}
 
 
@@ -320,6 +360,86 @@ namespace ThroughScope
 			}
 		}
 		return nullptr;
+	}
+
+	void ScopeCamera::RestoreZoomDataForCurrentWeapon()
+	{
+		// 如果用户正在调整ZoomData，不进行恢复
+		if (s_IsUserAdjustingZoomData) {
+			return;
+		}
+
+		// 获取当前武器信息
+		auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+		if (!weaponInfo.currentConfig || !weaponInfo.instanceData || !weaponInfo.instanceData->zoomData) {
+			return;
+		}
+
+		const auto& config = *weaponInfo.currentConfig;
+		auto weaponIns = weaponInfo.instanceData;
+
+		// 缓存上一次的值
+		static std::map<TESFormID, BGSZoomData::Data> lastKnownValues;
+		static std::map<TESFormID, int> skipCount;  // 用于跳过初始几帧
+
+		// 保存当前实际值
+		auto currentZoomData = weaponIns->zoomData->zoomData;
+
+		// 初次设置该武器
+		if (s_EquippedWeaponFormID != 0 && lastKnownValues.find(s_EquippedWeaponFormID) == lastKnownValues.end()) {
+			lastKnownValues[s_EquippedWeaponFormID] = currentZoomData;
+			skipCount[s_EquippedWeaponFormID] = 3;  // 跳过前3帧
+			return;
+		}
+
+		// 跳过初始几帧（让系统稳定）
+		if (skipCount[s_EquippedWeaponFormID] > 0) {
+			skipCount[s_EquippedWeaponFormID]--;
+			lastKnownValues[s_EquippedWeaponFormID] = currentZoomData;
+			return;
+		}
+
+		auto& lastValue = lastKnownValues[s_EquippedWeaponFormID];
+
+		// 检查是否是游戏引擎重置了ZoomData
+		// 条件1：值突然变为默认值
+		bool isResetToDefault = (std::abs(currentZoomData.fovMult - 1.0f) < 0.001f &&
+								 std::abs(currentZoomData.cameraOffset.x) < 0.001f &&
+								 std::abs(currentZoomData.cameraOffset.y) < 0.001f &&
+								 std::abs(currentZoomData.cameraOffset.z) < 0.001f);
+
+		// 条件2：上一次的值不是默认值（说明发生了重置）
+		bool lastWasNotDefault = (std::abs(lastValue.fovMult - 1.0f) > 0.001f ||
+								  std::abs(lastValue.cameraOffset.x) > 0.001f ||
+								  std::abs(lastValue.cameraOffset.y) > 0.001f ||
+								  std::abs(lastValue.cameraOffset.z) > 0.001f);
+
+		// 条件3：配置中的值不是默认值
+		bool configIsNotDefault = (std::abs(config.zoomDataSettings.fovMult - 1.0f) > 0.001f ||
+								   std::abs(config.zoomDataSettings.offsetX) > 0.001f ||
+								   std::abs(config.zoomDataSettings.offsetY) > 0.001f ||
+								   std::abs(config.zoomDataSettings.offsetZ) > 0.001f);
+
+		// 只有当满足所有条件时才恢复
+		if (isResetToDefault && lastWasNotDefault && configIsNotDefault) {
+			// 恢复配置的ZoomData值
+			weaponIns->zoomData->zoomData.fovMult = config.zoomDataSettings.fovMult;
+			weaponIns->zoomData->zoomData.cameraOffset.x = config.zoomDataSettings.offsetX;
+			weaponIns->zoomData->zoomData.cameraOffset.y = config.zoomDataSettings.offsetY;
+			weaponIns->zoomData->zoomData.cameraOffset.z = config.zoomDataSettings.offsetZ;
+
+			logger::info("Detected ZoomData reset by engine, restored to config values - FOV: {}, Offset: ({}, {}, {})",
+				config.zoomDataSettings.fovMult,
+				config.zoomDataSettings.offsetX,
+				config.zoomDataSettings.offsetY,
+				config.zoomDataSettings.offsetZ);
+
+			// 重置跳过计数，避免频繁检测
+			skipCount[s_EquippedWeaponFormID] = 3;
+		}
+
+		// 更新缓存值
+		lastKnownValues[s_EquippedWeaponFormID] = weaponIns->zoomData->zoomData;
 	}
 
 }

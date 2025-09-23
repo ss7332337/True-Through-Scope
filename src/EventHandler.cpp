@@ -106,6 +106,8 @@ namespace ThroughScope
 		auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
 		if (weaponInfo.currentConfig) {
 			ScopeCamera::SetupScopeForWeapon(weaponInfo);
+			// 确保ZoomData被正确设置
+			ScopeCamera::RestoreZoomDataForCurrentWeapon();
 			isQuerySpawnNode = false;
 			if (!ScopeCamera::hasFirstSpawnNode) {
 				ScopeCamera::hasFirstSpawnNode = true;

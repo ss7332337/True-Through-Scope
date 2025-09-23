@@ -582,10 +582,23 @@ namespace ThroughScope {
 			return;
 		}
 
-		// 保存当前渲染目标
+		// 保存当前渲染目标和IA状态
 		ID3D11RenderTargetView* currentRTV = nullptr;
 		ID3D11DepthStencilView* currentDSV = nullptr;
 		context->OMGetRenderTargets(1, &currentRTV, &currentDSV);
+
+		// 保存当前的IA状态
+		ID3D11Buffer* savedVB = nullptr;
+		ID3D11Buffer* savedIB = nullptr;
+		UINT savedStride = 0, savedVBOffset = 0, savedIBOffset = 0;
+		DXGI_FORMAT savedIBFormat;
+		ID3D11InputLayout* savedInputLayout = nullptr;
+		D3D11_PRIMITIVE_TOPOLOGY savedTopology;
+
+		context->IAGetVertexBuffers(0, 1, &savedVB, &savedStride, &savedVBOffset);
+		context->IAGetIndexBuffer(&savedIB, &savedIBFormat, &savedIBOffset);
+		context->IAGetInputLayout(&savedInputLayout);
+		context->IAGetPrimitiveTopology(&savedTopology);
 
 		// 设置为我们的输出RenderTarget
 		context->OMSetRenderTargets(1, s_ImageSpaceEffectOutputRTV.GetAddressOf(), nullptr);
@@ -606,8 +619,9 @@ namespace ThroughScope {
 		context->VSSetShader(s_ImageSpaceEffectVS.Get(), nullptr, 0);
 		context->PSSetShader(s_ImageSpaceEffectPS.Get(), nullptr, 0);
 
+
 		// 设置我们的纹理资源
-		ID3D11ShaderResourceView* ourSRVs[4] = { 
+		ID3D11ShaderResourceView* ourSRVs[4] = {
 			(ID3D11ShaderResourceView*)RTVs[15].srView,  // t0: 用于调整颜色的模糊图像
 			stagingSRV,                                   // t1: 瞄准镜纹理
 			(ID3D11ShaderResourceView*)RTVs[69].srView,  // t2: 1x1小像素
@@ -650,9 +664,24 @@ namespace ThroughScope {
 		// 恢复原始渲染目标
 		context->OMSetRenderTargets(1, &currentRTV, currentDSV);
 
+		// 恢复IA状态
+		if (savedVB) {
+			context->IASetVertexBuffers(0, 1, &savedVB, &savedStride, &savedVBOffset);
+		}
+		if (savedIB) {
+			context->IASetIndexBuffer(savedIB, savedIBFormat, savedIBOffset);
+		}
+		if (savedInputLayout) {
+			context->IASetInputLayout(savedInputLayout);
+		}
+		context->IASetPrimitiveTopology(savedTopology);
+
 		// 释放获取的引用
 		if (currentRTV) currentRTV->Release();
 		if (currentDSV) currentDSV->Release();
+		if (savedVB) savedVB->Release();
+		if (savedIB) savedIB->Release();
+		if (savedInputLayout) savedInputLayout->Release();
 	}
 
 	D3DHooks* D3DHooks::GetSington()
@@ -999,7 +1028,7 @@ namespace ThroughScope {
 		if (scopeNodeIndexCount <= 0)
 			return false;
 
-		return vertexInfo.stride == TARGET_STRIDE && indexCount == scopeNodeIndexCount
+		return (vertexInfo.stride == TARGET_STRIDE || vertexInfo.stride == 24) && indexCount == scopeNodeIndexCount
 		       //&& indexInfo.offset == 2133504
 		       && indexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE && vertexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE;
 	}
@@ -1223,7 +1252,7 @@ namespace ThroughScope {
 			auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
 			if (weaponNode && weaponNode->IsNode()) {
 				auto weaponNiNode = static_cast<RE::NiNode*>(weaponNode);
-				auto scopeNode = weaponNiNode->GetObjectByName("ScopeNode");
+				auto scopeNode = weaponNiNode->GetObjectByName("TTSNode");
 
 				if (scopeNode) {
 					scopePos = scopeNode->world.translate;

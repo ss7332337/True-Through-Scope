@@ -45,10 +45,10 @@ namespace ThroughScope
 
 		struct ParallaxSettings
 		{
-			float relativeFogRadius = 0.0f;
-			float scopeSwayAmount = 0.0f;
-			float maxTravel = 0.0f;
-			float radius = 0.0f;
+			float relativeFogRadius = 0.5f;
+			float scopeSwayAmount = 0.5f;
+			float maxTravel = 0.5f;
+			float radius = 0.5f;
 		};
 
 		struct ScopeSettings
