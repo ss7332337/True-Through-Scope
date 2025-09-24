@@ -447,6 +447,24 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 
 	context->ClearDepthStencilView(mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
+	// 清理延迟渲染的G-Buffer以确保光照信息不会残留
+	// G-Buffer通常包括：法线、反照率、深度等
+	// 扩展清理范围，包括所有可能的光照相关缓冲区
+	static const int lightingBuffers[] = { 8, 9, 10, 11, 12, 13, 14, 15 }; // G-Buffer和光照累积缓冲区
+	for (int bufIdx : lightingBuffers) {
+		if (bufIdx < 100 && rendererData->renderTargets[bufIdx].rtView) {
+			float clearValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			// 对于法线缓冲区，使用默认法线值
+			if (bufIdx == 8) {
+				clearValue[0] = 0.5f;
+				clearValue[1] = 0.5f;
+				clearValue[2] = 1.0f;
+				clearValue[3] = 1.0f;
+			}
+			context->ClearRenderTargetView((ID3D11RenderTargetView*)rendererData->renderTargets[bufIdx].rtView, clearValue);
+		}
+	}
+
 	D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
 	DrawWorld::SetCamera(scopeCamera);
 	DrawWorld::SetUpdateCameraFOV(true);
@@ -466,7 +484,6 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	*ptr_DrawWorldVisCamera = scopeCamera;
 
 	// 同步光照累积器的眼睛位置，确保全方向光源的距离判断正确
-	// 注：DrawWorld::LightUpdate已经在hkDrawWorld_LightUpdate中被跳过了
 	auto pDrawWorldAccum = *ptr_DrawWorldAccum;
 	auto p1stPersonAccum = *ptr_Draw1stPersonAccum;
 	auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
@@ -474,26 +491,48 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	// 保存原始的眼睛位置以便后续恢复
 	NiPoint3 originalAccumEyePos;
 	NiPoint3 originalShadowNodeEyePos;
+	NiPoint3 original1stAccumEyePos;
+
+	// 备份光源和阴影状态，防止第二次渲染破坏渲染信息
+	BSTArray<NiPointer<BSLight>> backupLightList;
+	BSTArray<NiPointer<BSLight>> backupShadowLightList;
+	BSTArray<NiPointer<BSLight>> backupAmbientLightList;
+	bool lightsBackedUp = false;
+
+	// 阴影系统状态管理标志
+	bool shadowStateBackedUp = false;
 
 	if (pDrawWorldAccum) {
 		originalAccumEyePos = pDrawWorldAccum->kEyePosition;
-		// 使用原始相机位置进行光照计算
-		pDrawWorldAccum->kEyePosition.x = DrawWorldCamera->world.translate.x;
-		pDrawWorldAccum->kEyePosition.y = DrawWorldCamera->world.translate.y;
-		pDrawWorldAccum->kEyePosition.z = DrawWorldCamera->world.translate.z;
+		// 使用瞄具相机位置进行光照计算
+		pDrawWorldAccum->kEyePosition.x = scopeCamera->world.translate.x;
+		pDrawWorldAccum->kEyePosition.y = scopeCamera->world.translate.y;
+		pDrawWorldAccum->kEyePosition.z = scopeCamera->world.translate.z;
+
+		// 清理渲染通道以确保光照信息重新计算
+		// 这会强制第二次渲染重新收集和处理光源
+		pDrawWorldAccum->ClearActivePasses(true);
+		pDrawWorldAccum->ClearRenderPasses();
+
+		// 重置太阳遮挡查询
+		pDrawWorldAccum->ResetSunOcclusion();
 	}
 	if (p1stPersonAccum) {
-		p1stPersonAccum->kEyePosition.x = DrawWorldCamera->world.translate.x;
-		p1stPersonAccum->kEyePosition.y = DrawWorldCamera->world.translate.y;
-		p1stPersonAccum->kEyePosition.z = DrawWorldCamera->world.translate.z;
+		original1stAccumEyePos = p1stPersonAccum->kEyePosition;
+		p1stPersonAccum->kEyePosition.x = scopeCamera->world.translate.x;
+		p1stPersonAccum->kEyePosition.y = scopeCamera->world.translate.y;
+		p1stPersonAccum->kEyePosition.z = scopeCamera->world.translate.z;
 	}
 
 	// 同步ShadowSceneNode的眼睛位置
 	if (pShadowSceneNode) {
 		originalShadowNodeEyePos = pShadowSceneNode->kEyePosition;
-		pShadowSceneNode->kEyePosition.x = DrawWorldCamera->world.translate.x;
-		pShadowSceneNode->kEyePosition.y = DrawWorldCamera->world.translate.y;
-		pShadowSceneNode->kEyePosition.z = DrawWorldCamera->world.translate.z;
+		pShadowSceneNode->kEyePosition.x = scopeCamera->world.translate.x;
+		pShadowSceneNode->kEyePosition.y = scopeCamera->world.translate.y;
+		pShadowSceneNode->kEyePosition.z = scopeCamera->world.translate.z;
+
+		// 确保光源更新不被禁用
+		pShadowSceneNode->bDisableLightUpdate = false;
 	}
 
 	// 8. 设置culling process
@@ -521,16 +560,118 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	//updateData.time = 0.0f;
 	//updateData.flags = 0;
 	scopeCamera->Update(updateData);
+
+	// 在第二次渲染前备份完整的渲染状态
+	// 此时第一次渲染已完成，所有渲染信息应该是正确的
+
+	// 备份BSShaderAccumulator的完整状态
+	etRenderMode originalRenderMode;
+	bool originalZPrePass = false;
+	bool originalRenderDecals = false;
+	bool original1stPerson = false;
+
+	if (pDrawWorldAccum) {
+		originalRenderMode = pDrawWorldAccum->GetRenderMode();
+		originalZPrePass = pDrawWorldAccum->QZPrePass();
+		originalRenderDecals = pDrawWorldAccum->QRenderDecals();
+		original1stPerson = pDrawWorldAccum->Q1stPerson();
+		shadowStateBackedUp = true;
+	}
+
+	if (pShadowSceneNode) {
+		// 备份当前的光源状态（这是第一次渲染后的正确状态）
+		backupLightList = pShadowSceneNode->lLightList;
+		backupShadowLightList = pShadowSceneNode->lShadowLightList;
+		backupAmbientLightList = pShadowSceneNode->lAmbientLightList;
+		lightsBackedUp = true;
+	}
+
+	{
+		// 调试：记录当前光源数量和状态
+		static int frameCount = 0;
+		frameCount++;
+
+		// 保存当前光源列表的状态
+		auto lightCount = pShadowSceneNode->lLightList.size();
+		auto shadowLightCount = pShadowSceneNode->lShadowLightList.size();
+		auto ambientLightCount = pShadowSceneNode->lAmbientLightList.size();
+
+		// 每隔30帧输出一次详细调试信息
+		if (frameCount % 30 == 0) {
+			logger::info("Frame {}: Before 2nd render - Lights: {}, ShadowLights: {}, AmbientLights: {}, RenderMode: {}, ZPrePass: {}, 1stPerson: {}",
+				frameCount, lightCount, shadowLightCount, ambientLightCount,
+				static_cast<int>(originalRenderMode), originalZPrePass, original1stPerson);
+		}
+	}
+
+	// 在第二次渲染期间完全禁用光源更新
+	if (pShadowSceneNode) {
+		pShadowSceneNode->bDisableLightUpdate = true;
+	}
+
+	// 执行第二次渲染
 	g_RenderPreUIOriginal(savedDrawWorld);  //第二次渲染输出到临时RenderTarget，会应用frustum剔除
+
+	// 立即重新启用光源更新
+	if (pShadowSceneNode) {
+		pShadowSceneNode->bDisableLightUpdate = false;
+	}
 
 	ScopeCamera::SetRenderingForScope(false);
 
-	// 恢复原始的眼睛位置
+	// 立即恢复原始的眼睛位置和状态
+	// 这是关键：确保下一帧的光照计算使用正确的参考点
 	if (pDrawWorldAccum) {
 		pDrawWorldAccum->kEyePosition = originalAccumEyePos;
+		// 注意：我们在最后的状态恢复中再次清理累积器
+	}
+	if (p1stPersonAccum) {
+		p1stPersonAccum->kEyePosition = original1stAccumEyePos;
+		p1stPersonAccum->ClearActivePasses(false);
 	}
 	if (pShadowSceneNode) {
 		pShadowSceneNode->kEyePosition = originalShadowNodeEyePos;
+		pShadowSceneNode->bDisableLightUpdate = false;
+
+		// 恢复第一次渲染后的正确光源列表
+		// 这样可以防止第二次渲染的状态影响下一帧的主渲染
+		if (lightsBackedUp) {
+			pShadowSceneNode->lLightList = backupLightList;
+			pShadowSceneNode->lShadowLightList = backupShadowLightList;
+			pShadowSceneNode->lAmbientLightList = backupAmbientLightList;
+
+			// 调试：检查恢复后的光源数量
+			logger::debug("Restored lights: {}, shadows: {}, ambient: {}",
+				pShadowSceneNode->lLightList.size(),
+				pShadowSceneNode->lShadowLightList.size(),
+				pShadowSceneNode->lAmbientLightList.size());
+		}
+
+		// 清理光照队列，防止队列状态影响下一帧
+		// 注意：我们不清空主光源列表，只清理队列
+		if (pShadowSceneNode->lLightQueueAdd.size() > 0) {
+			pShadowSceneNode->lLightQueueAdd.resize(0);
+		}
+		if (pShadowSceneNode->lLightQueueRemove.size() > 0) {
+			pShadowSceneNode->lLightQueueRemove.resize(0);
+		}
+	}
+
+	// 完全恢复BSShaderAccumulator的状态
+	if (pDrawWorldAccum && shadowStateBackedUp) {
+		// 恢复原始的渲染模式和状态
+		pDrawWorldAccum->SetRenderMode(originalRenderMode);
+		pDrawWorldAccum->SetZPrePass(originalZPrePass);
+		pDrawWorldAccum->SetRenderDecals(originalRenderDecals);
+		pDrawWorldAccum->Set1stPerson(original1stPerson);
+
+		// 重置所有可能被第二次渲染影响的状态
+		pDrawWorldAccum->ResetSunOcclusion();
+		pDrawWorldAccum->ClearSunQueries();
+		pDrawWorldAccum->ClearActivePasses(false);
+		pDrawWorldAccum->ClearRenderPasses();
+
+		logger::debug("Fully restored BSShaderAccumulator state for next frame");
 	}
 
 	D3DPERF_EndEvent();
@@ -642,50 +783,8 @@ void __fastcall hkRenderAlphaTestZPrePass(BSGraphics::RendererShadowState* rshad
 
 void __fastcall hkDrawWorld_LightUpdate(uint64_t ptr_drawWorld)
 {
-	// 在瞄具渲染时，我们需要执行LightUpdate但要确保使用正确的相机位置
-	if (ScopeCamera::IsRenderingForScope()) {
-		auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
-		auto pDrawWorldAccum = *ptr_DrawWorldAccum;
-		auto mainCamera = *ptr_DrawWorldCamera;  // 这应该是瞄具相机
-
-		// 临时禁用光源列表更新，但仍执行其他必要的光照设置
-		bool originalDisableLightUpdate = false;
-		NiPoint3 originalEyePos;
-		NiPoint3 originalAccumEyePos;
-
-		if (pShadowSceneNode) {
-			originalDisableLightUpdate = pShadowSceneNode->bDisableLightUpdate;
-			originalEyePos = pShadowSceneNode->kEyePosition;
-			pShadowSceneNode->bDisableLightUpdate = true;
-
-			// 使用主相机位置进行光照计算
-			if (mainCamera) {
-				pShadowSceneNode->kEyePosition.x = mainCamera->world.translate.x;
-				pShadowSceneNode->kEyePosition.y = mainCamera->world.translate.y - 15.0f; // 补偿Y轴偏移
-				pShadowSceneNode->kEyePosition.z = mainCamera->world.translate.z;
-			}
-		}
-
-		if (pDrawWorldAccum && mainCamera) {
-			originalAccumEyePos = pDrawWorldAccum->kEyePosition;
-			pDrawWorldAccum->kEyePosition.x = mainCamera->world.translate.x;
-			pDrawWorldAccum->kEyePosition.y = mainCamera->world.translate.y - 15.0f; // 补偿Y轴偏移
-			pDrawWorldAccum->kEyePosition.z = mainCamera->world.translate.z;
-		}
-
-		// 执行光照更新（但光源列表不会被重新计算）
-		g_DrawWorldLightUpdateOriginal(ptr_drawWorld);
-
-		// 恢复原始状态
-		if (pShadowSceneNode) {
-			pShadowSceneNode->bDisableLightUpdate = originalDisableLightUpdate;
-			pShadowSceneNode->kEyePosition = originalEyePos;
-		}
-		if (pDrawWorldAccum) {
-			pDrawWorldAccum->kEyePosition = originalAccumEyePos;
-		}
-		return;
-	}
+	// 直接调用原函数，不要修改任何状态
+	// 光源位置的同步已经在hkTAA中处理了
 	g_DrawWorldLightUpdateOriginal(ptr_drawWorld);
 }
 
@@ -780,34 +879,7 @@ void __fastcall hkDeferredPrePass(uint64_t ptr_drawWorld)
 
 void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
 {
-	// 在瞄具渲染时，需要确保使用正确的光照参数
-	if (ScopeCamera::IsRenderingForScope()) {
-		auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
-		auto pDrawWorldAccum = *ptr_DrawWorldAccum;
-		auto originalCamera = *ptr_DrawWorldCamera;
-
-		// 保存并同步关键的光照参数
-		NiPoint3 savedEyePos;
-		if (pShadowSceneNode) {
-			savedEyePos = pShadowSceneNode->kEyePosition;
-			// 使用主相机位置进行光照计算，确保光照强度和范围正确
-			if (originalCamera) {
-				pShadowSceneNode->kEyePosition.x = originalCamera->world.translate.x;
-				pShadowSceneNode->kEyePosition.y = originalCamera->world.translate.y;
-				pShadowSceneNode->kEyePosition.z = originalCamera->world.translate.z;
-			}
-		}
-
-		// 执行延迟光照渲染
-		g_DeferredLightsImplOriginal(ptr_drawWorld);
-
-		// 恢复原始位置
-		if (pShadowSceneNode) {
-			pShadowSceneNode->kEyePosition = savedEyePos;
-		}
-		return;
-	}
-
+	// 直接执行延迟光照，位置同步已经在前面处理了
 	D3DEventNode(g_DeferredLightsImplOriginal(ptr_drawWorld), L"hkDeferredLightsImpl");
 }
 
