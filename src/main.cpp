@@ -433,6 +433,11 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	scopeCamera->local.rotate = originalCamera->local.rotate;
 	scopeCamera->local.translate.y += 15;
 
+	// 同步世界坐标变换，这对光照计算很重要
+	scopeCamera->world.translate = originalCamera->world.translate;
+	scopeCamera->world.rotate = originalCamera->world.rotate;
+	scopeCamera->world.translate.y += 15;
+
 	//清理主输出，准备第二次渲染
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 
@@ -478,10 +483,32 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	auto fpsCam = *ptr_DrawWorld1stCamera;
 	auto DrawWorldCamera = *ptr_DrawWorldCamera;	
 	auto DrawWorldVisCamera = *ptr_DrawWorldVisCamera;
-	NiFrustum modifiedFrustum = scopeFrustum;
-	
+	// 不再使用固定的scopeFrustum，而是使用动态更新的视锥体
+	// NiFrustum modifiedFrustum = scopeFrustum; // 移除这行
+
 	*ptr_DrawWorldCamera = scopeCamera;
 	*ptr_DrawWorldVisCamera = scopeCamera;
+
+	// 更新瞄具相机的视锥体，使用更合适的参数以避免光源被错误裁剪
+	// 原有的scopeFrustum参数过于局限，导致某些角度下光源被裁剪
+	if (scopeCamera) {
+		// 使用原始相机的视锥体作为基础，然后调整FOV
+		scopeCamera->viewFrustum = originalCamera->viewFrustum;
+
+		// 调整视锥体参数以适应瞄具的FOV
+		float aspectRatio = scopeCamera->viewFrustum.right / scopeCamera->viewFrustum.top;
+		float fovRad = ScopeCamera::GetTargetFOV() * 0.01745329251f; // 转换为弧度
+		float halfFovTan = tan(fovRad * 0.5f);
+
+		// 根据FOV重新计算视锥体边界
+		scopeCamera->viewFrustum.top = scopeCamera->viewFrustum.nearPlane * halfFovTan;
+		scopeCamera->viewFrustum.bottom = -scopeCamera->viewFrustum.top;
+		scopeCamera->viewFrustum.right = scopeCamera->viewFrustum.top * aspectRatio;
+		scopeCamera->viewFrustum.left = -scopeCamera->viewFrustum.right;
+
+		// 保持远裁剪面距离，确保远处的光源不会被裁剪
+		scopeCamera->viewFrustum.farPlane = originalCamera->viewFrustum.farPlane;
+	}
 
 	// 同步光照累积器的眼睛位置，确保全方向光源的距离判断正确
 	auto pDrawWorldAccum = *ptr_DrawWorldAccum;
@@ -492,6 +519,7 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	NiPoint3 originalAccumEyePos;
 	NiPoint3 originalShadowNodeEyePos;
 	NiPoint3 original1stAccumEyePos;
+	float originalFarClip = 0.0f;
 
 	// 备份光源和阴影状态，防止第二次渲染破坏渲染信息
 	BSTArray<NiPointer<BSLight>> backupLightList;
@@ -533,26 +561,30 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 
 		// 确保光源更新不被禁用
 		pShadowSceneNode->bDisableLightUpdate = false;
+
+		// 强制更新光源裁剪边界，防止光源被错误裁剪
+		// 这是关键：确保光源的裁剪使用正确的视锥体
+		// 保存原始的远裁剪面值并设置更大的值，防止光源被错误剔除
+		originalFarClip = pShadowSceneNode->fStoredFarClip;
+		pShadowSceneNode->fStoredFarClip = scopeCamera->viewFrustum.farPlane;
+
+		// 确保AlwaysUpdateLights开启，强制更新所有光源
+		pShadowSceneNode->bAlwaysUpdateLights = true;
 	}
 
-	// 8. 设置culling process
-	//auto geomListCullProc0 = *DrawWorldGeomListCullProc0;
-	//auto geomListCullProc1 = *DrawWorldGeomListCullProc1;
+	// 8. 设置culling process - 启用这部分代码以确保裁剪正确
+	auto geomListCullProc0 = *DrawWorldGeomListCullProc0;
+	auto geomListCullProc1 = *DrawWorldGeomListCullProc1;
 
-	//if (geomListCullProc0 && scopeCamera) {
-	//	geomListCullProc0->m_pkCamera = scopeCamera;
-	//	geomListCullProc0->SetFrustum(&scopeCamera->viewFrustum);
-	//}
+	if (geomListCullProc0 && scopeCamera) {
+		geomListCullProc0->m_pkCamera = scopeCamera;
+		geomListCullProc0->SetFrustum(&scopeCamera->viewFrustum);
+	}
 
-	//if (geomListCullProc1 && scopeCamera) {
-	//	geomListCullProc1->m_pkCamera = scopeCamera;
-	//	geomListCullProc1->SetFrustum(&scopeCamera->viewFrustum);
-	//}
-
-	//(*ptr_DrawWorldVisCamera)->viewFrustum = scopeFrustum;
-	/*scopeCamera->SetViewFrustum(&scopeFrustum);
-	BSShaderUtil::SetCameraFOV(scopeCamera, ScopeCamera::GetTargetFOV(), 15.0f, 353840.0f);
-	BSShaderManager::SetFOV(ScopeCamera::GetTargetFOV());*/
+	if (geomListCullProc1 && scopeCamera) {
+		geomListCullProc1->m_pkCamera = scopeCamera;
+		geomListCullProc1->SetFrustum(&scopeCamera->viewFrustum);
+	}
 
 	//scopeCamera->port = scopeViewPort;
 	NiUpdateData updateData{};
@@ -560,6 +592,17 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	//updateData.time = 0.0f;
 	//updateData.flags = 0;
 	scopeCamera->Update(updateData);
+
+	// 确保瞄具相机的世界变换矩阵正确更新
+	// 这对于光源方向计算至关重要
+	scopeCamera->UpdateWorldData(&updateData);
+
+	// 强制刷新相机的视图投影矩阵
+	// 这是关键：确保光照着色器使用正确的视图矩阵
+	if (pDrawWorldAccum) {
+		// 设置累积器使用瞄具相机进行光照计算
+		pDrawWorldAccum->StartAccumulating(scopeCamera);
+	}
 
 	// 在第二次渲染前备份完整的渲染状态
 	// 此时第一次渲染已完成，所有渲染信息应该是正确的
@@ -598,9 +641,38 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 
 		// 每隔30帧输出一次详细调试信息
 		if (frameCount % 30 == 0) {
-			logger::info("Frame {}: Before 2nd render - Lights: {}, ShadowLights: {}, AmbientLights: {}, RenderMode: {}, ZPrePass: {}, 1stPerson: {}",
-				frameCount, lightCount, shadowLightCount, ambientLightCount,
+			// 获取玩家朝向
+			auto player = RE::PlayerCharacter::GetSingleton();
+			float playerHeading = 0.0f;
+			if (player && player->Get3D()) {
+				// 获取玩家的朝向角度（弧度转角度）
+				playerHeading = atan2(player->Get3D()->world.rotate[1][0], player->Get3D()->world.rotate[0][0]) * 57.2957795131f;
+			}
+
+			logger::info("Frame {}: Before 2nd render - Heading: {:.1f}°, Lights: {}, ShadowLights: {}, AmbientLights: {}, RenderMode: {}, ZPrePass: {}, 1stPerson: {}",
+				frameCount, playerHeading, lightCount, shadowLightCount, ambientLightCount,
 				static_cast<int>(originalRenderMode), originalZPrePass, original1stPerson);
+
+			// 输出前几个光源的详细信息
+			if (lightCount > 0 && frameCount % 150 == 0) {  // 每150帧输出一次光源详细信息
+				for (size_t i = 0; i < std::min(static_cast<uint32_t>(3), lightCount); i++) {
+					auto bsLight = pShadowSceneNode->lLightList[i];
+					if (bsLight && bsLight.get() && bsLight->spLight) {
+						// BSLight包含一个NiLight指针，从那里获取位置信息
+						auto niLight = bsLight->spLight.get();
+						if (niLight) {
+							logger::info("  Light {}: PointLight={}, AmbientLight={}, Dynamic={}, Pos=({:.1f},{:.1f},{:.1f})",
+								i,
+								bsLight->bPointLight,
+								bsLight->bAmbientLight,
+								bsLight->bDynamicLight,
+								niLight->world.translate.x,
+								niLight->world.translate.y,
+								niLight->world.translate.z);
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -632,6 +704,10 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	if (pShadowSceneNode) {
 		pShadowSceneNode->kEyePosition = originalShadowNodeEyePos;
 		pShadowSceneNode->bDisableLightUpdate = false;
+
+		// 恢复原始的远裁剪面和AlwaysUpdateLights设置
+		pShadowSceneNode->fStoredFarClip = originalFarClip;
+		pShadowSceneNode->bAlwaysUpdateLights = false;
 
 		// 恢复第一次渲染后的正确光源列表
 		// 这样可以防止第二次渲染的状态影响下一帧的主渲染
