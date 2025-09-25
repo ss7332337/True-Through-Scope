@@ -14,6 +14,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstring>
+#include <vector>
 
 #include "DataPersistence.h"
 #include "ImGuiManager.h"
@@ -433,10 +434,22 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	scopeCamera->local.rotate = originalCamera->local.rotate;
 	scopeCamera->local.translate.y += 15;
 
+	// 确保相机的父节点变换也被更新
+	if (scopeCamera->parent) {
+		NiUpdateData parentUpdate{};
+		parentUpdate.camera = scopeCamera;
+		scopeCamera->parent->Update(parentUpdate);
+	}
+
 	// 同步世界坐标变换，这对光照计算很重要
 	scopeCamera->world.translate = originalCamera->world.translate;
 	scopeCamera->world.rotate = originalCamera->world.rotate;
+	scopeCamera->world.scale = originalCamera->world.scale;
 	scopeCamera->world.translate.y += 15;
+
+	// 关键修复：强制重新计算视图矩阵
+	// 光照计算依赖正确的视图矩阵来变换光源位置到视空间
+	scopeCamera->UpdateWorldBound();
 
 	//清理主输出，准备第二次渲染
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
@@ -475,6 +488,9 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	DrawWorld::SetUpdateCameraFOV(true);
 	DrawWorld::SetAdjusted1stPersonFOV(ScopeCamera::GetTargetFOV());
 	DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
+
+	// 同步BSShaderManager的相机指针，确保着色器使用正确的视图矩阵
+	*ptr_BSShaderManagerSpCamera = scopeCamera;
 
 	NiUpdateData nData;
 	ScopeCamera::SetRenderingForScope(true);
@@ -515,6 +531,18 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	auto p1stPersonAccum = *ptr_Draw1stPersonAccum;
 	auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
 
+	// 注释掉ProcessQueuedLights调用，因为它导致崩溃
+	// 光源队列处理应该由引擎自动完成
+	/*
+	if (pShadowSceneNode) {
+		// 处理所有排队的光源添加/删除操作
+		if (pShadowSceneNode->lLightQueueAdd.size() > 0 || pShadowSceneNode->lLightQueueRemove.size() > 0) {
+			BSCullingProcess tempCullProc;
+			pShadowSceneNode->ProcessQueuedLights(&tempCullProc);
+		}
+	}
+	*/
+
 	// 保存原始的眼睛位置以便后续恢复
 	NiPoint3 originalAccumEyePos;
 	NiPoint3 originalShadowNodeEyePos;
@@ -526,6 +554,13 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	BSTArray<NiPointer<BSLight>> backupShadowLightList;
 	BSTArray<NiPointer<BSLight>> backupAmbientLightList;
 	bool lightsBackedUp = false;
+
+	// 关键：保存光源的原始世界变换，因为渲染过程可能会修改它们
+	struct LightTransformBackup {
+		BSLight* light;
+		NiTransform originalTransform;
+	};
+	std::vector<LightTransformBackup> lightTransformBackups;
 
 	// 阴影系统状态管理标志
 	bool shadowStateBackedUp = false;
@@ -597,11 +632,23 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	// 这对于光源方向计算至关重要
 	scopeCamera->UpdateWorldData(&updateData);
 
+	// 关键修复：重新计算相机的世界到视图变换矩阵
+	// 许多光照计算依赖这个矩阵将世界空间的光源位置转换到视空间
+	scopeCamera->UpdateWorldBound();
+
+	// 计算视图矩阵的逆矩阵（世界矩阵）
+	NiMatrix3 viewToWorld = scopeCamera->world.rotate;
+	viewToWorld.Transpose(); // 旋转矩阵的逆等于其转置
+
 	// 强制刷新相机的视图投影矩阵
 	// 这是关键：确保光照着色器使用正确的视图矩阵
 	if (pDrawWorldAccum) {
 		// 设置累积器使用瞄具相机进行光照计算
 		pDrawWorldAccum->StartAccumulating(scopeCamera);
+
+		// 关键修复：强制设置相机到累积器
+		// 这确保光照计算使用正确的视图矩阵
+		pDrawWorldAccum->m_pkCamera = scopeCamera;
 	}
 
 	// 在第二次渲染前备份完整的渲染状态
@@ -627,6 +674,25 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 		backupShadowLightList = pShadowSceneNode->lShadowLightList;
 		backupAmbientLightList = pShadowSceneNode->lAmbientLightList;
 		lightsBackedUp = true;
+
+		// 注释掉光源变换备份，因为可能导致崩溃
+		// 光源位置问题可能需要不同的解决方案
+		/*
+		// 备份每个光源的世界变换
+		for (auto& bsLight : pShadowSceneNode->lLightList) {
+			if (bsLight && bsLight.get() && bsLight->spLight) {
+				auto niLight = bsLight->spLight.get();
+				if (niLight) {
+					LightTransformBackup backup;
+					backup.light = bsLight.get();
+					backup.originalTransform.translate = niLight->world.translate;
+					backup.originalTransform.rotate = niLight->world.rotate;
+					backup.originalTransform.scale = niLight->world.scale;
+					lightTransformBackups.push_back(backup);
+				}
+			}
+		}
+		*/
 	}
 
 	{
@@ -649,29 +715,54 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 				playerHeading = atan2(player->Get3D()->world.rotate[1][0], player->Get3D()->world.rotate[0][0]) * 57.2957795131f;
 			}
 
-			logger::info("Frame {}: Before 2nd render - Heading: {:.1f}°, Lights: {}, ShadowLights: {}, AmbientLights: {}, RenderMode: {}, ZPrePass: {}, 1stPerson: {}",
+			logger::info("Frame {}: Before 2nd render - Heading: {:.1f} degree, Lights: {}, ShadowLights: {}, AmbientLights: {}, RenderMode: {}, ZPrePass: {}, 1stPerson: {}",
 				frameCount, playerHeading, lightCount, shadowLightCount, ambientLightCount,
 				static_cast<int>(originalRenderMode), originalZPrePass, original1stPerson);
 
 			// 输出前几个光源的详细信息
 			if (lightCount > 0 && frameCount % 150 == 0) {  // 每150帧输出一次光源详细信息
-				for (size_t i = 0; i < std::min(static_cast<uint32_t>(3), lightCount); i++) {
+				int validLights = 0;
+				int invalidLights = 0;
+				int nullLights = 0;
+
+				for (size_t i = 0; i < std::min(static_cast<uint32_t>(10), lightCount); i++) {
 					auto bsLight = pShadowSceneNode->lLightList[i];
-					if (bsLight && bsLight.get() && bsLight->spLight) {
-						// BSLight包含一个NiLight指针，从那里获取位置信息
-						auto niLight = bsLight->spLight.get();
-						if (niLight) {
-							logger::info("  Light {}: PointLight={}, AmbientLight={}, Dynamic={}, Pos=({:.1f},{:.1f},{:.1f})",
-								i,
-								bsLight->bPointLight,
-								bsLight->bAmbientLight,
-								bsLight->bDynamicLight,
-								niLight->world.translate.x,
-								niLight->world.translate.y,
-								niLight->world.translate.z);
+					if (bsLight && bsLight.get()) {
+						if (bsLight->spLight && bsLight->spLight.get()) {
+							auto niLight = bsLight->spLight.get();
+							// 检查引用计数是否有效
+							if (niLight->refCount > 0 && niLight->refCount < 1000) {
+								try {
+									float x = niLight->world.translate.x;
+									float y = niLight->world.translate.y;
+									float z = niLight->world.translate.z;
+
+									// 检查坐标是否有效（在合理范围内）
+									bool isValid = (std::abs(x) < 100000.0f && std::abs(y) < 100000.0f && std::abs(z) < 100000.0f);
+									if (isValid) {
+										validLights++;
+										if (validLights <= 2) {  // 输出前2个有效光源
+											logger::info("  Light {}: Valid, Pos=({:.1f},{:.1f},{:.1f})",
+												i, x, y, z);
+										}
+									} else {
+										invalidLights++;
+									}
+								} catch (...) {
+									invalidLights++;
+								}
+							} else {
+								invalidLights++;
+							}
+						} else {
+							nullLights++;
 						}
+					} else {
+						nullLights++;
 					}
 				}
+				logger::info("  Light summary: {} valid, {} invalid, {} null out of {} total",
+					validLights, invalidLights, nullLights, lightCount);
 			}
 		}
 	}
@@ -709,18 +800,48 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 		pShadowSceneNode->fStoredFarClip = originalFarClip;
 		pShadowSceneNode->bAlwaysUpdateLights = false;
 
-		// 恢复第一次渲染后的正确光源列表
-		// 这样可以防止第二次渲染的状态影响下一帧的主渲染
-		if (lightsBackedUp) {
+		// 不再恢复光源列表，让引擎自己管理
+		// 恢复光源列表可能导致引用计数问题
+		if (false && lightsBackedUp) {
+
+			static int frameCount1 = 0;
+			frameCount1++;
 			pShadowSceneNode->lLightList = backupLightList;
 			pShadowSceneNode->lShadowLightList = backupShadowLightList;
 			pShadowSceneNode->lAmbientLightList = backupAmbientLightList;
 
+			// 注释掉光源变换恢复，因为可能导致崩溃
+			/*
+			// 关键：恢复每个光源的原始世界变换
+			for (const auto& backup : lightTransformBackups) {
+				if (backup.light && backup.light->spLight) {
+					auto niLight = backup.light->spLight.get();
+					// 添加更严格的空指针检查和有效性验证
+					if (niLight && niLight->refCount > 0) {
+						try {
+							niLight->world.translate = backup.originalTransform.translate;
+							niLight->world.rotate = backup.originalTransform.rotate;
+							niLight->world.scale = backup.originalTransform.scale;
+							// 注释掉可能导致崩溃的更新调用
+							// 光源的世界数据会在下一帧自动更新
+							// NiUpdateData updateData{};
+							// niLight->UpdateWorldData(&updateData);
+						} catch (...) {
+							// 捕获任何异常，防止崩溃
+							logger::warn("Failed to restore light transform for light at {:p}", (void*)niLight);
+						}
+					}
+				}
+			}
+			*/
+
 			// 调试：检查恢复后的光源数量
-			logger::debug("Restored lights: {}, shadows: {}, ambient: {}",
-				pShadowSceneNode->lLightList.size(),
-				pShadowSceneNode->lShadowLightList.size(),
-				pShadowSceneNode->lAmbientLightList.size());
+			if (frameCount1 % 30 == 0) {
+				logger::debug("Restored lights: {}, shadows: {}, ambient: {}",
+					pShadowSceneNode->lLightList.size(),
+					pShadowSceneNode->lShadowLightList.size(),
+					pShadowSceneNode->lAmbientLightList.size());
+			}
 		}
 
 		// 清理光照队列，防止队列状态影响下一帧
@@ -746,8 +867,6 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 		pDrawWorldAccum->ClearSunQueries();
 		pDrawWorldAccum->ClearActivePasses(false);
 		pDrawWorldAccum->ClearRenderPasses();
-
-		logger::debug("Fully restored BSShaderAccumulator state for next frame");
 	}
 
 	D3DPERF_EndEvent();
