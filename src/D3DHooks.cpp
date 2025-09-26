@@ -1490,27 +1490,30 @@ namespace ThroughScope {
 				cbData->lastScopePosition[1] = lastScopePos.y;
 				cbData->lastScopePosition[2] = lastScopePos.z;
 
-			DirectX::XMFLOAT4X4 rotationMatrix = {
-				1, 0, 0, 0,
-				0, 1, 0, 0,
-				0, 0, 1, 0,
-				0, 0, 0, 1
-			};
+			// 计算相对于瞄具的视图变换矩阵
+			DirectX::XMFLOAT4X4 rotationMatrix;
 
-			rotationMatrix._11 = playerCamera->world.rotate.entry[0].x;
-			rotationMatrix._12 = playerCamera->world.rotate.entry[0].y;
-			rotationMatrix._13 = playerCamera->world.rotate.entry[0].z;
-			rotationMatrix._14 = playerCamera->world.rotate.entry[0].w;
+			// 获取瞄具到摄像机的方向向量
+			RE::NiPoint3 scopeToCamDir = cameraPos - scopePos;
+			scopeToCamDir.Unitize();  // 标准化
 
-			rotationMatrix._21 = playerCamera->world.rotate.entry[1].x;
-			rotationMatrix._22 = playerCamera->world.rotate.entry[1].y;
-			rotationMatrix._23 = playerCamera->world.rotate.entry[1].z;
-			rotationMatrix._24 = playerCamera->world.rotate.entry[1].w;
+			// 创建观察矩阵(从瞄具视角看向摄像机的逆变换)
+			// 这确保了视差计算在所有角度下的一致性
+			auto scopeCamera = ScopeCamera::GetScopeCamera();
+			if (scopeCamera) {
+				// 使用瞄具摄像机的旋转矩阵的逆转置
+				auto& scopeRot = scopeCamera->world.rotate;
 
-			rotationMatrix._31 = playerCamera->world.rotate.entry[2].x;
-			rotationMatrix._32 = playerCamera->world.rotate.entry[2].y;
-			rotationMatrix._33 = playerCamera->world.rotate.entry[2].z;
-			rotationMatrix._34 = playerCamera->world.rotate.entry[2].w;
+				// 构建正确的视图变换矩阵
+				rotationMatrix._11 = scopeRot.entry[0].x; rotationMatrix._12 = scopeRot.entry[1].x; rotationMatrix._13 = scopeRot.entry[2].x; rotationMatrix._14 = 0.0f;
+				rotationMatrix._21 = scopeRot.entry[0].y; rotationMatrix._22 = scopeRot.entry[1].y; rotationMatrix._23 = scopeRot.entry[2].y; rotationMatrix._24 = 0.0f;
+				rotationMatrix._31 = scopeRot.entry[0].z; rotationMatrix._32 = scopeRot.entry[1].z; rotationMatrix._33 = scopeRot.entry[2].z; rotationMatrix._34 = 0.0f;
+				rotationMatrix._41 = 0.0f; rotationMatrix._42 = 0.0f; rotationMatrix._43 = 0.0f; rotationMatrix._44 = 1.0f;
+			} else {
+				// 备用：使用单位矩阵(禁用视差效果)
+				memset(&rotationMatrix, 0, sizeof(rotationMatrix));
+				rotationMatrix._11 = rotationMatrix._22 = rotationMatrix._33 = rotationMatrix._44 = 1.0f;
+			}
 
 				cbData->parallax_Radius = s_CurrentRadius;                        // 折射强度
 				cbData->parallax_relativeFogRadius = s_CurrentRelativeFogRadius;  // 视差强度

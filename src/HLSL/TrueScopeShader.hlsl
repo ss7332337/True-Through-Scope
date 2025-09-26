@@ -83,7 +83,16 @@ float2 clampMagnitude(float2 v, float l)
 
 float getparallax(float d, float2 ds, float dfov)
 {
-    return clamp(1 - pow(abs(rcp(parallax_Radius * ds.y) * (parallax_relativeFogRadius * d * ds.y)), parallax_scopeSwayAmount), 0, parallax_maxTravel);
+    // 改进的视差计算：更稳定的角度依赖性
+    float radiusFactor = max(parallax_Radius * ds.y, 0.001); // 避免除零
+    float distanceFactor = parallax_relativeFogRadius * d * ds.y;
+
+    // 使用更稳定的指数函数，减少极端值
+    float exponent = clamp(parallax_scopeSwayAmount, 0.1, 2.0); // 限制指数范围
+    float parallaxValue = 1.0 - pow(abs(distanceFactor / radiusFactor), exponent);
+
+    // 确保输出在合理范围内，避免完全黑暗
+    return clamp(parallaxValue, 0.1, max(parallax_maxTravel, 0.3));
 }
 
 float2 aspect_ratio_correction(float2 tc)
@@ -314,15 +323,17 @@ float4 main(PS_INPUT input) : SV_TARGET
 
     float2 aspectCorrectTex = aspect_ratio_correction(texCoord);
 
-    float3 virDir = scopePosition - cameraPosition;
-    float3 lastVirDir = lastScopePosition - lastCameraPosition;
+    // 改进的视角计算：使用标准化的方向向量
+    float3 virDir = normalize(scopePosition - cameraPosition);
+    float3 lastVirDir = normalize(lastScopePosition - lastCameraPosition);
     float3 eyeDirectionLerp = virDir - lastVirDir;
-    float4 abseyeDirectionLerp = mul(float4((eyeDirectionLerp), 1), CameraRotation);
 
-    if (abseyeDirectionLerp.y < 0 && abseyeDirectionLerp.y >= -0.001)
-        abseyeDirectionLerp.y = -0.001;
-    else if (abseyeDirectionLerp.y >= 0 && abseyeDirectionLerp.y <= 0.001)
-        abseyeDirectionLerp.y = 0.001;
+    // 应用相机旋转变换
+    float4 abseyeDirectionLerp = mul(float4(eyeDirectionLerp, 0), CameraRotation); // 使用0作为w分量，因为这是方向向量
+
+    // 更平滑的边界处理，避免突变
+    float epsilon = 0.001;
+    abseyeDirectionLerp.y = sign(abseyeDirectionLerp.y) * max(abs(abseyeDirectionLerp.y), epsilon);
 
     // 无分支球形畸变效果应用
     // 使用step函数创建选择掩码
@@ -372,7 +383,11 @@ float4 main(PS_INPUT input) : SV_TARGET
     color = lerp(color, thermalColor, float(enableThermalVision));
     
     color = reticleColor * reticleColor.a + color * (1 - reticleColor.a);
-    color.rgb *= parallaxValue;
-    
+
+    // 改进的视差效果：避免完全消除光照
+    // 使用更柔和的混合，确保光照反射在所有角度下都可见
+    float softParallax = lerp(0.3, 1.0, parallaxValue); // 最小保持30%的光照
+    color.rgb *= softParallax;
+
     return color;
 }

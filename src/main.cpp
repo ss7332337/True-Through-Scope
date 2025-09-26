@@ -119,6 +119,18 @@ static REL::Relocation<BSGeometryListCullingProcess**> DrawWorldGeomListCullProc
 static REL::Relocation<BSCullingProcess**> DrawWorldCullingProcess{ REL::ID(520184) };
 static REL::Relocation<BSShaderManagerState**> BSM_ST{ REL::ID(1327069) };
 
+struct LightStateBackup
+{
+	NiPointer<BSLight> light;
+	uint32_t frustumCull;
+	bool occluded;
+	bool temporary;
+	bool dynamic;
+	float lodDimmer;
+	NiPointer<NiCamera> camera;
+	BSCullingProcess* cullingProcess;
+};
+static std::vector<LightStateBackup> g_LightStateBackups;
 
 #pragma endregion
 
@@ -532,6 +544,10 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	// 阴影系统状态管理标志
 	bool shadowStateBackedUp = false;
 
+	if (pShadowSceneNode) {
+		pShadowSceneNode->bDisableLightUpdate = true;
+	}
+
 	if (pDrawWorldAccum) {
 		originalAccumEyePos = pDrawWorldAccum->kEyePosition;
 		pDrawWorldAccum->kEyePosition.x = scopeCamera->world.translate.x;
@@ -626,100 +642,64 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 
 	// === 第一次渲染后保存光源状态 ===
 	// 在这个时间点，第一次渲染已经完成，光源状态应该是有效的
-	struct LightStateBackup {
-		uint32_t frustumCull;
-		bool occluded;
-		bool temporary;
-		bool dynamic;
-		float lodDimmer;
-	};
-	std::vector<LightStateBackup> lightStateBackups;
+	g_LightStateBackups.clear();
 
 	// 保存所有光源的当前状态（第一次渲染后的状态）
 	if (pShadowSceneNode) {
-		lightStateBackups.reserve(pShadowSceneNode->lLightList.size());
+		g_LightStateBackups.reserve(pShadowSceneNode->lLightList.size());
 		for (size_t i = 0; i < pShadowSceneNode->lLightList.size(); i++) {
 			auto bsLight = pShadowSceneNode->lLightList[i];
 			if (bsLight && bsLight.get()) {
-				LightStateBackup backup;
+				LightStateBackup backup{};
+				backup.light = bsLight;
 				backup.frustumCull = bsLight->usFrustumCull;
 				backup.occluded = bsLight->bOccluded;
 				backup.temporary = bsLight->bTemporary;
 				backup.dynamic = bsLight->bDynamicLight;
 				backup.lodDimmer = bsLight->fLODDimmer;
-				lightStateBackups.push_back(backup);
+				backup.camera = bsLight->spCamera;
+				backup.cullingProcess = bsLight->pCullingProcess;
+				g_LightStateBackups.push_back(backup);
 			}
 		}
 	}
 
+
 	// 在第二次渲染之前应用优化的光源状态
-	if (pShadowSceneNode) {
-		// 遍历所有光源，应用优化的状态
-		for (size_t i = 0; i < pShadowSceneNode->lLightList.size(); i++) {
-			auto bsLight = pShadowSceneNode->lLightList[i];
-			if (bsLight && bsLight.get() && i < lightStateBackups.size()) {
-				// 获取第一次渲染后的状态
-				const auto& firstRenderState = lightStateBackups[i];
+	if (!g_LightStateBackups.empty()) {
+		for (const auto& firstRenderState : g_LightStateBackups) {
+			auto bsLight = firstRenderState.light.get();
+			if (!bsLight) {
+				continue;
+			}
 
-				// 如果第一次渲染时光源是有效的（未被完全剔除），则在第二次渲染时也启用它
-				if (firstRenderState.frustumCull == 0xFF || firstRenderState.frustumCull == 0xFE) {
-					// 光源在第一次渲染时是有效的，保持其状态
-					bsLight->usFrustumCull = firstRenderState.frustumCull;
-				} else {
-					// 光源在第一次渲染时被剔除了，尝试强制启用它
-					bsLight->usFrustumCull = 0xFF;  // BSL_ALL
-				}
+			if (firstRenderState.frustumCull == 0xFF || firstRenderState.frustumCull == 0xFE) {
+				bsLight->usFrustumCull = firstRenderState.frustumCull;
+			} else {
+				bsLight->usFrustumCull = 0xFF;  // BSL_ALL
+			}
 
-				// 如果光源被标记为遮挡，尝试取消遮挡
-				if (bsLight->bOccluded) {
-					bsLight->SetOccluded(false);
-				}
+			bsLight->SetOccluded(firstRenderState.occluded);
+			bsLight->SetTemporary(firstRenderState.temporary);
+			bsLight->SetLODFade(false);  // 暂不持久保存LODFade，保持关闭以提升可见性
+			bsLight->fLODDimmer = firstRenderState.lodDimmer;
+			if (bsLight->bDynamicLight != firstRenderState.dynamic) {
+				bsLight->SetDynamic(firstRenderState.dynamic);
+			}
 
-				// 确保光源没有被标记为临时禁用
-				if (bsLight->bTemporary) {
-					bsLight->SetTemporary(false);
-				}
+			bsLight->SetAffectLand(true);
+			bsLight->SetAffectWater(true);
+			bsLight->SetIgnoreRoughness(false);
+			bsLight->SetIgnoreRim(false);
+			bsLight->SetAttenuationOnly(false);
+			bsLight->spCamera = firstRenderState.camera;
 
-				// 设置LOD相关属性
-				bsLight->SetLODFade(false);  // 禁用LOD淡化
-				bsLight->fLODDimmer = 1.0f;  // 设置LOD亮度为最大
-
-				// 确保光源被标记为动态光源（如果需要）
-				if (!bsLight->bDynamicLight) {
-					bsLight->SetDynamic(true);
-				}
-
-				// 设置光源影响范围
-				bsLight->SetAffectLand(true);
-				bsLight->SetAffectWater(true);
-
-				// 确保光源不被忽略
-				bsLight->SetIgnoreRoughness(false);
-				bsLight->SetIgnoreRim(false);
-				bsLight->SetAttenuationOnly(false);
-
-				// 设置剔除进程指针（如果有当前的剔除进程）
-				if (*DrawWorldCullingProcess) {
-					bsLight->SetCullingProcess(*DrawWorldCullingProcess);
-				}
-
-				// 尝试更新光源的世界变换
-				if (bsLight->spLight) {
-					auto niLight = bsLight->spLight.get();
-					if (niLight) {
-						// 获取当前相机和原始相机之间的偏移
-						if (scopeCamera && originalCamera) {
-							NiPoint3A offset;
-							offset.x = scopeCamera->world.translate.x - originalCamera->world.translate.x;
-							offset.y = scopeCamera->world.translate.y - originalCamera->world.translate.y;
-							offset.z = scopeCamera->world.translate.z - originalCamera->world.translate.z;
-
-						}
-					}
-				}
+			if (firstRenderState.cullingProcess) {
+				bsLight->SetCullingProcess(firstRenderState.cullingProcess);
+			} else if (*DrawWorldCullingProcess) {
+				bsLight->SetCullingProcess(*DrawWorldCullingProcess);
 			}
 		}
-		pShadowSceneNode->bDisableLightUpdate = true;
 	}
 
 	if (pDrawWorldAccum) {
@@ -745,22 +725,21 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	}
 
 	// === 第二次渲染后恢复原始光源状态 ===
-	if (pShadowSceneNode && !lightStateBackups.empty()) {
-		for (size_t i = 0; i < pShadowSceneNode->lLightList.size() && i < lightStateBackups.size(); i++) {
-			auto bsLight = pShadowSceneNode->lLightList[i];
-			if (bsLight && bsLight.get()) {
-				const auto& backup = lightStateBackups[i];
+	if (!g_LightStateBackups.empty()) {
+		for (const auto& backup : g_LightStateBackups) {
+			auto bsLight = backup.light.get();
+			if (!bsLight) {
+				continue;
+			}
 
-				// 恢复原始状态
-				bsLight->usFrustumCull = backup.frustumCull;
-				bsLight->SetOccluded(backup.occluded);
-				bsLight->SetTemporary(backup.temporary);
-				bsLight->fLODDimmer = backup.lodDimmer;
-
-				// 只有在我们改变了动态状态时才恢复它
-				if (bsLight->bDynamicLight != backup.dynamic) {
-					bsLight->SetDynamic(backup.dynamic);
-				}
+			bsLight->usFrustumCull = backup.frustumCull;
+			bsLight->SetOccluded(backup.occluded);
+			bsLight->SetTemporary(backup.temporary);
+			bsLight->fLODDimmer = backup.lodDimmer;
+			bsLight->spCamera = backup.camera;
+			bsLight->SetCullingProcess(backup.cullingProcess);
+			if (bsLight->bDynamicLight != backup.dynamic) {
+				bsLight->SetDynamic(backup.dynamic);
 			}
 		}
 	}
@@ -1034,9 +1013,31 @@ void __fastcall hkDeferredPrePass(uint64_t ptr_drawWorld)
 
 void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
 {
-	// 直接执行延迟光照，位置同步已经在前面处理了
+	if (ScopeCamera::IsRenderingForScope()) {
+		auto shadowNode = *ptr_DrawWorldShadowNode;
+		if (shadowNode && !g_LightStateBackups.empty()) {
+			for (const auto& backup : g_LightStateBackups) {
+				auto light = backup.light.get();
+				if (!light) {
+					continue;
+				}
+
+				light->usFrustumCull = backup.frustumCull;
+				light->SetOccluded(backup.occluded);
+				light->SetTemporary(backup.temporary);
+				light->fLODDimmer = backup.lodDimmer;
+				light->spCamera = backup.camera;
+				light->SetCullingProcess(backup.cullingProcess);
+				if (light->bDynamicLight != backup.dynamic) {
+					light->SetDynamic(backup.dynamic);
+				}
+			}
+		}
+	}
+
 	D3DEventNode(g_DeferredLightsImplOriginal(ptr_drawWorld), L"hkDeferredLightsImpl");
 }
+
 
 void __fastcall hkDeferredComposite(uint64_t ptr_drawWorld)
 {
