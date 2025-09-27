@@ -14,6 +14,39 @@ namespace ThroughScope
 	{
 		logger::info("Initializing ImGui...");
 
+		// 检查是否已经有ImGui上下文存在（避免与其他MOD冲突）
+		if (ImGui::GetCurrentContext() != nullptr) {
+			logger::warn("ImGui context already exists, using existing context");
+			// 如果上下文已存在，尝试获取现有的IO对象并继续后续初始化
+			ImGuiIO& io = ImGui::GetIO();
+
+			// 但仍需要检查字体是否需要加载
+			if (io.Fonts->Fonts.Size == 0) {
+				LoadLanguageFonts();
+			}
+
+			// 继续初始化面板系统和本地化
+			InitializePanels();
+
+			auto localization = LocalizationManager::GetSingleton();
+			if (!localization->Initialize()) {
+				logger::warn("Failed to initialize localization system, using fallback English text");
+			}
+
+			auto dataPersistence = DataPersistence::GetSingleton();
+			const auto& globalSettings = dataPersistence->GetGlobalSettings();
+			if (globalSettings.selectedLanguage >= 0 &&
+				globalSettings.selectedLanguage < static_cast<int>(Language::COUNT)) {
+				Language savedLanguage = static_cast<Language>(globalSettings.selectedLanguage);
+				localization->SetLanguage(savedLanguage);
+				logger::info("Loaded saved language setting: {}", static_cast<int>(savedLanguage));
+			}
+
+			m_Initialized = true;
+			logger::info("ImGui initialized successfully (using existing context)");
+			return true;
+		}
+
 		// 获取D3D11设备和上下文
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
 		if (!rendererData || !rendererData->device || !rendererData->context) {
@@ -34,6 +67,7 @@ namespace ThroughScope
 		// 初始化ImGui上下文
 		IMGUI_CHECKVERSION();
 		ImGui::CreateContext();
+		m_CreatedImGuiContext = true;  // 标记我们创建了上下文
 		ImGuiIO& io = ImGui::GetIO();
 		
 		// 加载多语言字体支持
@@ -108,12 +142,26 @@ namespace ThroughScope
 
 		ShutdownPanels();
 
-		ImGui_ImplDX11_Shutdown();
-		ImGui_ImplWin32_Shutdown();
-		ImGui::DestroyContext();
+		// 关闭后端
+		try {
+			ImGui_ImplDX11_Shutdown();
+			ImGui_ImplWin32_Shutdown();
+			logger::info("ImGui backends shut down successfully");
+		} catch (...) {
+			logger::warn("Error during ImGui backend shutdown, possibly shared with other mods");
+		}
+
+		// 只有当我们创建了ImGui上下文时才销毁它
+		if (m_CreatedImGuiContext) {
+			ImGui::DestroyContext();
+			m_CreatedImGuiContext = false;
+			logger::info("ImGui context destroyed (created by TrueThroughScope)");
+		} else {
+			logger::info("ImGui context preserved (created by other mod)");
+		}
 
 		m_Initialized = false;
-		logger::info("ImGui shut down");
+		logger::info("ImGui manager shut down");
 	}
 
 	void ImGuiManager::InitializePanels()
@@ -581,4 +629,5 @@ namespace ThroughScope
 		m_FontRebuildRequested = true;
 		logger::info("Font rebuild requested");
 	}
+
 }

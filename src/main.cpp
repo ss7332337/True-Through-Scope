@@ -22,6 +22,7 @@
 #include "ImGuiManager.h"
 #include "rendering/RenderStateManager.h"
 
+
 using namespace RE;
 using namespace RE::BSGraphics;
 
@@ -164,9 +165,10 @@ DWORD WINAPI InitThread(HMODULE hModule)
     {
 		Sleep(500);
 	}
-    logger::info("Game world loaded, initializing ThroughScope...");
+    logger::info("TrueThroughScope: Game world loaded, initializing ThroughScope...");
     
     // Initialize systems
+    logger::info("TrueThroughScope: About to initialize ImGui - checking for AntTweakBar conflicts...");
 	g_renderStateMgr->SetImGuiManagerInit(ThroughScope::ImGuiManager::GetSingleton()->Initialize());
 
     bool scopeReady = ThroughScope::ScopeCamera::Initialize();
@@ -177,13 +179,15 @@ DWORD WINAPI InitThread(HMODULE hModule)
 	g_renderStateMgr->SetRenderReady(renderReady);
 	ThroughScope::ggg_ScopeCamera = ThroughScope::ScopeCamera::GetScopeCamera();
 
-    logger::info("ThroughScope initialization completed");
+    logger::info("TrueThroughScope: ThroughScope initialization completed");
     return 0;
 }
 
 // Initialize the plugin
 void InitializePlugin()
 {
+	logger::info("TrueThroughScope: Plugin initialization started");
+
 	ThroughScope::g_pchar = RE::PlayerCharacter::GetSingleton();
 	g_hookMgr->RegisterAllHooks();
 	ThroughScope::EquipWatcher::GetSingleton()->Initialize();
@@ -229,7 +233,8 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_f4se, F4
     spdlog::set_default_logger(std::move(log));
     spdlog::set_pattern("%g(%#): [%^%l%$] %v"s);
 
-    logger::info(FMT_STRING("{} v{}.{}.{}"), Version::PROJECT, Version::MAJOR, Version::MINOR, Version::PATCH);
+    logger::info(FMT_STRING("=== {} v{}.{}.{} ==="), Version::PROJECT, Version::MAJOR, Version::MINOR, Version::PATCH);
+    logger::info("TrueThroughScope: This is YOUR MOD - all logs with 'TrueThroughScope:' prefix are from your code");
 
     if (a_f4se->IsEditor()) {
         logger::critical("loaded in editor");
@@ -243,7 +248,7 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_f4se, F4
         return false;
     }
 
-    logger::info("TrueThroughScope Query successful!");
+    logger::info("TrueThroughScope: Query successful");
     
     F4SE::AllocTrampoline(32 * 8);
     return true;
@@ -273,7 +278,9 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 	ThroughScope::d3dHooks = D3DHooks::GetSington();
 	ThroughScope::nifloader = NIFLoader::GetSington();
 
-	logger::info("Ninja!");
+	logger::info("TrueThroughScope: Ninja!");
+	logger::info("TrueThroughScope: TrueThroughScope does NOT use AntTweakBar - any such errors are from other mods");
+
 	ThroughScope::d3dHooks->PreInit();
 
     F4SE::Init(a_f4se);
@@ -289,12 +296,12 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 		if (msg->type == F4SE::MessagingInterface::kGameDataReady) {
             // Game data is ready - this is when we should initialize
 			ThroughScope::upscalerModular = LoadLibraryA("Data/F4SE/Plugins/Fallout4Upscaler.dll");
-            logger::info("Game data ready, initializing plugin");
+            logger::info("TrueThroughScope: Game data ready, initializing plugin");
 			ThroughScope::d3dHooks->Initialize();
             InitializePlugin();
 		} else if (msg->type == F4SE::MessagingInterface::kPostLoadGame) {
 
-			logger::info("Load a save, reset scope status");
+			logger::info("TrueThroughScope: Load a save, reset scope status");
 			ResetFirstSpawnState();
 		}
 		else if (msg->type == F4SE::MessagingInterface::kNewGame)

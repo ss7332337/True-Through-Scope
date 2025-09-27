@@ -90,6 +90,7 @@ namespace ThroughScope
 		bool m_MenuOpen = false;
 		bool m_HasUnsavedChanges = false;
 		bool m_FontRebuildRequested = false;  // 添加字体重建请求标志
+		bool m_CreatedImGuiContext = false;   // 跟踪是否由我们创建了ImGui上下文
 
 		static UINT s_unsavedChangeCount;
 		// 调试信息
