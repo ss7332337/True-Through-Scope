@@ -1,5 +1,6 @@
 #include "D3DHooks.h"
 #include "Utilities.h"
+#include "GlobalTypes.h"
 #include <detours.h>
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
@@ -144,7 +145,6 @@ namespace ThroughScope {
 	IDXGISwapChain* m_SwapChain = nullptr;
 
 	bool D3DHooks::isSelfDrawCall = false;
-	HMODULE upscalerModular = 0;
 
 	ImGuiIO io;
 
@@ -854,9 +854,9 @@ namespace ThroughScope {
 		}
 #endif
 		logger::info("AHYEEEEERT!");
-		upscalerModular = LoadLibraryA("Data/F4SE/Plugins/Fallout4Upscaler.dll");
+		ThroughScope::upscalerModular = LoadLibraryA("Data/F4SE/Plugins/Fallout4Upscaler.dll");
 
-		//if (!upscalerModular)
+		//if (!ThroughScope::upscalerModular)
 		//{
 		//	REL::Relocation<uintptr_t> D3D11CreateDeviceAndSwapChainAddress{ REL::ID(438126) };
 		//	Utilities::CreateAndEnableHook((LPVOID)D3D11CreateDeviceAndSwapChainAddress.address(), &D3DHooks::D3D11CreateDeviceAndSwapChain_Hook,

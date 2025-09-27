@@ -8,6 +8,44 @@ namespace ThroughScope
 {
 	using namespace Utilities;
 
+	// Forward declarations for hook functions
+	extern void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param);
+	extern void hkDrawWorld_Move1stPersonToOrigin(uint64_t thisPtr);
+	extern void hkBSBatchRenderer_Draw(BSRenderPass* apRenderPass);
+	extern void hkBSCullingGroup_SetCompoundFrustum(BSCullingGroup* thisPtr, BSCompoundFrustum* apCompoundFrustum);
+	extern void hkBSCullingGroupAdd(BSCullingGroup* thisPtr, NiAVObject* apObj, const NiBound* aBound, const unsigned int aFlags);
+	extern void hkDrawTriShape(BSGraphics::Renderer* thisPtr, BSGraphics::TriShape* apTriShape, unsigned int auiStartIndex, unsigned int auiNumTriangles);
+	extern void hkBSStreamLoad(BSStream* stream, const char* apFileName, NiBinaryStream* apStream);
+	extern void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld);
+	extern void __fastcall hkRenderZPrePass(BSGraphics::RendererShadowState* rshadowState, BSGraphics::ZPrePassDrawData* aZPreData, unsigned __int64* aVertexDesc, unsigned __int16* aCullmode, unsigned __int16* aDepthBiasMode);
+	extern void __fastcall hkRenderAlphaTestZPrePass(BSGraphics::RendererShadowState* rshadowState, BSGraphics::AlphaTestZPrePassDrawData* aZPreData, unsigned __int64* aVertexDesc, unsigned __int16* aCullmode, unsigned __int16* aDepthBiasMode, ID3D11SamplerState** aCurSamplerState);
+	extern void __fastcall hkRenderer_DoZPrePass(uint64_t thisPtr, NiCamera* apFirstPersonCamera, NiCamera* apWorldCamera, float afFPNear, float afFPFar, float afNear, float afFar);
+	extern void __fastcall hkAdd1stPersonGeomToCuller(uint64_t thisPtr);
+	extern void __fastcall hkBSShaderAccumulator_RenderBatches(BSShaderAccumulator* thisPtr, int aiShader, bool abAlphaPass, int aeGroup);
+	extern void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld);
+	extern void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld);
+	extern void __fastcall hkDrawWorld_Refraction(uint64_t this_ptr);
+	extern void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground);
+	extern void __fastcall hkBSDistantObjectInstanceRenderer_Render(uint64_t thisPtr);
+	extern void __fastcall hkBSShaderAccumulator_ResetSunOcclusion(BSShaderAccumulator* thisPtr);
+	extern void __fastcall hkDecompressDepthStencilTarget(RenderTargetManager* thisPtr, int index);
+	extern void __fastcall hkMainAccum(uint64_t ptr_drawWorld);
+	extern void __fastcall hkOcclusionMapRender();
+	extern void __fastcall hkMainRenderSetup(uint64_t ptr_drawWorld);
+	extern void __fastcall hkOpaqueWireframe(uint64_t ptr_drawWorld);
+	extern void __fastcall hkDeferredPrePass(uint64_t ptr_drawWorld);
+	extern void __fastcall hkDeferredComposite(uint64_t ptr_drawWorld);
+	extern RenderTarget* __fastcall hkRenderer_CreateRenderTarget(Renderer* renderer, int aId, const wchar_t* apName, const RenderTargetProperties* aProperties);
+	extern void __fastcall hkMainPreRender(Main* thisPtr, int auiDestination);
+	extern void __fastcall hkBegin(uint64_t ptr_drawWorld);
+	extern void hkMapDynamicTriShapeDynamicData(Renderer* renderer, BSDynamicTriShape* bsDynamicTriShape, DynamicTriShape* dynamicTriShape, DynamicTriShapeDrawData* drawdata, unsigned int auiSize);
+	extern void __fastcall hkDrawWorld_LightUpdate(uint64_t ptr_drawWorld);
+	extern void __fastcall hkBSShaderAccumulator_RenderBlendedDecals(BSShaderAccumulator* thisPtr);
+	extern void __fastcall hkBSShaderAccumulator_RenderOpaqueDecals(BSShaderAccumulator* thisPtr);
+	extern void __fastcall hkBSCullingGroup_Process(BSCullingGroup* thisPtr, bool abFirstStageOnly);
+	extern void __fastcall hkRTManager_CreateRenderTarget(RenderTargetManager rtm, int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
+	extern void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar);
+
 	void HookManager::RegisterAllHooks()
 	{
 		logger::info("Registering hooks...");

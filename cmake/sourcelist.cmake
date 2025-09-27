@@ -17,6 +17,9 @@ set(SOURCES
 	src/DDSTextureLoader11.cpp
 	src/HLSL/TrueScopeShader.hlsl
 	src/HookManager.cpp
+	src/TAAHook.cpp
+	src/RenderHooks.cpp
+	src/SimpleHooks.cpp
 )
 	
 	
