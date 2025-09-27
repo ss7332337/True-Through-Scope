@@ -4,6 +4,7 @@
 #include "ScopeCamera.h"
 #include "RenderUtilities.h"
 #include "GlobalTypes.h"
+#include "rendering/RenderStateManager.h"
 #include <cmath>
 #include <algorithm>
 
@@ -12,6 +13,7 @@ namespace ThroughScope
 	using namespace Utilities;
 
 	static HookManager* g_hookMgr = HookManager::GetSingleton();
+	static RenderStateManager* g_renderStateMgr = RenderStateManager::GetSingleton();
 
 	void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param)
 	{
@@ -34,7 +36,7 @@ namespace ThroughScope
 		//if (ScopeCamera::IsRenderingForScope())
 		//	return;
 
-		if (!isScopCamReady || !isRenderReady || !D3DHooks::IsEnableRender())
+		if (!g_renderStateMgr->IsScopeReady() || !g_renderStateMgr->IsRenderReady() || !D3DHooks::IsEnableRender())
 			return;
 
 		auto playerCamera = *ptr_DrawWorldCamera;

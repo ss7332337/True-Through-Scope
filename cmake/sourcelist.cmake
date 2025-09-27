@@ -20,6 +20,7 @@ set(SOURCES
 	src/TAAHook.cpp
 	src/RenderHooks.cpp
 	src/SimpleHooks.cpp
+	src/rendering/RenderStateManager.cpp
 )
 	
 	

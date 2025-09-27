@@ -21,8 +21,7 @@ namespace ThroughScope
 	extern std::vector<LightStateBackup> g_LightStateBackups;
 	extern uint64_t savedDrawWorld;
 	extern RE::PlayerCharacter* g_pchar;
-	extern bool isScopCamReady;
-	extern bool isRenderReady;
+	// isScopCamReady 和 isRenderReady 已移至 RenderStateManager
 	extern D3DHooks* d3dHooks;
 	extern NIFLoader* nifloader;
 	extern HMODULE upscalerModular;

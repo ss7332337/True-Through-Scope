@@ -20,6 +20,7 @@
 
 #include "DataPersistence.h"
 #include "ImGuiManager.h"
+#include "rendering/RenderStateManager.h"
 
 using namespace RE;
 using namespace RE::BSGraphics;
@@ -54,8 +55,7 @@ std::vector<ThroughScope::LightStateBackup> ThroughScope::g_LightStateBackups;
 // 全局变量定义（在GlobalTypes.h中声明）
 uint64_t ThroughScope::savedDrawWorld = 0;
 RE::PlayerCharacter* ThroughScope::g_pchar = nullptr;
-bool ThroughScope::isScopCamReady = false;
-bool ThroughScope::isRenderReady = false;
+// isScopCamReady 和 isRenderReady 已移至 RenderStateManager
 ThroughScope::D3DHooks* ThroughScope::d3dHooks = nullptr;
 NIFLoader* ThroughScope::nifloader = nullptr;
 HMODULE ThroughScope::upscalerModular = nullptr;
@@ -76,25 +76,10 @@ REL::Relocation<RE::BSCullingProcess**> ThroughScope::DrawWorldCullingProcess{ R
 REL::Relocation<uint32_t*> ThroughScope::FPZPrePassDrawDataCount{ REL::ID(163482) };
 REL::Relocation<uint32_t*> ThroughScope::FPAlphaTestZPrePassDrawDataCount{ REL::ID(382658) };
 
-// 本地变量
-bool isFirstCopy = false;
-bool isImguiManagerInit = false;
-bool isFirstSpawnNode = false;
-bool isEnableTAA = false;
-static std::chrono::steady_clock::time_point delayStartTime;
+// 渲染状态管理器
+static ThroughScope::RenderStateManager* g_renderStateMgr = ThroughScope::RenderStateManager::GetSingleton();
 
-NiFrustum originalCamera1stviewFrustum{};
-NiFrustum originalFrustum{};
-NiFrustum scopeFrustum{};
-NiRect<float> scopeViewPort{};
-
-// 用于frustum剔除的全局变量
-static NiFrustum g_BackupFrustum{};
-static bool g_FrustumBackedUp = false;
-
-NiCamera* g_worldFirstCam = *ThroughScope::ptr_DrawWorld1stCamera;
-
-static RendererShadowState* GetRendererShadowState()
+static ThroughScope::RendererShadowState* GetRendererShadowState()
 {
 	_TEB* teb = NtCurrentTeb();
 	Context* context;
@@ -133,8 +118,7 @@ using namespace ::ThroughScope::Utilities;
 //renderTargets[69] = 1x1 的小像素
 
 
-// 添加一个标志来区分瞄具专用渲染
-static bool g_IsScopeOnlyRender = false;
+// 瞄具专用渲染标志已移至RenderStateManager
 
 
 
@@ -193,10 +177,14 @@ DWORD WINAPI InitThread(HMODULE hModule)
     logger::info("Game world loaded, initializing ThroughScope...");
     
     // Initialize systems
-	isImguiManagerInit = ThroughScope::ImGuiManager::GetSingleton()->Initialize();
+	g_renderStateMgr->SetImGuiManagerInit(ThroughScope::ImGuiManager::GetSingleton()->Initialize());
 
-    ThroughScope::isScopCamReady = ThroughScope::ScopeCamera::Initialize();
-	ThroughScope::isRenderReady = ThroughScope::RenderUtilities::Initialize();
+    bool scopeReady = ThroughScope::ScopeCamera::Initialize();
+	bool renderReady = ThroughScope::RenderUtilities::Initialize();
+
+	// Update render state manager
+	g_renderStateMgr->SetScopeReady(scopeReady);
+	g_renderStateMgr->SetRenderReady(renderReady);
 	ThroughScope::ggg_ScopeCamera = ThroughScope::ScopeCamera::GetScopeCamera();
 
     logger::info("ThroughScope initialization completed");
@@ -214,28 +202,8 @@ void InitializePlugin()
     // Start initialization thread for components that need the game world
     HANDLE hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)InitThread, (HMODULE)REX::W32::GetCurrentModule(), 0, NULL);
 
-	originalCamera1stviewFrustum.bottom = -0.84f;
-	originalCamera1stviewFrustum.top = 0.84f;
-	originalCamera1stviewFrustum.left = 0.472f;
-	originalCamera1stviewFrustum.right = -0.472f;
-	originalCamera1stviewFrustum.nearPlane = 10;
-	originalCamera1stviewFrustum.farPlane = 10240.0f;
-
-	float scopeViewSize = 0.125f;
-	scopeFrustum.left = -scopeViewSize * 2;
-	scopeFrustum.right = scopeViewSize * 2;
-	scopeFrustum.top = scopeViewSize;
-	scopeFrustum.bottom = -scopeViewSize;
-	scopeFrustum.nearPlane = 15;
-	scopeFrustum.farPlane = 353840.0f;
-	scopeFrustum.ortho = false;
-
-	scopeViewPort.left = 0.4f;
-	scopeViewPort.right = 0.6f;
-	scopeViewPort.top = 0.6f;
-	scopeViewPort.bottom = 0.4f;
-
-	originalFrustum = originalCamera1stviewFrustum;
+	// Initialize RenderStateManager with default values
+	g_renderStateMgr->Initialize();
 
 }
 
