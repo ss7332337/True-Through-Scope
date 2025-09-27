@@ -16,6 +16,7 @@ set(SOURCES
 	src/DataPersistence.cpp
 	src/DDSTextureLoader11.cpp
 	src/HLSL/TrueScopeShader.hlsl
+	src/HookManager.cpp
 )
 	
 	

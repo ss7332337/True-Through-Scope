@@ -3,6 +3,7 @@
 #include "RenderUtilities.h"
 #include "ScopeCamera.h"
 #include "Utilities.h"
+#include "HookManager.h"
 #include <EventHandler.h>
 #include <mutex>
 #include <NiFLoader.h>
@@ -19,69 +20,8 @@
 #include "DataPersistence.h"
 #include "ImGuiManager.h"
 
-
 using namespace RE;
 using namespace RE::BSGraphics;
-
-#pragma region Func
-#pragma region DrawWorld_MainRenderFn
-REL::Relocation<uintptr_t> DrawWorld_Render_PreUI_Ori{ REL::ID(984743) };
-REL::Relocation<uintptr_t> DrawWorld_MainAccum_Ori{ REL::ID(718911) };
-REL::Relocation<uintptr_t> DrawWorld_OcclusionMapRender_Ori{ REL::ID(426737) };
-REL::Relocation<uintptr_t> DrawWorld_MainRenderSetup_Ori{ REL::ID(339369) };
-REL::Relocation<uintptr_t> DrawWorld_OpaqueWireframe_Ori{ REL::ID(1268987) };
-REL::Relocation<uintptr_t> DrawWorld_DeferredPrePass_Ori{ REL::ID(56596) };
-REL::Relocation<uintptr_t> DrawWorld_DeferredLightsImpl_Ori{ REL::ID(1108521) };
-REL::Relocation<uintptr_t> DrawWorld_DeferredComposite_Ori{ REL::ID(728427) };
-REL::Relocation<uintptr_t> DrawWorld_Forward_Ori{ REL::ID(656535) };
-REL::Relocation<uintptr_t> DrawWorld_Refraction_Ori{ REL::ID(1572250) };
-#pragma region DrawWorld_SubFn
-
-REL::Relocation<uintptr_t> DrawWorld_Add1stPersonGeomToCuller_Ori{ REL::ID(414086) };
-REL::Relocation<uintptr_t> BSShaderAccumulator_RenderBatches_Ori{ REL::ID(1048494) };
-REL::Relocation<uintptr_t> BSShaderAccumulator_RenderOpaqueDecals_Ori{ REL::ID(163409) };
-REL::Relocation<uintptr_t> BSShaderAccumulator_RenderBlendedDecals_Ori{ REL::ID(761249) };
-
-#pragma endregion
-
-#pragma endregion
-#pragma region Main
-REL::Relocation<uintptr_t> DrawWorld_Begin_Ori{ REL::ID(502840) };
-REL::Relocation<uintptr_t> Main_DrawWorldAndUI_Ori{ REL::ID(408683) };
-REL::Relocation<uintptr_t> PCUpdateMainThread_Ori{ REL::ID(1134912) };
-#pragma endregion
-
-REL::Relocation<uintptr_t> BSCullingGroup_Process_Ori{ REL::ID(1147875) };
-REL::Relocation<uintptr_t> Renderer_CreateRenderTarget_Ori{ REL::ID(425575) };
-REL::Relocation<uintptr_t> RTM_CreateRenderTarget_Ori{ REL::ID(43433) };
-
-REL::Relocation<uintptr_t> DrawWorld_LightUpdate_Ori{ REL::ID(918638) };  // DrawWorld::LightUpdate
-REL::Relocation<uintptr_t> Renderer_DoZPrePass_Ori{ REL::ID(1491502) };
-REL::Relocation<uintptr_t> BSGraphics_RenderZPrePass_Ori{ REL::ID(901559) };
-REL::Relocation<uintptr_t> BSGraphics_RenderAlphaTestZPrePass_Ori{ REL::ID(767228) };
-
-REL::Relocation<uintptr_t> BSDistantObjectInstanceRenderer_Render_Ori{ REL::ID(148163) };
-REL::Relocation<uintptr_t> BSShaderAccumulator_ResetSunOcclusion_Ori{ REL::ID(371166) };
-REL::Relocation<uintptr_t> RenderTargetManager_DecompressDepthStencilTarget_Ori{ REL::ID(338650) };
-
-REL::Relocation<uintptr_t> BSP_GetRenderPasses_Ori{ REL::ID(1289086) };
-REL::Relocation<uintptr_t> BSBatchRenderer_Draw_Ori{ REL::ID(1152191) };
-
-REL::Relocation<uintptr_t> DrawTriShape_Ori{ REL::ID(763320) };
-REL::Relocation<uintptr_t> DrawIndexed_Ori{ REL::ID(763320) , 0x137 };
-
-REL::Relocation<uintptr_t> MapDynamicTriShapeDynamicData_Ori{ REL::ID(732935) };
-REL::Relocation<uintptr_t> BSStreamLoad_Ori{ REL::ID(160035) };
-
-REL::Relocation<uintptr_t> MainPreRender_Ori{ REL::ID(378257) };
-REL::Relocation<uintptr_t> BSCullingGroupAdd_Ori{ REL::ID(1175493) };
-REL::Relocation<uintptr_t> BSCullingGroup_SetCompoundFrustum_Ori{ REL::ID(158202) };
-
-REL::Relocation<uintptr_t> DrawWorld_Move1stPersonToOrigin_Ori{ REL::ID(76526) };
-
-
-
-#pragma endregion
 
 #pragma region Pointer
 REL::Relocation<ShadowSceneNode**> ptr_DrawWorldShadowNode{ REL::ID(1327069) };  // DrawWorld::pShadowSceneNode
@@ -134,85 +74,6 @@ static std::vector<LightStateBackup> g_LightStateBackups;
 
 #pragma endregion
 
-typedef void (*FnDrawWorldLightUpdate)(uint64_t);  // DrawWorld::LightUpdate
-typedef void (*DoZPrePassOriginalFuncType)(uint64_t, NiCamera*, NiCamera*, float, float, float, float);
-typedef void (*RenderZPrePassOriginalFuncType)(RendererShadowState*, ZPrePassDrawData*, unsigned __int64*, unsigned __int16*, unsigned __int16*);
-typedef void (*RenderAlphaTestZPrePassOriginalFuncType)(RendererShadowState*, AlphaTestZPrePassDrawData*, unsigned __int64*, unsigned __int16*, unsigned __int16*, ID3D11SamplerState**);
-typedef void (*ResetSunOcclusionOriginalFuncType)(BSShaderAccumulator*);
-typedef void (*BSDistantObjectInstanceRenderer_Render_OriginalFuncType)(uint64_t);
-typedef void (*RenderTargetManager_DecompressDepthStencilTarget_OriginalFuncType)(RenderTargetManager*, int);
-typedef void (*RTM_SetCurrentRenderTarget_OriginalFuncType)(RenderTargetManager*, int, int, SetRenderTargetMode);
-typedef void (*RTM_SetCurrentDepthStencilTarget_OriginalFuncType)(RenderTargetManager*, int, SetRenderTargetMode, int);
-typedef void (*FnSetCurrentCubeMapRenderTarget)(RenderTargetManager*, int, SetRenderTargetMode, int);
-typedef void (*FnSetDirtyRenderTargets)(void*);
-typedef void (*FnBSShaderRenderTargetsCreate)(void*);
-typedef void (*FnBGSetRenderTarget)(RendererShadowState* arShadowState, unsigned int auiIndex, int aiTarget, SetRenderTargetMode aeMode);
-typedef void (*BSEffectShaderProperty_GetRenderPasses_Original)(BSEffectShaderProperty* thisPtr, BSGeometry* geom, uint32_t renderMode, BSShaderAccumulator* accumulator);
-typedef void (*FnRender_PreUI)(uint64_t ptr_drawWorld);
-typedef void (*FnBegin)(uint64_t ptr_drawWorld);
-typedef void (*FnMain_DrawWorldAndUI)(uint64_t, bool);
-typedef void (*FnMain_Swap)();
-typedef void (*FnBSCullingGroup_Process)(BSCullingGroup*, bool);
-typedef void (*Fn)(uint64_t);
-typedef void (*FnhkAdd1stPersonGeomToCuller)(uint64_t);
-typedef void (*hkRTManager_CreateaRenderTarget)(RenderTargetManager rtm, int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
-typedef void (*BSBatchRenderer_Draw_t)(BSRenderPass* apRenderPass);
-typedef void (*MapDynamicTriShapeDynamicData_t)(Renderer*, BSDynamicTriShape*, DynamicTriShape*, DynamicTriShapeDrawData*, unsigned int);
-typedef void (*BSStreamLoad)(BSStream* stream, const char* apFileName, NiBinaryStream* apStream);
-typedef void (*PCUpdateMainThread)(PlayerCharacter*);
-typedef void (*FnDrawTriShape)(BSGraphics::Renderer* thisPtr, BSGraphics::TriShape* apTriShape, unsigned int auiStartIndex, unsigned int auiNumTriangles);
-typedef void(__fastcall* FnDrawIndexed)(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
-typedef void(__fastcall* FnMainPreRender)(Main* thisptr, int auiDestination);
-typedef void (__fastcall *FnTAA)(ImageSpaceEffectTemporalAA*, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param);
-typedef void (*FnBSCullingGroupAdd)(BSCullingGroup* ,NiAVObject* apObj,const NiBound* aBound,const unsigned int aFlags);
-typedef void (*FnBSShaderAccumulator_RenderBatches)(BSShaderAccumulator*, int, bool, int);
-typedef void (*FnBSCullingGroup_SetCompoundFrustum)(BSCullingGroup*, BSCompoundFrustum*);
-typedef void (*FnDrawWorld_Move1stPersonToOrigin)(uint64_t);
-
-
-	// 存储原始函数的指针
-FnDrawWorldLightUpdate g_DrawWorldLightUpdateOriginal = nullptr;
-DoZPrePassOriginalFuncType g_pDoZPrePassOriginal = nullptr;
-RenderZPrePassOriginalFuncType g_RenderZPrePassOriginal = nullptr;
-RenderAlphaTestZPrePassOriginalFuncType g_RenderAlphaTestZPrePassOriginal = nullptr;
-ResetSunOcclusionOriginalFuncType g_ResetSunOcclusionOriginal = nullptr;
-BSDistantObjectInstanceRenderer_Render_OriginalFuncType g_BSDistantObjectInstanceRenderer_RenderOriginal = nullptr;
-RenderTargetManager_DecompressDepthStencilTarget_OriginalFuncType g_DecompressDepthStencilTargetOriginal = nullptr;
-RTM_SetCurrentRenderTarget_OriginalFuncType g_SetCurrentRenderTargetOriginal = nullptr;
-RTM_SetCurrentDepthStencilTarget_OriginalFuncType g_SetCurrentDepthStencilTargetOriginal = nullptr;
-FnSetCurrentCubeMapRenderTarget g_SetCurrentCubeMapRenderTargetOriginal = nullptr;
-FnSetDirtyRenderTargets g_SetDirtyRenderTargetsOriginal = nullptr;
-FnBSShaderRenderTargetsCreate g_BSShaderRenderTargetsCreateOriginal = nullptr;
-FnBGSetRenderTarget g_BGSetRenderTargetOriginal = nullptr;
-BSEffectShaderProperty_GetRenderPasses_Original g_BSEffectShaderGetRenderPassesOriginal = nullptr;
-FnRender_PreUI g_RenderPreUIOriginal = nullptr;
-FnBegin g_BeginOriginal = nullptr;
-FnMain_DrawWorldAndUI g_DrawWorldAndUIOriginal = nullptr;
-FnMainPreRender g_MainPreRender = nullptr;
-FnBSCullingGroup_Process g_BSCullingGroupProcessOriginal = nullptr;
-Fn g_MainAccumOriginal = nullptr;
-Fn g_OcclusionMapRenderOriginal = nullptr;
-Fn g_MainRenderSetupOriginal = nullptr;
-Fn g_OpaqueWireframeOriginal = nullptr;
-Fn g_DeferredPrePassOriginal = nullptr;
-Fn g_DeferredLightsImplOriginal = nullptr;
-Fn g_DeferredCompositeOriginal = nullptr;
-Fn g_ForwardOriginal = nullptr;
-Fn g_RefractionOriginal = nullptr;
-FnhkAdd1stPersonGeomToCuller g_Add1stPersonGeomToCullerOriginal = nullptr;
-hkRTManager_CreateaRenderTarget g_RTManagerCreateRenderTargetOriginal = nullptr;
-BSBatchRenderer_Draw_t g_originalBSBatchRendererDraw = nullptr;
-MapDynamicTriShapeDynamicData_t g_MapDynamicTriShapeDynamicData = nullptr;
-BSStreamLoad g_BSStreamLoad = nullptr;
-PCUpdateMainThread g_PCUpdateMainThread = nullptr;
-FnDrawTriShape g_DrawTriShape = nullptr;
-FnDrawIndexed g_DrawIndexed = nullptr;
-FnTAA g_TAA = nullptr;
-FnBSCullingGroupAdd g_BSCullingGroupAdd = nullptr;
-FnBSShaderAccumulator_RenderBatches g_BSShaderAccumulatorRenderBatches = nullptr;
-FnBSCullingGroup_SetCompoundFrustum g_BSCullingGroup_SetCompoundFrustum = nullptr;
-FnDrawWorld_Move1stPersonToOrigin g_DrawWorld_Move1stPersonToOrigin = nullptr;
-
 
 bool isFirstCopy = false;
 bool isRenderReady = false;
@@ -261,21 +122,60 @@ static RendererShadowState* GetRendererShadowState()
 using namespace ThroughScope;
 using namespace ThroughScope::Utilities;
 
+static HookManager* g_hookMgr = HookManager::GetSingleton();
 
+namespace ThroughScope {
+
+using namespace ::ThroughScope::Utilities;
+
+// Access global variables from outside the namespace using global scope operator
+using ::g_LightStateBackups;
+using ::savedDrawWorld;
+using ::g_pchar;
+using ::ggg_ScopeCamera;
+using ::isScopCamReady;
+using ::isRenderReady;
+using ::d3dHooks;
+using ::nifloader;
+using ::upscalerModular;
+
+// Access other namespace symbols (can't use entire namespace with using)
+// FirstSpawnDelay namespace will be accessed directly
+
+// Access REL pointers from global scope
+using ::ptr_DrawWorldShadowNode;
+using ::ptr_DrawWorld1stPerson;
+using ::ptr_DrawWorld_b1stPersonEnable;
+using ::ptr_DrawWorld_b1stPersonInWorld;
+using ::ptr_Draw1stPersonAccum;
+using ::ptr_DrawWorldAccum;
+using ::ptr_k1stPersonCullingGroup;
+using ::ptr_BSShaderManagerSpCamera;
+using ::ptr_DrawWorldCamera;
+using ::ptr_DrawWorldVisCamera;
+using ::ptr_DrawWorld1stCamera;
+using ::ptr_DrawWorldSpCamera;
+using ::ptr_DefaultContext;
+using ::ptr_tls_index;
+using ::FPZPrePassDrawDataCount;
+using ::FPAlphaTestZPrePassDrawDataCount;
+using ::DrawWorldGeomListCullProc0;
+using ::DrawWorldGeomListCullProc1;
+using ::DrawWorldCullingProcess;
 
 void hkDrawWorld_Move1stPersonToOrigin(uint64_t thisPtr)
 {
-	g_DrawWorld_Move1stPersonToOrigin(thisPtr);
+	g_hookMgr->g_DrawWorld_Move1stPersonToOrigin(thisPtr);
 }
 
 void hkBSBatchRenderer_Draw(BSRenderPass* apRenderPass)
 {
-	g_originalBSBatchRendererDraw(apRenderPass);
+	g_hookMgr->g_originalBSBatchRendererDraw(apRenderPass);
 }
 
 void hkBSCullingGroup_SetCompoundFrustum(BSCullingGroup* thisPtr, BSCompoundFrustum* apCompoundFrustum)
 {
-	g_BSCullingGroup_SetCompoundFrustum(thisPtr, apCompoundFrustum);
+	g_hookMgr->g_BSCullingGroup_SetCompoundFrustum(thisPtr, apCompoundFrustum);
 }
 
 bool IsValidObject(NiAVObject* apObj)
@@ -303,7 +203,7 @@ void hkBSCullingGroupAdd(BSCullingGroup* thisPtr,
 		return;
 	}
 
-	g_BSCullingGroupAdd(thisPtr, apObj, aBound, aFlags);
+	g_hookMgr->g_BSCullingGroupAdd(thisPtr, apObj, aBound, aFlags);
 }
 
 //renderTargets[0] = SwapChainImage RenderTarget(Only rtView and srView)
@@ -318,14 +218,12 @@ void hkBSCullingGroupAdd(BSCullingGroup* thisPtr,
 // 添加一个标志来区分瞄具专用渲染
 static bool g_IsScopeOnlyRender = false;
 
-void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld);
-
 void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param)
 {
 
 	// 检查原始函数指针是否有效
-	if (!g_TAA) {
-		logger::error("g_TAA is null! Cannot call original function");
+	if (!g_hookMgr->g_TAA) {
+		logger::error("g_hookMgr->g_TAA is null! Cannot call original function");
 		return;
 	}
 
@@ -337,7 +235,7 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 	}
 
 	// 1. 先执行原本的TAA
-	g_TAA(thisPtr, a_geometry, a_param);
+	g_hookMgr->g_TAA(thisPtr, a_geometry, a_param);
 
 	//if (ScopeCamera::IsRenderingForScope())
 	//	return;
@@ -720,7 +618,7 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 		}
 	}
 
-	g_RenderPreUIOriginal(savedDrawWorld); 
+	g_hookMgr->g_RenderPreUIOriginal(savedDrawWorld); 
 
 	// 立即重新启用光源更新
 	if (pShadowSceneNode) {
@@ -866,12 +764,12 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 
 void __fastcall hkMainPreRender(Main* thisPtr, int auiDestination)
 {
-	g_MainPreRender(thisPtr, auiDestination);
+	g_hookMgr->g_MainPreRender(thisPtr, auiDestination);
 }
 
 void __fastcall hkBegin(uint64_t ptr_drawWorld)
 {
-	g_BeginOriginal(ptr_drawWorld);
+	g_hookMgr->g_BeginOriginal(ptr_drawWorld);
 }
 
 void hkDrawTriShape(BSGraphics::Renderer* thisPtr, BSGraphics::TriShape* apTriShape, unsigned int auiStartIndex, unsigned int auiNumTriangles)
@@ -881,31 +779,31 @@ void hkDrawTriShape(BSGraphics::Renderer* thisPtr, BSGraphics::TriShape* apTriSh
 	if (trishape->numTriangles == 32 && trishape->numVertices == 33)
 		return;
 
-	g_DrawTriShape(thisPtr, apTriShape, auiStartIndex, auiNumTriangles);
+	g_hookMgr->g_DrawTriShape(thisPtr, apTriShape, auiStartIndex, auiNumTriangles);
 }
 
 void hkMapDynamicTriShapeDynamicData(Renderer* renderer, BSDynamicTriShape* bsDynamicTriShape, DynamicTriShape* dynamicTriShape, DynamicTriShapeDrawData* drawdata, unsigned int auiSize)
 {
-	g_MapDynamicTriShapeDynamicData(renderer, bsDynamicTriShape, dynamicTriShape, drawdata, auiSize);
+	g_hookMgr->g_MapDynamicTriShapeDynamicData(renderer, bsDynamicTriShape, dynamicTriShape, drawdata, auiSize);
 }
 
 void hkBSStreamLoad(BSStream* stream, const char* apFileName, NiBinaryStream* apStream)
 {
 	logger::info("apFileName: {}", apFileName);
-	g_BSStreamLoad(stream, apFileName, apStream);
+	g_hookMgr->g_BSStreamLoad(stream, apFileName, apStream);
 }
 
 // ------ Main Render Hooks ------
 void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 {
 	savedDrawWorld = ptr_drawWorld;
-	D3DEventNode(g_RenderPreUIOriginal(ptr_drawWorld), L"Render_PreUI");
+	D3DEventNode(g_hookMgr->g_RenderPreUIOriginal(ptr_drawWorld), L"Render_PreUI");
 }
 
 void __fastcall hkRenderZPrePass(BSGraphics::RendererShadowState* rshadowState, BSGraphics::ZPrePassDrawData* aZPreData,
 	unsigned __int64* aVertexDesc, unsigned __int16* aCullmode, unsigned __int16* aDepthBiasMode)
 {
-	g_RenderZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode);
+	g_hookMgr->g_RenderZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode);
 }
 
 void __fastcall hkRenderAlphaTestZPrePass(BSGraphics::RendererShadowState* rshadowState,
@@ -915,14 +813,12 @@ void __fastcall hkRenderAlphaTestZPrePass(BSGraphics::RendererShadowState* rshad
 	unsigned __int16* aDepthBiasMode,
 	ID3D11SamplerState** aCurSamplerState)
 {
-	g_RenderAlphaTestZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode, aCurSamplerState);
+	g_hookMgr->g_RenderAlphaTestZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode, aCurSamplerState);
 }
 
 void __fastcall hkDrawWorld_LightUpdate(uint64_t ptr_drawWorld)
 {
-	// 直接调用原函数，不要修改任何状态
-	// 光源位置的同步已经在hkTAA中处理了
-	g_DrawWorldLightUpdateOriginal(ptr_drawWorld);
+	g_hookMgr->g_DrawWorldLightUpdateOriginal(ptr_drawWorld);
 }
 
 void __fastcall hkRenderer_DoZPrePass(uint64_t thisPtr, NiCamera* apFirstPersonCamera, NiCamera* apWorldCamera, float afFPNear, float afFPFar, float afNear, float afFar)
@@ -931,87 +827,77 @@ void __fastcall hkRenderer_DoZPrePass(uint64_t thisPtr, NiCamera* apFirstPersonC
 		*FPZPrePassDrawDataCount = 0;
 		*FPAlphaTestZPrePassDrawDataCount = 0;
 	}
-	D3DEventNode(g_pDoZPrePassOriginal(thisPtr, apFirstPersonCamera, apWorldCamera, afFPNear, afFPFar, afNear, afFar), L"hkRenderer_DoZPrePass");
+	D3DEventNode(g_hookMgr->g_pDoZPrePassOriginal(thisPtr, apFirstPersonCamera, apWorldCamera, afFPNear, afFPFar, afNear, afFar), L"hkRenderer_DoZPrePass");
 }
 void __fastcall hkBSDistantObjectInstanceRenderer_Render(uint64_t thisPtr)
 {
-	D3DEventNode(g_BSDistantObjectInstanceRenderer_RenderOriginal(thisPtr), L"hkBSDistantObjectInstanceRenderer_Render");
+	D3DEventNode(g_hookMgr->g_BSDistantObjectInstanceRenderer_RenderOriginal(thisPtr), L"hkBSDistantObjectInstanceRenderer_Render");
 }
 void __fastcall hkBSShaderAccumulator_ResetSunOcclusion(BSShaderAccumulator* thisPtr)
 {
 	// 瞄具渲染时的处理已经在hkRender_PreUI中完成了眼睛位置同步
 	// 这里直接执行原始函数即可
-	D3DEventNode(g_ResetSunOcclusionOriginal(thisPtr), L"hkBSShaderAccumulator_ResetSunOcclusion");
+	D3DEventNode(g_hookMgr->g_ResetSunOcclusionOriginal(thisPtr), L"hkBSShaderAccumulator_ResetSunOcclusion");
 }
 void __fastcall hkDecompressDepthStencilTarget(RenderTargetManager* thisPtr, int index)
 {
-	D3DEventNode(g_DecompressDepthStencilTargetOriginal(thisPtr, index), L"hkBSShaderAccumulator_ResetSunOcclusion");
+	D3DEventNode(g_hookMgr->g_DecompressDepthStencilTargetOriginal(thisPtr, index), L"hkBSShaderAccumulator_ResetSunOcclusion");
 }
 void __fastcall hkAdd1stPersonGeomToCuller(uint64_t thisPtr)
 {
 	if (ScopeCamera::IsRenderingForScope())
 		return;
-	g_Add1stPersonGeomToCullerOriginal(thisPtr);
+	g_hookMgr->g_Add1stPersonGeomToCullerOriginal(thisPtr);
 }
 void __fastcall hkBSShaderAccumulator_RenderBatches(
 	BSShaderAccumulator* thisPtr, int aiShader, bool abAlphaPass, int aeGroup)
 {
-	typedef void (*FnRenderBatches)(BSShaderAccumulator*, int, bool, int);
-	FnRenderBatches fn = (FnRenderBatches)BSShaderAccumulator_RenderBatches_Ori.address();
-	(*fn)(thisPtr, aiShader, abAlphaPass, aeGroup);
+	g_hookMgr->g_BSShaderAccumulatorRenderBatches(thisPtr, aiShader, abAlphaPass, aeGroup);
 }
 void __fastcall hkBSShaderAccumulator_RenderBlendedDecals(BSShaderAccumulator* thisPtr)
 {
-	typedef void (*Fn)(BSShaderAccumulator*);
-	Fn fn = (Fn)BSShaderAccumulator_RenderBlendedDecals_Ori.address();
-	(*fn)(thisPtr);
+	g_hookMgr->g_BSShaderAccumulator_RenderBlendedDecals(thisPtr);
 }
 void __fastcall hkBSShaderAccumulator_RenderOpaqueDecals(BSShaderAccumulator* thisPtr)
 {
-	typedef void (*Fn)(BSShaderAccumulator*);
-	Fn fn = (Fn)BSShaderAccumulator_RenderOpaqueDecals_Ori.address();
-	(*fn)(thisPtr);
+	g_hookMgr->g_BSShaderAccumulator_RenderOpaqueDecals(thisPtr);
 }
 void __fastcall hkBSCullingGroup_Process(BSCullingGroup* thisPtr, bool abFirstStageOnly)
 {
-	g_BSCullingGroupProcessOriginal(thisPtr, abFirstStageOnly);
+	g_hookMgr->g_BSCullingGroupProcessOriginal(thisPtr, abFirstStageOnly);
 }
 RenderTarget* __fastcall hkRenderer_CreateRenderTarget(Renderer* renderer, int aId, const wchar_t* apName, const RenderTargetProperties* aProperties)
 {
-	typedef RenderTarget* (*hkRenderer_CreateRenderTarget)(Renderer* renderer, int aId, const wchar_t* apName, const RenderTargetProperties* aProperties);
-	hkRenderer_CreateRenderTarget fn = (hkRenderer_CreateRenderTarget)Renderer_CreateRenderTarget_Ori.address();
-	return (*fn)(renderer, aId, apName, aProperties);
+	return g_hookMgr->g_Renderer_CreateRenderTarget(renderer, aId, apName, aProperties);
 }
 void __fastcall hkRTManager_CreateRenderTarget(RenderTargetManager rtm, int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent)
 {
-	g_RTManagerCreateRenderTargetOriginal(rtm, aIndex, arProperties, aPersistent);
+	g_hookMgr->g_RTManagerCreateRenderTargetOriginal(rtm, aIndex, arProperties, aPersistent);
 }
 
 void __fastcall hkMainAccum(uint64_t ptr_drawWorld)
 {
-	D3DEventNode(g_MainAccumOriginal(ptr_drawWorld), L"hkMainAccum");
+	D3DEventNode(g_hookMgr->g_MainAccumOriginal(ptr_drawWorld), L"hkMainAccum");
 }
 
 void __fastcall hkOcclusionMapRender()
 {
-	typedef void (*Fn)();
-	Fn fn = (Fn)DrawWorld_OcclusionMapRender_Ori.address();
-	D3DEventNode((*fn)(), L"hkOcclusionMapRender");
+	D3DEventNode(g_hookMgr->g_OcclusionMapRender(), L"hkOcclusionMapRender");
 }
 
 void __fastcall hkMainRenderSetup(uint64_t ptr_drawWorld)
 {
-	D3DEventNode(g_MainRenderSetupOriginal(ptr_drawWorld), L"hkMainRenderSetup");
+	D3DEventNode(g_hookMgr->g_MainRenderSetupOriginal(ptr_drawWorld), L"hkMainRenderSetup");
 }
 
 void __fastcall hkOpaqueWireframe(uint64_t ptr_drawWorld)
 {
-	D3DEventNode(g_OpaqueWireframeOriginal(ptr_drawWorld), L"hkOpaqueWireframe");
+	D3DEventNode(g_hookMgr->g_OpaqueWireframeOriginal(ptr_drawWorld), L"hkOpaqueWireframe");
 }
 
 void __fastcall hkDeferredPrePass(uint64_t ptr_drawWorld)
 {
-	D3DEventNode(g_DeferredPrePassOriginal(ptr_drawWorld), L"hkDeferredPrePass");
+	D3DEventNode(g_hookMgr->g_DeferredPrePassOriginal(ptr_drawWorld), L"hkDeferredPrePass");
 }
 
 void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
@@ -1038,30 +924,30 @@ void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
 		}
 	}
 
-	D3DEventNode(g_DeferredLightsImplOriginal(ptr_drawWorld), L"hkDeferredLightsImpl");
+	D3DEventNode(g_hookMgr->g_DeferredLightsImplOriginal(ptr_drawWorld), L"hkDeferredLightsImpl");
 }
 
 
 void __fastcall hkDeferredComposite(uint64_t ptr_drawWorld)
 {
-	D3DEventNode(g_DeferredCompositeOriginal(ptr_drawWorld), L"hkDeferredComposite");
+	D3DEventNode(g_hookMgr->g_DeferredCompositeOriginal(ptr_drawWorld), L"hkDeferredComposite");
 }
 
 void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
 {
 	D3DHooks::SetForwardStage(true);
-	D3DEventNode(g_ForwardOriginal(ptr_drawWorld), L"hkDrawWorld_Forward");
+	D3DEventNode(g_hookMgr->g_ForwardOriginal(ptr_drawWorld), L"hkDrawWorld_Forward");
 	D3DHooks::SetForwardStage(false);
 }
 
 void __fastcall hkDrawWorld_Refraction(uint64_t this_ptr)
 {
-	D3DEventNode(g_RefractionOriginal(this_ptr), L"hkDrawWorld_Refraction");
+	D3DEventNode(g_hookMgr->g_RefractionOriginal(this_ptr), L"hkDrawWorld_Refraction");
 }
 
 void __fastcall hkMain_DrawWorldAndUI(uint64_t ptr_drawWorld, bool abBackground)
 {
-	D3DEventNode(g_DrawWorldAndUIOriginal(ptr_drawWorld, abBackground), L"hkMain_DrawWorldAndUI");
+	D3DEventNode(g_hookMgr->g_DrawWorldAndUIOriginal(ptr_drawWorld, abBackground), L"hkMain_DrawWorldAndUI");
 }
 
 namespace FirstSpawnDelay
@@ -1151,7 +1037,7 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 	if (!weaponInfo.currentConfig)
 	{
 		D3DHooks::SetEnableRender(false);
-		return g_PCUpdateMainThread(pChar);
+		return g_hookMgr->g_PCUpdateMainThread(pChar);
 	}
 
 	// 定期检查并恢复ZoomData（防止游戏重置）
@@ -1179,11 +1065,11 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 				ScopeCamera::RestoreZoomDataForCurrentWeapon();
 			}
 		}
-		return g_PCUpdateMainThread(pChar);
+		return g_hookMgr->g_PCUpdateMainThread(pChar);
 	}
 
 	if (g_pchar->IsInThirdPerson())
-		return g_PCUpdateMainThread(pChar);
+		return g_hookMgr->g_PCUpdateMainThread(pChar);
 
 	if (ScopeCamera::IsSideAim() 
 		|| UI::GetSingleton()->GetMenuOpen("PauseMenu") 
@@ -1205,222 +1091,10 @@ void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 		D3DHooks::SetEnableRender(false);
 	}
 
-	g_PCUpdateMainThread(pChar);
+	g_hookMgr->g_PCUpdateMainThread(pChar);
 }
 
-// 延迟 hook TAA 的函数
-void DelayedTAAHook()
-{
-	static int retryCount = 0;
-	const int maxRetries = 5;
-
-	REL::Relocation<std::uintptr_t> TAAFunc(REL::ID(528052));
-	void* targetAddr = reinterpret_cast<void*>(TAAFunc.address());
-
-	// 检查 hook 是否已经生效
-	if (g_TAA != nullptr) {
-		logger::info("TAA hook already active");
-		return;
-	}
-
-	retryCount++;
-	logger::info("Attempting TAA hook (attempt {}/{})", retryCount, maxRetries);
-
-	// 尝试创建 hook
-	MH_STATUS status = MH_CreateHook(targetAddr,
-	                                 reinterpret_cast<void*>(&hkTAA),
-	                                 reinterpret_cast<void**>(&g_TAA));
-
-	if (status == MH_OK && MH_EnableHook(targetAddr) == MH_OK) {
-		logger::info("TAA hook successfully created on attempt {}", retryCount);
-	} else if (retryCount < maxRetries) {
-		// 如果失败且未达到最大重试次数，设置定时器重试
-		std::thread([targetAddr]() {
-			std::this_thread::sleep_for(std::chrono::seconds(2));
-			DelayedTAAHook();
-		}).detach();
-	} else {
-		logger::error("Failed to create TAA hook after {} attempts", maxRetries);
-	}
-}
-
-void RegisterHooks()
-{
-	logger::info("Registering hooks...");
-	using namespace Utilities;
-
-	CreateAndEnableHook((LPVOID)DrawWorld_LightUpdate_Ori.address(), &hkDrawWorld_LightUpdate, reinterpret_cast<LPVOID*>(&g_DrawWorldLightUpdateOriginal), "DrawWorld_LightUpdate");
-
-	CreateAndEnableHook((LPVOID)Renderer_DoZPrePass_Ori.address(), &hkRenderer_DoZPrePass, reinterpret_cast<LPVOID*>(&g_pDoZPrePassOriginal), "DoZPrePass");
-	CreateAndEnableHook((LPVOID)BSGraphics_RenderZPrePass_Ori.address(), &hkRenderZPrePass, reinterpret_cast<LPVOID*>(&g_RenderZPrePassOriginal), "RenderZPrePass");
-	/*CreateAndEnableHook((LPVOID)BSGraphics_RenderAlphaTestZPrePass_Ori.address(), &hkRenderAlphaTestZPrePass, reinterpret_cast<LPVOID*>(&g_RenderAlphaTestZPrePassOriginal), "RenderAlphaTestZPrePass");*/
-
-	CreateAndEnableHook((LPVOID)BSShaderAccumulator_ResetSunOcclusion_Ori.address(), &hkBSShaderAccumulator_ResetSunOcclusion,
-		reinterpret_cast<LPVOID*>(&g_ResetSunOcclusionOriginal), "ResetSunOcclusion");
-
-	/*CreateAndEnableHook((LPVOID)BSDistantObjectInstanceRenderer_Render_Ori.address(), &hkBSDistantObjectInstanceRenderer_Render,
-		reinterpret_cast<LPVOID*>(&g_BSDistantObjectInstanceRenderer_RenderOriginal), "BSDistantObjectInstanceRenderer_Render");*/
-
-	/*CreateAndEnableHook((LPVOID)RenderTargetManager_DecompressDepthStencilTarget_Ori.address(), &hkDecompressDepthStencilTarget,
-		reinterpret_cast<LPVOID*>(&g_DecompressDepthStencilTargetOriginal), "DecompressDepthStencilTarget");*/
-
-	CreateAndEnableHook((LPVOID)DrawWorld_Render_PreUI_Ori.address(), &hkRender_PreUI,
-		reinterpret_cast<LPVOID*>(&g_RenderPreUIOriginal), "Render_PreUI");
-
-	CreateAndEnableHook((LPVOID)DrawWorld_Begin_Ori.address(), &hkBegin,
-		reinterpret_cast<LPVOID*>(&g_BeginOriginal), "Begin");
-
-	CreateAndEnableHook((LPVOID)Main_DrawWorldAndUI_Ori.address(), &hkMain_DrawWorldAndUI,
-		reinterpret_cast<LPVOID*>(&g_DrawWorldAndUIOriginal), "Main_DrawWorldAndUI");
-
-	//CreateAndEnableHook((LPVOID)BSCullingGroup_Process_Ori.address(), &hkBSCullingGroup_Process,
-	//	reinterpret_cast<LPVOID*>(&g_BSCullingGroupProcessOriginal), "BSCullingGroup_Process");
-
-	CreateAndEnableHook((LPVOID)DrawWorld_MainAccum_Ori.address(), &hkMainAccum,
-		reinterpret_cast<LPVOID*>(&g_MainAccumOriginal), "MainAccum");
-
-	CreateAndEnableHook((LPVOID)DrawWorld_MainRenderSetup_Ori.address(), &hkMainRenderSetup,
-		reinterpret_cast<LPVOID*>(&g_MainRenderSetupOriginal), "MainRenderSetup");
-
-	/*CreateAndEnableHook((LPVOID)DrawWorld_OpaqueWireframe_Ori.address(), &hkOpaqueWireframe,
-		reinterpret_cast<LPVOID*>(&g_OpaqueWireframeOriginal), "OpaqueWireframe");*/
-
-	/*CreateAndEnableHook((LPVOID)DrawWorld_DeferredPrePass_Ori.address(), &hkDeferredPrePass,
-		reinterpret_cast<LPVOID*>(&g_DeferredPrePassOriginal), "DeferredPrePass");*/
-
-	CreateAndEnableHook((LPVOID)DrawWorld_DeferredLightsImpl_Ori.address(), &hkDeferredLightsImpl,
-		reinterpret_cast<LPVOID*>(&g_DeferredLightsImplOriginal), "DeferredLightsImpl");
-
-	/*CreateAndEnableHook((LPVOID)DrawWorld_DeferredComposite_Ori.address(), &hkDeferredComposite,
-		reinterpret_cast<LPVOID*>(&g_DeferredCompositeOriginal), "DeferredComposite");*/
-
-	CreateAndEnableHook((LPVOID)DrawWorld_Forward_Ori.address(), &hkDrawWorld_Forward,
-		reinterpret_cast<LPVOID*>(&g_ForwardOriginal), "DrawWorld_Forward");
-
-	CreateAndEnableHook((LPVOID)DrawWorld_Refraction_Ori.address(), &hkDrawWorld_Refraction,
-		reinterpret_cast<LPVOID*>(&g_RefractionOriginal), "DrawWorld_Refraction");
-
-	CreateAndEnableHook((LPVOID)DrawWorld_Add1stPersonGeomToCuller_Ori.address(), &hkAdd1stPersonGeomToCuller,
-		reinterpret_cast<LPVOID*>(&g_Add1stPersonGeomToCullerOriginal), "Add1stPersonGeomToCuller");
-
-	/*CreateAndEnableHook((LPVOID)RTM_CreateRenderTarget_Ori.address(), &hkRTManager_CreateRenderTarget,
-		reinterpret_cast<LPVOID*>(&g_RTManagerCreateRenderTargetOriginal), "RTManager_CreateRenderTarget");*/
-
-	// 重新启用BSBatchRenderer_Draw hook，在其中添加剔除逻辑
-	CreateAndEnableHook((LPVOID)BSBatchRenderer_Draw_Ori.address(), &hkBSBatchRenderer_Draw,
-		reinterpret_cast<LPVOID*>(&g_originalBSBatchRendererDraw), "BSBatchRenderer_Draw");
-	 
-	 CreateAndEnableHook((LPVOID)PCUpdateMainThread_Ori.address(), &hkPCUpdateMainThread,
-		reinterpret_cast<LPVOID*>(&g_PCUpdateMainThread), "PCUpdateMainThread");
-
-	 CreateAndEnableHook((LPVOID)MainPreRender_Ori.address(), &hkMainPreRender,
-		 reinterpret_cast<LPVOID*>(&g_MainPreRender), "MainPreRender");
-
-	 CreateAndEnableHook((LPVOID)BSCullingGroupAdd_Ori.address(), &hkBSCullingGroupAdd,
-		 reinterpret_cast<LPVOID*>(&g_BSCullingGroupAdd), "BSCullingGroupAdd");
-
-	 CreateAndEnableHook((LPVOID)BSCullingGroup_SetCompoundFrustum_Ori.address(), &hkBSCullingGroup_SetCompoundFrustum,
-		 reinterpret_cast<LPVOID*>(&g_BSCullingGroup_SetCompoundFrustum), "BSCullingGroup_SetCompoundFrustum");
-	 
-	 
-	 CreateAndEnableHook((LPVOID)DrawWorld_Move1stPersonToOrigin_Ori.address(), &hkDrawWorld_Move1stPersonToOrigin,
-		 reinterpret_cast<LPVOID*>(&g_DrawWorld_Move1stPersonToOrigin), "DrawWorld_Move1stPersonToOrigin");
-
-	 /* CreateAndEnableHook((LPVOID)DrawTriShape_Ori.address(), &hkDrawTriShape,
-		  reinterpret_cast<LPVOID*>(&g_DrawTriShape), "DrawTriShape");*/
-
-	  //F4SE::Trampoline& trampoline = F4SE::GetTrampoline();
-	  //g_DrawIndexed = (FnDrawIndexed)trampoline.write_branch<5>(DrawIndexed_Ori.address(), reinterpret_cast<uintptr_t>(hkDrawIndexed));
-	  //
-
-	// Hook TAA render function with conflict detection
-	REL::Relocation<std::uintptr_t> TAAFunc(REL::ID(528052));  // 直接使用函数ID
-	void* targetAddr = reinterpret_cast<void*>(TAAFunc.address());
-
-	// 1. 检测是否已经被其他 mod hook 了
-	uint8_t* funcBytes = reinterpret_cast<uint8_t*>(targetAddr);
-	bool alreadyHooked = false;
-
-	// 检查常见的 hook 模式 (JMP, CALL 等)
-	if (funcBytes[0] == 0xE9 || funcBytes[0] == 0xFF || funcBytes[0] == 0x48) {
-		logger::warn("TAA function may already be hooked by another mod. First bytes: {:02X} {:02X} {:02X} {:02X} {:02X}",
-		            funcBytes[0], funcBytes[1], funcBytes[2], funcBytes[3], funcBytes[4]);
-		alreadyHooked = true;
-	}
-
-	// 2. 尝试移除已存在的 hook (如果有)
-	if (alreadyHooked) {
-		logger::info("Attempting to remove existing hook...");
-		MH_DisableHook(targetAddr);
-		MH_RemoveHook(targetAddr);
-	}
-
-	// 输出调试信息
-	logger::info("Target TAA function address: {:X}", reinterpret_cast<uintptr_t>(targetAddr));
-	logger::info("Hook function (hkTAA) address: {:X}", reinterpret_cast<uintptr_t>(&hkTAA));
-
-	// 3. 创建我们的 hook
-	MH_STATUS status = MH_CreateHook(targetAddr,
-	                                 reinterpret_cast<void*>(&hkTAA),
-	                                 reinterpret_cast<void**>(&g_TAA));
-
-	if (status != MH_OK) {
-		logger::error("Failed to create TAA hook. Status: {}", static_cast<int>(status));
-
-		// 4. 如果失败，尝试使用虚函数表 hook 作为后备方案
-		logger::info("Attempting vtable hook as fallback...");
-		REL::Relocation<std::uintptr_t> vtable_TAA(RE::ImageSpaceEffectTemporalAA::VTABLE[0]);
-		void** vtablePtr = reinterpret_cast<void**>(vtable_TAA.address());
-		void* originalFunc = vtablePtr[1];
-
-		// 检查虚函数表是否指向我们期望的函数
-		if (reinterpret_cast<uintptr_t>(originalFunc) == TAAFunc.address()) {
-			logger::info("Vtable points to expected function, modifying vtable directly");
-		} else {
-			logger::warn("Vtable function differs from expected. Vtable: {:X}, Expected: {:X}",
-			            reinterpret_cast<uintptr_t>(originalFunc), TAAFunc.address());
-		}
-
-		// 保存原始函数
-		g_TAA = reinterpret_cast<FnTAA>(originalFunc);
-
-		// 修改虚函数表
-		DWORD oldProtect;
-		if (VirtualProtect(&vtablePtr[1], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect)) {
-			vtablePtr[1] = reinterpret_cast<void*>(&hkTAA);
-			VirtualProtect(&vtablePtr[1], sizeof(void*), oldProtect, &oldProtect);
-			logger::info("TAA vtable hook applied successfully");
-		}
-	} else if (MH_EnableHook(targetAddr) != MH_OK) {
-		logger::error("Failed to enable TAA hook");
-	} else {
-		logger::info("TAA hook created successfully at address: {:X} (ID: 528052)", TAAFunc.address());
-		logger::info("Original function (g_TAA) points to: {:X}", reinterpret_cast<uintptr_t>(g_TAA));
-
-		// 5. 验证 hook 是否真正生效
-		funcBytes = reinterpret_cast<uint8_t*>(targetAddr);
-		logger::info("After hook - First bytes: {:02X} {:02X} {:02X} {:02X} {:02X}",
-		            funcBytes[0], funcBytes[1], funcBytes[2], funcBytes[3], funcBytes[4]);
-
-		// 验证 g_TAA 是否可调用
-		if (g_TAA) {
-			logger::info("g_TAA is valid and points to trampoline");
-		} else {
-			logger::error("g_TAA is null after successful hook!");
-		}
-	}
-
-	// 6. 如果初始 hook 失败，启动延迟 hook
-	if (g_TAA == nullptr) {
-		logger::warn("Initial TAA hook failed, starting delayed hook attempts...");
-		std::thread([]() {
-			std::this_thread::sleep_for(std::chrono::seconds(3));
-			DelayedTAAHook();
-		}).detach();
-	}
-
-	logger::info("Hooks registered successfully");
-}
+} // namespace ThroughScope
 
 
 
@@ -1460,7 +1134,7 @@ DWORD WINAPI InitThread(HMODULE hModule)
 void InitializePlugin()
 {
 	g_pchar = RE::PlayerCharacter::GetSingleton();
-	RegisterHooks();
+	g_hookMgr->RegisterAllHooks();
 	ThroughScope::EquipWatcher::GetSingleton()->Initialize();
 	ThroughScope::AnimationGraphEventWatcher::GetSingleton()->Initialize();
 	
