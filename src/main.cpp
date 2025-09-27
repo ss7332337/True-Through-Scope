@@ -266,15 +266,6 @@ using namespace ThroughScope::Utilities;
 void hkDrawWorld_Move1stPersonToOrigin(uint64_t thisPtr)
 {
 	g_DrawWorld_Move1stPersonToOrigin(thisPtr);
-	//if (ScopeCamera::IsRenderingForScope()) {
-	//	auto scopeCamera = ScopeCamera::GetScopeCamera();
-	//	//scopeCamera->SetViewFrustum(&scopeFrustum);
-	//	/*scopeCamera->port.left = 0.4;
-	//	scopeCamera->port.right = 0.6f;*/
-	//	//scopeCamera->lodAdjust = 0.6f;
-	//	//BSShaderUtil::SetCameraFOV(scopeCamera, ScopeCamera::GetTargetFOV(), 15.0f, 353840.0f);
-	//	//BSShaderManager::SetFOV(ScopeCamera::GetTargetFOV());
-	//}
 }
 
 void hkBSBatchRenderer_Draw(BSRenderPass* apRenderPass)
@@ -503,7 +494,19 @@ void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometr
 
 		// 调整视锥体参数以适应瞄具的FOV
 		float aspectRatio = scopeCamera->viewFrustum.right / scopeCamera->viewFrustum.top;
-		float fovRad = ScopeCamera::GetTargetFOV() * 0.01745329251f; // 转换为弧度
+		float targetFOV = ScopeCamera::GetTargetFOV();
+
+		// 限制FOV范围以避免极端俯仰角下的数值不稳定
+		// 当俯仰角接近±90度时，减小FOV以保持投影矩阵稳定
+		float pitch = asin(-scopeCamera->world.rotate.entry[2][1]);
+		float pitchDeg = pitch * 57.295779513f;
+		if (abs(pitchDeg) > 70.0f) {
+			float factor = (90.0f - abs(pitchDeg)) / 20.0f;
+			factor = std::max(0.3f, std::min(1.0f, factor));
+			targetFOV = targetFOV * factor;
+		}
+
+		float fovRad = targetFOV * 0.01745329251f;
 		float halfFovTan = tan(fovRad * 0.5f);
 
 		// 根据FOV重新计算视锥体边界
