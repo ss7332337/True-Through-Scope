@@ -21,6 +21,8 @@ set(SOURCES
 	src/RenderHooks.cpp
 	src/SimpleHooks.cpp
 	src/rendering/RenderStateManager.cpp
+	src/rendering/LightBackupSystem.cpp
+	src/rendering/SecondPassRenderer.cpp
 )
 	
 	

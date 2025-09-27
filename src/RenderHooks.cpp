@@ -5,6 +5,7 @@
 #include "RenderUtilities.h"
 #include "DataPersistence.h"
 #include "GlobalTypes.h"
+#include "rendering/LightBackupSystem.h"
 #include <thread>
 #include <chrono>
 
@@ -13,6 +14,7 @@ namespace ThroughScope
 	using namespace Utilities;
 
 	static HookManager* g_hookMgr = HookManager::GetSingleton();
+	static LightBackupSystem* g_lightBackup = LightBackupSystem::GetSingleton();
 
 	// 前向声明，实际定义在main.cpp中
 	namespace FirstSpawnDelay
@@ -114,25 +116,8 @@ namespace ThroughScope
 	void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
 	{
 		if (ScopeCamera::IsRenderingForScope()) {
-			auto shadowNode = *ptr_DrawWorldShadowNode;
-			if (shadowNode && !g_LightStateBackups.empty()) {
-				for (const auto& backup : g_LightStateBackups) {
-					auto light = backup.light.get();
-					if (!light) {
-						continue;
-					}
-
-					light->usFrustumCull = backup.frustumCull;
-					light->SetOccluded(backup.occluded);
-					light->SetTemporary(backup.temporary);
-					light->fLODDimmer = backup.lodDimmer;
-					light->spCamera = backup.camera;
-					light->SetCullingProcess(backup.cullingProcess);
-					if (light->bDynamicLight != backup.dynamic) {
-						light->SetDynamic(backup.dynamic);
-					}
-				}
-			}
+			// 在瞄具渲染过程中重新应用光源状态
+			g_lightBackup->ApplyLightStatesForScope();
 		}
 
 		D3DEventNode(g_hookMgr->g_DeferredLightsImplOriginal(ptr_drawWorld), L"hkDeferredLightsImpl");

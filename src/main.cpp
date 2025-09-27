@@ -104,11 +104,6 @@ namespace ThroughScope {
 
 using namespace ::ThroughScope::Utilities;
 
-// 使用当前命名空间中的全局变量和REL指针
-// 在该命名空间中，可以直接访问这些变量
-
-
-
 //renderTargets[0] = SwapChainImage RenderTarget(Only rtView and srView)
 //renderTargets[4] = Main Render_PreUI RenderTarget
 //renderTargets[26] = TAA 历史缓冲 = TAA PS t1
@@ -119,11 +114,6 @@ using namespace ::ThroughScope::Utilities;
 
 
 // 瞄具专用渲染标志已移至RenderStateManager
-
-
-
-
-
 namespace FirstSpawnDelay
 {
 	bool delayStarted = false;

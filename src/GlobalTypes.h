@@ -1,5 +1,11 @@
 #pragma once
 #include <NiFLoader.h>
+#include <Windows.h>
+
+// 前向声明
+namespace ThroughScope {
+    class D3DHooks;
+}
 
 namespace ThroughScope
 {
@@ -21,8 +27,7 @@ namespace ThroughScope
 	extern std::vector<LightStateBackup> g_LightStateBackups;
 	extern uint64_t savedDrawWorld;
 	extern RE::PlayerCharacter* g_pchar;
-	// isScopCamReady 和 isRenderReady 已移至 RenderStateManager
-	extern D3DHooks* d3dHooks;
+	extern ThroughScope::D3DHooks* d3dHooks;
 	extern NIFLoader* nifloader;
 	extern HMODULE upscalerModular;
 	extern RE::NiCamera* ggg_ScopeCamera;
