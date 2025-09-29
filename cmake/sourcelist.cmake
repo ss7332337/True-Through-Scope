@@ -23,6 +23,9 @@ set(SOURCES
 	src/rendering/RenderStateManager.cpp
 	src/rendering/LightBackupSystem.cpp
 	src/rendering/SecondPassRenderer.cpp
+	src/rendering/ThermalVisionControl.cpp
+	src/rendering/ThermalVision.cpp
+	src/rendering/TemperatureDetection.cpp
 )
 	
 	

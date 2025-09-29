@@ -182,6 +182,8 @@ endmacro()
 set_hlsl_properties(src/HLSL/TrueScopeShader.hlsl Pixel main)
 set_hlsl_properties(src/HLSL/ImageSpaceEffectVS.hlsl Vertex main)
 set_hlsl_properties(src/HLSL/ImageSpaceEffect.hlsl Pixel main)
+set_hlsl_properties(src/HLSL/ThermalVision_CS.hlsl Compute main)
+set_hlsl_properties(src/HLSL/ThermalVision_PS.hlsl Pixel main)
 
 target_include_directories(
 	${PROJECT_NAME}
@@ -267,9 +269,9 @@ add_custom_target(
 	create_artifact_TTS
 	COMMAND
 		"${CMAKE_CURRENT_SOURCE_DIR}/${SCRIPT}"
-		"--name=/"${PROJECT_NAME}/""
-		"--dll=/"$<TARGET_FILE:${PROJECT_NAME}>/""
-		"--pdb=/"$<TARGET_PDB_FILE:${PROJECT_NAME}>/""
+		"--name=${PROJECT_NAME}"
+		"--dll=$<TARGET_FILE:${PROJECT_NAME}>"
+		"--pdb=$<TARGET_PDB_FILE:${PROJECT_NAME}>"
 	WORKING_DIRECTORY
 		${CMAKE_CURRENT_BINARY_DIR}
 	SOURCES

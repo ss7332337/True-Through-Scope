@@ -1,6 +1,7 @@
 #include "SecondPassRenderer.h"
 #include "GlobalTypes.h"
 #include "HookManager.h"
+#include "ThermalVision.h"
 
 namespace ThroughScope
 {
@@ -9,6 +10,7 @@ namespace ThroughScope
         , m_device(device)
         , m_d3dHooks(d3dHooks)
         , m_lightBackup(LightBackupSystem::GetSingleton())
+        , m_thermalVision(nullptr)
         , m_renderStateMgr(RenderStateManager::GetSingleton())
     {
         if (!ValidateD3DResources()) {
@@ -19,6 +21,14 @@ namespace ThroughScope
     SecondPassRenderer::~SecondPassRenderer()
     {
         CleanupResources();
+
+        // 清理热成像资源
+        if (m_thermalRTV) m_thermalRTV->Release();
+        if (m_thermalSRV) m_thermalSRV->Release();
+        if (m_thermalRenderTarget) m_thermalRenderTarget->Release();
+        if (m_thermalVision) {
+            m_thermalVision->Shutdown();
+        }
     }
 
     bool SecondPassRenderer::ExecuteSecondPass()
@@ -67,6 +77,11 @@ namespace ThroughScope
             // 5. 执行第二次渲染
             DrawScopeContent();
             m_renderExecuted = true;
+
+            // 5.5 如果启用热成像，应用热成像效果
+            if (m_thermalVisionEnabled) {
+                ApplyThermalVisionEffect();
+            }
 
             // 6. 恢复第一次渲染状态
             RestoreFirstPass();
@@ -326,6 +341,78 @@ namespace ThroughScope
         D3DPERF_EndEvent();
 
         logger::debug("Scope content rendered");
+    }
+
+    void SecondPassRenderer::ApplyThermalVisionEffect()
+    {
+        logger::debug("Applying thermal vision effect...");
+
+        // 初始化热成像系统（如果尚未初始化）
+        if (!m_thermalVision) {
+            m_thermalVision = ThermalVision::GetSingleton();
+            if (!m_thermalVision->Initialize(m_device, m_context)) {
+                logger::error("Failed to initialize thermal vision system");
+                return;
+            }
+        }
+
+        // 创建热成像渲染目标（如果尚未创建）
+        if (!m_thermalRenderTarget) {
+            // 获取当前渲染目标的描述
+            D3D11_TEXTURE2D_DESC desc;
+            m_mainRTTexture->GetDesc(&desc);
+
+            // 创建热成像渲染目标
+            desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+            HRESULT hr = m_device->CreateTexture2D(&desc, nullptr, &m_thermalRenderTarget);
+            if (FAILED(hr)) {
+                logger::error("Failed to create thermal render target");
+                return;
+            }
+
+            // 创建RTV
+            hr = m_device->CreateRenderTargetView(m_thermalRenderTarget, nullptr, &m_thermalRTV);
+            if (FAILED(hr)) {
+                logger::error("Failed to create thermal RTV");
+                return;
+            }
+
+            // 创建SRV
+            hr = m_device->CreateShaderResourceView(m_thermalRenderTarget, nullptr, &m_thermalSRV);
+            if (FAILED(hr)) {
+                logger::error("Failed to create thermal SRV");
+                return;
+            }
+        }
+
+        // 获取深度缓冲的SRV（用于温度估算）
+        ID3D11ShaderResourceView* depthSRV = nullptr;
+        if (m_mainDSTexture) {
+            D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+            srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+            srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+            srvDesc.Texture2D.MipLevels = 1;
+
+            ID3D11ShaderResourceView* tempDepthSRV = nullptr;
+            HRESULT hr = m_device->CreateShaderResourceView(m_mainDSTexture, &srvDesc, &tempDepthSRV);
+            if (SUCCEEDED(hr)) {
+                depthSRV = tempDepthSRV;
+            }
+        }
+
+        // 应用热成像效果
+        // 将第二次渲染的结果作为源，处理后输出到热成像渲染目标
+        m_thermalVision->ApplyThermalEffect(m_mainRTV, m_thermalRTV, depthSRV);
+
+        // 将热成像结果复制回主渲染目标
+        m_context->CopyResource(m_mainRTTexture, m_thermalRenderTarget);
+
+        // 清理临时深度SRV
+        if (depthSRV) {
+            depthSRV->Release();
+        }
+
+        logger::debug("Thermal vision effect applied");
     }
 
     void SecondPassRenderer::RestoreFirstPass()

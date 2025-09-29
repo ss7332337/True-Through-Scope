@@ -152,17 +152,17 @@ namespace ThroughScope
 		} else if (createOption <= static_cast<int>(weaponInfo.availableMods.size())) {
 			auto modForm = weaponInfo.availableMods[createOption - 1];
 
-			// 使用相同的EditorID获取逻辑（简化版）
+			// 使用改进的EditorID获取逻辑
 			std::string editorIdStr;
 			const char* editorID = modForm->GetFormEditorID();
 			if (editorID && strlen(editorID) > 0) {
 				editorIdStr = editorID;
 			} else {
-				// 尝试反查全局EditorID映射
+				// 尝试反查全局EditorID映射（使用锁保护）
 				try {
-					auto [editorIDMap, lock] = RE::TESForm::GetAllFormsByEditorID();
+					auto [editorIDMap, lockRef] = RE::TESForm::GetAllFormsByEditorID();
 					if (editorIDMap) {
-						// 注意：这里先不使用锁，如果需要可以添加
+						RE::BSAutoReadLock lock{ lockRef.get() };
 						for (auto& [key, value] : *editorIDMap) {
 							if (value == modForm) {
 								editorIdStr = key.c_str();
@@ -171,10 +171,21 @@ namespace ThroughScope
 						}
 					}
 				} catch (...) {
-					// 如果访问失败，继续使用FormID
+					// 忽略异常
 				}
+
+				// 如果还是没有EditorID，尝试获取FullName
 				if (editorIdStr.empty()) {
-					editorIdStr = fmt::format("Mod[{:08X}]", modForm->GetLocalFormID());
+					if (auto mod = modForm->As<RE::BGSMod::Attachment::Mod>()) {
+						if (mod->fullName.c_str() && strlen(mod->fullName.c_str()) > 0) {
+							editorIdStr = fmt::format("{}[{:08X}]", mod->fullName.c_str(), modForm->GetLocalFormID());
+						}
+					}
+				}
+
+				// 最后的备选方案
+				if (editorIdStr.empty()) {
+					editorIdStr = fmt::format("OMOD[{:08X}]", modForm->GetLocalFormID());
 				}
 			}
 
@@ -194,49 +205,44 @@ namespace ThroughScope
 			// Modification options
 			for (size_t i = 0; i < weaponInfo.availableMods.size(); i++) {
 				auto modForm = weaponInfo.availableMods[i];
-				// 获取EditorID的替代方法
+				// 获取EditorID的改进方法
 				auto getEditorID = [](RE::TESForm* form) -> std::string {
 					if (!form) return "<null>";
 
-					// 方法1: 使用标准GetFormEditorID
+					// 方法1: 直接获取EditorID
 					const char* editorID = form->GetFormEditorID();
 					if (editorID && strlen(editorID) > 0) {
 						return std::string(editorID);
 					}
 
-					//// 方法2: 通过全局EditorID映射反查
-					//try {
-					//	auto [editorIDMap, lock] = RE::TESForm::GetAllFormsByEditorID();
-					//	if (editorIDMap) {
-					//		// 注意：这里先不使用锁，如果需要可以添加
-					//		for (auto& [key, value] : *editorIDMap) {
-					//			if (value == form) {
-					//				return std::string(key.c_str());
-					//			}
-					//		}
-					//	}
-					//} catch (...) {
-					//	// 如果访问失败，继续下一个方法
-					//}
-
-					// 方法3: 对于BGSMod类型，尝试直接访问formEditorID成员
-					if (auto modAttach = form->As<RE::BGSMod::Attachment::Mod>()) {
-						modAttach->GetFormEditorID();
+					// 方法2: 尝试通过全局EditorID映射反查（使用锁保护）
+					try {
+						auto [editorIDMap, lockRef] = RE::TESForm::GetAllFormsByEditorID();
+						if (editorIDMap) {
+							RE::BSAutoReadLock lock{ lockRef.get() };
+							for (auto& [key, value] : *editorIDMap) {
+								if (value == form) {
+									return std::string(key.c_str());
+								}
+							}
+						}
+					} catch (...) {
+						// 忽略异常
 					}
 
-					//// 方法4: 如果是BGSKeyword类型，直接访问formEditorID
-					//if (auto keyword = form->As<RE::BGSKeyword>()) {
-					//	if (keyword->formEditorID.c_str() && strlen(keyword->formEditorID.c_str()) > 0) {
-					//		return std::string(keyword->formEditorID.c_str());
-					//	}
-					//}
+					// 方法3: 如果是BGSMod::Attachment::Mod，尝试获取TESFullName
+					if (auto mod = form->As<RE::BGSMod::Attachment::Mod>()) {
+						// BGSMod::Attachment::Mod 继承自 TESFullName
+						if (mod->fullName.c_str() && strlen(mod->fullName.c_str()) > 0) {
+							return fmt::format("{}[{:08X}]", mod->fullName.c_str(), form->GetLocalFormID());
+						}
+					}
 
-					return fmt::format("<NoEditorID[{:08X}]>", form->GetLocalFormID());
+					// 方法4: 返回FormID和FormType
+					return fmt::format("OMOD[{:08X}]", form->GetLocalFormID());
 				};
 
 				std::string editorIdStr = getEditorID(modForm);
-				logger::info("Available mod[{:08X}] EditorID: {}", modForm->GetLocalFormID(), editorIdStr);
-
 				std::string label = fmt::format(fmt::runtime(LOC("camera.config.modification")),
 					i + 1, editorIdStr);
 
