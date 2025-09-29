@@ -40,10 +40,10 @@ namespace ThroughScope
 		RenderReticleAdjustments();
 		ImGui::Spacing();
 
-		if (m_ShowPreview) {
-			RenderPreviewSection();
-			ImGui::Spacing();
-		}
+		//if (m_ShowPreview) {
+		//	//RenderPreviewSection();
+		//	ImGui::Spacing();
+		//}
 
 		RenderQuickActions();
 	}
