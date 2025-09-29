@@ -17,3 +17,4 @@ src/Decomplied.cpp
 /src/BSShaderAccumulator.txt
 /src/BSCullingProcess.cpp
 /src/log.txt
+*.txt
