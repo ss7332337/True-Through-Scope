@@ -11,7 +11,7 @@ set(SOURCES
 	src/UI/Panels/SettingsPanel.cpp
 	src/UI/Panels/ReticlePanel.cpp
 	src/UI/Panels/ZoomDataPanel.cpp
-	src/UI/Panels/PerformancePanel.cpp
+	#src/UI/Panels/PerformancePanel.cpp
 	src/UI/Localization/LocalizationManager.cpp
 	src/EventHandler.cpp
 	src/DataPersistence.cpp
@@ -21,7 +21,7 @@ set(SOURCES
 	src/TAAHook.cpp
 	src/RenderHooks.cpp
 	src/SimpleHooks.cpp
-	src/RenderOptimization.cpp
+	#src/RenderOptimization.cpp
 	src/rendering/RenderStateManager.cpp
 	src/rendering/LightBackupSystem.cpp
 	src/rendering/SecondPassRenderer.cpp

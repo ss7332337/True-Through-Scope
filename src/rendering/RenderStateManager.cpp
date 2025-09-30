@@ -60,10 +60,10 @@ namespace ThroughScope
         }
 
         logger::info("RenderStateManager initialized successfully");
-        // logger::debug("Scope frustum - Near: {}, Far: {}, Size: {}",
-        //     m_scopeFrustum.nearPlane, m_scopeFrustum.farPlane, scopeViewSize);
-        // logger::debug("Scope viewport - Left: {}, Right: {}, Top: {}, Bottom: {}",
-        //     m_scopeViewPort.left, m_scopeViewPort.right, m_scopeViewPort.top, m_scopeViewPort.bottom);
+        logger::debug("Scope frustum - Near: {}, Far: {}, Size: {}",
+            m_scopeFrustum.nearPlane, m_scopeFrustum.farPlane, scopeViewSize);
+        logger::debug("Scope viewport - Left: {}, Right: {}, Top: {}, Bottom: {}",
+            m_scopeViewPort.left, m_scopeViewPort.right, m_scopeViewPort.top, m_scopeViewPort.bottom);
     }
 
     void RenderStateManager::Reset()
@@ -95,6 +95,6 @@ namespace ThroughScope
         // 重置相机指针
         m_worldFirstCam = nullptr;
 
-        // logger::debug("RenderStateManager state reset completed");
+        logger::debug("RenderStateManager state reset completed");
     }
 }

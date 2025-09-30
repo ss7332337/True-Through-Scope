@@ -12,7 +12,6 @@ namespace ThroughScope
         , m_lightBackup(LightBackupSystem::GetSingleton())
         , m_thermalVision(nullptr)
         , m_renderStateMgr(RenderStateManager::GetSingleton())
-        , m_renderOptimization(RenderOptimization::GetSingleton())
     {
         if (!ValidateD3DResources()) {
             logger::error("SecondPassRenderer: Invalid D3D resources provided");
@@ -39,7 +38,7 @@ namespace ThroughScope
             return false;
         }
 
-        // logger::debug("Starting second pass rendering...");
+        logger::debug("Starting second pass rendering...");
 
         // 初始化相机指针
         m_scopeCamera = ScopeCamera::GetScopeCamera();
@@ -87,7 +86,7 @@ namespace ThroughScope
             // 6. 恢复第一次渲染状态
             RestoreFirstPass();
 
-            // logger::debug("Second pass rendering completed successfully");
+            logger::debug("Second pass rendering completed successfully");
             return true;
 
         } catch (const std::exception& e) {
@@ -130,7 +129,7 @@ namespace ThroughScope
 
     bool SecondPassRenderer::BackupFirstPassTextures()
     {
-        // logger::debug("Backing up first pass textures...");
+        logger::debug("Backing up first pass textures...");
 
         auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
         if (!rendererData || !rendererData->context) {
@@ -181,13 +180,13 @@ namespace ThroughScope
         }
 
         m_texturesBackedUp = true;
-        // logger::debug("First pass textures backed up successfully");
+        logger::debug("First pass textures backed up successfully");
         return true;
     }
 
     bool SecondPassRenderer::UpdateScopeCamera()
     {
-        // logger::debug("Updating scope camera...");
+        logger::debug("Updating scope camera...");
 
         // 创建原始相机的克隆
         RE::NiCloningProcess tempP{};
@@ -228,13 +227,13 @@ namespace ThroughScope
         m_scopeCamera->UpdateWorldBound();
 
         m_cameraUpdated = true;
-        // logger::debug("Scope camera updated successfully");
+        logger::debug("Scope camera updated successfully");
         return true;
     }
 
     void SecondPassRenderer::ClearRenderTargets()
     {
-        // logger::debug("Clearing render targets...");
+        logger::debug("Clearing render targets...");
 
         // 清理主输出，准备第二次渲染
         float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
@@ -253,7 +252,7 @@ namespace ThroughScope
         m_context->ClearDepthStencilView(m_mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
         // 清理延迟渲染的G-Buffer以确保光照信息不会残留
-        if (m_renderOptimization->ShouldOptimizeGBufferClear()) {
+        if (true) {
             // 优化模式：只清理必要的缓冲区以提升性能
             static const int essentialBuffers[] = { 8, 9 };  // 只清理法线和主光照buffer
             for (int bufIdx : essentialBuffers) {
@@ -286,12 +285,12 @@ namespace ThroughScope
             }
         }
 
-        // logger::debug("Render targets cleared");
+        logger::debug("Render targets cleared");
     }
 
     bool SecondPassRenderer::SyncLighting()
     {
-        // logger::debug("Syncing lighting for scope rendering...");
+        logger::debug("Syncing lighting for scope rendering...");
 
         auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
         if (!pShadowSceneNode) {
@@ -309,20 +308,20 @@ namespace ThroughScope
 
         // 应用优化的光源状态用于第二次渲染（使用RenderOptimization设置）
         m_lightBackup->ApplyLightStatesForScope(
-            m_renderOptimization->IsLightLimitingEnabled(),
-            m_renderOptimization->GetMaxScopeLights());
+            true,
+            32);
 
         // 同步累积器的眼睛位置
         SyncAccumulatorEyePosition(m_scopeCamera);
 
         m_lightingSynced = true;
-        // logger::debug("Lighting synced successfully");
+        logger::debug("Lighting synced successfully");
         return true;
     }
 
     void SecondPassRenderer::DrawScopeContent()
     {
-        // logger::debug("Drawing scope content...");
+        logger::debug("Drawing scope content...");
 
         // 设置性能标记
         D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
@@ -361,12 +360,12 @@ namespace ThroughScope
 
         D3DPERF_EndEvent();
 
-        // logger::debug("Scope content rendered");
+        logger::debug("Scope content rendered");
     }
 
     void SecondPassRenderer::ApplyThermalVisionEffect()
     {
-        // logger::debug("Applying thermal vision effect...");
+        logger::debug("Applying thermal vision effect...");
 
         // 初始化热成像系统（如果尚未初始化）
         if (!m_thermalVision) {
@@ -433,12 +432,12 @@ namespace ThroughScope
             depthSRV->Release();
         }
 
-        // logger::debug("Thermal vision effect applied");
+        logger::debug("Thermal vision effect applied");
     }
 
     void SecondPassRenderer::RestoreFirstPass()
     {
-        // logger::debug("Restoring first pass state...");
+        logger::debug("Restoring first pass state...");
 
         if (m_lightingSynced) {
             // 恢复光源状态
@@ -495,7 +494,7 @@ namespace ThroughScope
             m_originalCamera->Update(nData);
         }
 
-        // logger::debug("First pass state restored");
+        logger::debug("First pass state restored");
     }
 
     void SecondPassRenderer::CleanupResources()
