@@ -357,7 +357,7 @@ namespace ThroughScope {
                 m_currentQualityScale = std::min(1.0f, m_currentQualityScale + 0.05f);
             }
 
-            logger::debug("Dynamic quality adjusted to: {}", m_currentQualityScale);
+            // logger::debug("Dynamic quality adjusted to: {}", m_currentQualityScale);
         }
     }
 }

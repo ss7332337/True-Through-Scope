@@ -21,7 +21,7 @@ namespace ThroughScope
         // 预分配空间
         m_lightBackups.reserve(shadowNode->lLightList.size());
 
-        logger::debug("Backing up {} lights from ShadowSceneNode", shadowNode->lLightList.size());
+        // logger::debug("Backing up {} lights from ShadowSceneNode", shadowNode->lLightList.size());
 
         // 保存所有光源的当前状态（第一次渲染后的状态）
         for (size_t i = 0; i < shadowNode->lLightList.size(); i++) {
@@ -42,8 +42,8 @@ namespace ThroughScope
         }
 
         m_backupCount++;
-        logger::debug("Successfully backed up {} light states (operation #{})",
-            m_lightBackups.size(), m_backupCount);
+        // logger::debug("Successfully backed up {} light states (operation #{})",
+        //     m_lightBackups.size(), m_backupCount);
     }
 
     void LightBackupSystem::ApplyLightStatesForScope()
@@ -53,7 +53,7 @@ namespace ThroughScope
             return;
         }
 
-        logger::debug("Applying {} light states for scope rendering", m_lightBackups.size());
+        // logger::debug("Applying {} light states for scope rendering", m_lightBackups.size());
 
         // 在第二次渲染之前应用优化的光源状态
         for (const auto& firstRenderState : m_lightBackups) {
@@ -61,7 +61,7 @@ namespace ThroughScope
         }
 
         m_applyCount++;
-        logger::debug("Applied light states for scope rendering (operation #{})", m_applyCount);
+        // logger::debug("Applied light states for scope rendering (operation #{})", m_applyCount);
     }
 
     void LightBackupSystem::RestoreLightStates()
@@ -71,7 +71,7 @@ namespace ThroughScope
             return;
         }
 
-        logger::debug("Restoring {} light states", m_lightBackups.size());
+        // logger::debug("Restoring {} light states", m_lightBackups.size());
 
         // 恢复原始光源状态
         for (const auto& backup : m_lightBackups) {
@@ -79,12 +79,12 @@ namespace ThroughScope
         }
 
         m_restoreCount++;
-        logger::debug("Restored light states (operation #{})", m_restoreCount);
+        // logger::debug("Restored light states (operation #{})", m_restoreCount);
     }
 
     void LightBackupSystem::Clear()
     {
-        logger::debug("Clearing {} light backup states", m_lightBackups.size());
+        // logger::debug("Clearing {} light backup states", m_lightBackups.size());
         m_lightBackups.clear();
         m_cullingProcess = nullptr;
     }
@@ -102,8 +102,8 @@ namespace ThroughScope
     void LightBackupSystem::SetCullingProcess(RE::BSCullingProcess* cullingProcess)
     {
         m_cullingProcess = cullingProcess;
-        logger::debug("Set culling process: 0x{:X}",
-            reinterpret_cast<uintptr_t>(cullingProcess));
+        // logger::debug("Set culling process: 0x{:X}",
+        //     reinterpret_cast<uintptr_t>(cullingProcess));
     }
 
     bool LightBackupSystem::IsValidLight(RE::BSLight* light) const

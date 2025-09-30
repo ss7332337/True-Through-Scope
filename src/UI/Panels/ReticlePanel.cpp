@@ -600,7 +600,7 @@ namespace ThroughScope
 			LoadTexture(m_CurrentSettings.texturePath);
 		}
 
-		logger::debug("Real-time applied reticle settings - Scale: {:.2f}, Offset: [{:.3f}, {:.3f}]",
-			m_CurrentSettings.scale, m_CurrentSettings.offsetX, m_CurrentSettings.offsetY);
+		// logger::debug("Real-time applied reticle settings - Scale: {:.2f}, Offset: [{:.3f}, {:.3f}]",
+		// 	m_CurrentSettings.scale, m_CurrentSettings.offsetX, m_CurrentSettings.offsetY);
 	}
 }

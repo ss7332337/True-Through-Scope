@@ -53,10 +53,8 @@ namespace ThroughScope
 
 		// 创建第二次渲染器并执行渲染
 		SecondPassRenderer renderer(context, device, d3dHooks);
-		if (renderer.ExecuteSecondPass()) {
-			logger::debug("Second pass rendering completed successfully");
-		} else {
-			logger::warn("Second pass rendering failed or was skipped");
+		if (!renderer.ExecuteSecondPass()) {
+			// logger::warn("Second pass rendering failed or was skipped");
 		}
 	}
 }
