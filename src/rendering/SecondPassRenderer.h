@@ -6,6 +6,7 @@
 #include "RenderUtilities.h"
 #include "LightBackupSystem.h"
 #include "RenderStateManager.h"
+#include "RenderOptimization.h"
 
 namespace ThroughScope
 {
@@ -31,6 +32,9 @@ namespace ThroughScope
         // 热成像模式控制
         void SetThermalVisionEnabled(bool enabled) { m_thermalVisionEnabled = enabled; }
         bool IsThermalVisionEnabled() const { return m_thermalVisionEnabled; }
+
+        // 性能优化控制（已集成到RenderOptimization）
+        RenderOptimization* GetRenderOptimization() const { return m_renderOptimization; }
 
     private:
         bool BackupFirstPassTextures();
@@ -75,6 +79,7 @@ namespace ThroughScope
         // ========== 管理器引用 ==========
         LightBackupSystem* m_lightBackup;
         RenderStateManager* m_renderStateMgr;
+        RenderOptimization* m_renderOptimization;
 
         // ========== 状态标志 ==========
         bool m_texturesBackedUp = false;
@@ -82,6 +87,7 @@ namespace ThroughScope
         bool m_lightingSynced = false;
         bool m_renderExecuted = false;
         bool m_thermalVisionEnabled = false;
+
 
         // ========== 热成像资源 ==========
         class ThermalVision* m_thermalVision = nullptr;

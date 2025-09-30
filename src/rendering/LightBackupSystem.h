@@ -30,8 +30,11 @@ namespace ThroughScope
          *
          * 在第二次渲染之前调用，将第一次渲染的光源状态应用到当前光源
          * 同时进行一些优化设置以确保瞄具渲染的质量
+         *
+         * @param limitCount 是否限制光源数量
+         * @param maxLights 最大光源数量（默认8个）
          */
-        void ApplyLightStatesForScope();
+        void ApplyLightStatesForScope(bool limitCount = false, size_t maxLights = 8);
         void RestoreLightStates();
         void Clear();
 
@@ -47,6 +50,7 @@ namespace ThroughScope
         bool IsValidLight(RE::BSLight* light) const;
         void ApplySingleLightState(const LightStateBackup& backup);
         void RestoreSingleLightState(const LightStateBackup& backup);
+        float CalculateLightPriority(const LightStateBackup& backup, const RE::NiPoint3& cameraPos) const;
 
         // ========== 内部数据 ==========
 

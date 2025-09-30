@@ -169,6 +169,7 @@ namespace ThroughScope
 		// 创建面板实例
 		m_CameraAdjustmentPanel = std::make_unique<CameraAdjustmentPanel>(this);
 		m_ModelSwitcherPanel = std::make_unique<ModelSwitcherPanel>(this);
+		m_PerformancePanel = std::make_unique<PerformancePanel>(this);
 		m_ZoomDataPanel = std::make_unique<ZoomDataPanel>(this);
 		m_DebugPanel = std::make_unique<DebugPanel>(this);
 		m_SettingsPanel = std::make_unique<SettingsPanel>(this);
@@ -180,6 +181,8 @@ namespace ThroughScope
 		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
 			static_cast<BasePanelInterface*>(m_ModelSwitcherPanel.get())));
 		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
+			static_cast<BasePanelInterface*>(m_PerformancePanel.get())));
+		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
 			static_cast<BasePanelInterface*>(m_ZoomDataPanel.get())));
 		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
 			static_cast<BasePanelInterface*>(m_ReticlePanel.get())));
@@ -187,7 +190,7 @@ namespace ThroughScope
 			static_cast<BasePanelInterface*>(m_SettingsPanel.get())));
 		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
 			static_cast<BasePanelInterface*>(m_DebugPanel.get())));
-		
+
 
 		// 初始化所有面板
 		for (auto& panel : m_Panels) {

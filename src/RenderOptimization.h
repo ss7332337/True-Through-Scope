@@ -1,96 +1,149 @@
 #pragma once
-#include <d3d11.h>
-#include <wrl/client.h>
 
-namespace ThroughScope {
-    class RenderOptimization {
+namespace ThroughScope
+{
+    /**
+     * @brief 渲染优化管理器
+     *
+     * 统一管理瞄具场景渲染的各种性能优化设置
+     * 包括质量级别、光源限制、渲染阶段跳过等
+     */
+    class RenderOptimization
+    {
     public:
-        enum class QualityLevel {
-            Ultra = 0,      // 1.0x 原始分辨率
-            High = 1,       // 0.75x 分辨率
-            Medium = 2,     // 0.5x 分辨率
-            Low = 3,        // 0.35x 分辨率
-            Performance = 4 // 0.25x 分辨率
+        /**
+         * @brief 渲染质量级别
+         */
+        enum class QualityLevel
+        {
+            Ultra = 0,      // 极致画质 - 无优化，完整渲染
+            High = 1,       // 高画质 - 轻度优化
+            Medium = 2,     // 中画质 - 中度优化（推荐）
+            Low = 3,        // 低画质 - 重度优化
+            Performance = 4 // 性能模式 - 极限优化
         };
 
-        struct OptimizationSettings {
+        /**
+         * @brief 优化设置结构
+         */
+        struct OptimizationSettings
+        {
+            // 总开关
+            bool enableOptimizations = true;        // 完全关闭/启用所有优化（用于对比测试）
+
+            // 质量级别
             QualityLevel qualityLevel = QualityLevel::Medium;
-            float resolutionScale = 0.5f;
-            bool skipShadows = true;
-            bool skipReflections = true;
-            bool skipAO = true;
-            bool skipVolumetrics = true;
-            bool skipPostProcessing = true;
-            bool useDynamicQuality = false;
-            bool useTemporalUpsampling = false;
+
+            // 光源优化
+            bool enableLightLimiting = true;        // 启用光源数量限制
+            size_t maxScopeLights = 8;              // 瞄具场景最大光源数量
+
+            // 渲染阶段跳过
+            bool skipOcclusionMap = true;           // 跳过遮挡图渲染
+            bool skipDecals = true;                 // 跳过贴花渲染
+            bool skipDistantObjects = true;         // 跳过远景对象渲染
+            bool skipShadows = true;                // 跳过阴影渲染
+            bool skipReflections = true;            // 跳过反射
+            bool skipAO = true;                     // 跳过环境光遮蔽
+            bool skipVolumetrics = true;            // 跳过体积效果
+            bool skipPostProcessing = true;         // 跳过后处理效果
+
+            // G-Buffer清理优化
+            bool optimizeGBufferClear = true;       // 优化G-Buffer清理（只清理必要的缓冲区）
+
+            // 帧率控制
+            bool enableFrameSkip = false;           // 启用帧跳过（每N帧更新一次瞄具场景）
+            int frameSkipInterval = 1;              // 帧跳过间隔（1=每帧更新，2=每2帧更新一次）
+
+            // 高级选项
+            bool enableDynamicQuality = false;      // 启用动态质量调整（根据帧时间自动调整）
+            float targetFrameTime = 16.67f;         // 目标帧时间（毫秒，60fps=16.67ms）
         };
 
         static RenderOptimization* GetSingleton();
 
-        bool Initialize(ID3D11Device* device);
-        void Cleanup();
-
-        // 创建降采样的RenderTarget
-        bool CreateDownsampledRenderTargets(UINT originalWidth, UINT originalHeight);
-
-        // 获取当前设置
+        // 设置管理
         const OptimizationSettings& GetSettings() const { return m_settings; }
+        void SetSettings(const OptimizationSettings& settings);
+
+        // 总开关控制
+        void SetEnableOptimizations(bool enable) { m_settings.enableOptimizations = enable; }
+        bool IsOptimizationsEnabled() const { return m_settings.enableOptimizations; }
+
+        // 质量级别快速设置
         void SetQualityLevel(QualityLevel level);
+        QualityLevel GetQualityLevel() const { return m_settings.qualityLevel; }
 
-        // 获取缩放后的分辨率
-        void GetScaledResolution(UINT originalWidth, UINT originalHeight, UINT& scaledWidth, UINT& scaledHeight) const;
+        // 光源优化控制
+        void SetEnableLightLimiting(bool enable) { m_settings.enableLightLimiting = enable; }
+        void SetMaxScopeLights(size_t maxLights) { m_settings.maxScopeLights = maxLights; }
+        bool IsLightLimitingEnabled() const { return m_settings.enableOptimizations && m_settings.enableLightLimiting; }
+        size_t GetMaxScopeLights() const { return m_settings.maxScopeLights; }
 
-        // 获取降采样的RenderTarget
-        ID3D11RenderTargetView* GetDownsampledRTV() const { return m_downsampledRTV.Get(); }
-        ID3D11DepthStencilView* GetDownsampledDSV() const { return m_downsampledDSV.Get(); }
-        ID3D11ShaderResourceView* GetDownsampledSRV() const { return m_downsampledSRV.Get(); }
+        // 渲染阶段查询（用于Hook中判断是否跳过）
+        // 注意：所有查询都会检查总开关 enableOptimizations
+        bool ShouldSkipOcclusionMap() const { return m_settings.enableOptimizations && m_settings.skipOcclusionMap; }
+        bool ShouldSkipDecals() const { return m_settings.enableOptimizations && m_settings.skipDecals; }
+        bool ShouldSkipDistantObjects() const { return m_settings.enableOptimizations && m_settings.skipDistantObjects; }
+        bool ShouldSkipShadows() const { return m_settings.enableOptimizations && m_settings.skipShadows; }
+        bool ShouldSkipReflections() const { return m_settings.enableOptimizations && m_settings.skipReflections; }
+        bool ShouldSkipAO() const { return m_settings.enableOptimizations && m_settings.skipAO; }
+        bool ShouldSkipVolumetrics() const { return m_settings.enableOptimizations && m_settings.skipVolumetrics; }
+        bool ShouldSkipPostProcessing() const { return m_settings.enableOptimizations && m_settings.skipPostProcessing; }
+        bool ShouldOptimizeGBufferClear() const { return m_settings.enableOptimizations && m_settings.optimizeGBufferClear; }
 
-        // 上采样到原始分辨率
-        void Upsample(ID3D11DeviceContext* context,
-                     ID3D11ShaderResourceView* sourceSRV,
-                     ID3D11RenderTargetView* destRTV,
-                     UINT destWidth, UINT destHeight);
+        // 帧跳过控制
+        bool IsFrameSkipEnabled() const { return m_settings.enableOptimizations && m_settings.enableFrameSkip; }
+        int GetFrameSkipInterval() const { return m_settings.frameSkipInterval; }
+        bool ShouldRenderThisFrame();  // 根据帧计数器判断是否应该渲染
 
         // 动态质量调整
         void UpdateDynamicQuality(float frameTime);
 
-        // 检查是否应该跳过某个渲染阶段
-        bool ShouldSkipShadows() const { return m_settings.skipShadows; }
-        bool ShouldSkipReflections() const { return m_settings.skipReflections; }
-        bool ShouldSkipAO() const { return m_settings.skipAO; }
-        bool ShouldSkipVolumetrics() const { return m_settings.skipVolumetrics; }
-        bool ShouldSkipPostProcessing() const { return m_settings.skipPostProcessing; }
+        // 预设管理
+        void ApplyPreset(QualityLevel level);
+        void SaveCurrentAsCustomPreset();
+        void LoadCustomPreset();
+        bool HasCustomPreset() const { return m_hasCustomPreset; }
+
+        // 性能统计
+        struct PerformanceStats
+        {
+            float avgFrameTime = 0.0f;          // 平均帧时间
+            float avgScopeRenderTime = 0.0f;    // 平均瞄具渲染时间
+            int activeLightCount = 0;            // 当前激活光源数量
+            int renderedFrameCount = 0;          // 已渲染帧数
+            int skippedFrameCount = 0;           // 跳过帧数
+        };
+
+        const PerformanceStats& GetStats() const { return m_stats; }
+        void UpdateStats(float frameTime, float scopeRenderTime, int lightCount);
+        void ResetStats();
+
+        // 质量级别名称（用于UI显示）
+        static const char* GetQualityLevelName(QualityLevel level);
+        static const char* GetQualityLevelDescription(QualityLevel level);
 
     private:
         RenderOptimization() = default;
         ~RenderOptimization() = default;
-
-        bool CreateUpsampleResources();
-        void SetQualityPreset(QualityLevel level);
+        RenderOptimization(const RenderOptimization&) = delete;
+        RenderOptimization& operator=(const RenderOptimization&) = delete;
 
         OptimizationSettings m_settings;
+        OptimizationSettings m_customPreset;
+        bool m_hasCustomPreset = false;
 
-        // 降采样的渲染目标
-        Microsoft::WRL::ComPtr<ID3D11Texture2D> m_downsampledColorTexture;
-        Microsoft::WRL::ComPtr<ID3D11Texture2D> m_downsampledDepthTexture;
-        Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_downsampledRTV;
-        Microsoft::WRL::ComPtr<ID3D11DepthStencilView> m_downsampledDSV;
-        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_downsampledSRV;
-        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_downsampledDepthSRV;
+        // 帧跳过计数器
+        int m_frameCounter = 0;
 
-        // 上采样资源
-        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_upsamplePS;
-        Microsoft::WRL::ComPtr<ID3D11VertexShader> m_upsampleVS;
-        Microsoft::WRL::ComPtr<ID3D11SamplerState> m_linearSampler;
-        Microsoft::WRL::ComPtr<ID3D11Buffer> m_upsampleCB;
+        // 性能统计
+        PerformanceStats m_stats;
 
         // 动态质量调整
-        float m_targetFrameTime = 16.67f; // 60 FPS目标
-        float m_qualityAdjustThreshold = 2.0f; // ms
-        float m_currentQualityScale = 0.5f;
+        float m_currentQualityScale = 1.0f;
 
-        ID3D11Device* m_device = nullptr;
-        UINT m_currentWidth = 0;
-        UINT m_currentHeight = 0;
+        // 预设配置
+        void SetQualityPreset(QualityLevel level);
     };
 }

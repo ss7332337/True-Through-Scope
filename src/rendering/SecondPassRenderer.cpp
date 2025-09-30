@@ -12,6 +12,7 @@ namespace ThroughScope
         , m_lightBackup(LightBackupSystem::GetSingleton())
         , m_thermalVision(nullptr)
         , m_renderStateMgr(RenderStateManager::GetSingleton())
+        , m_renderOptimization(RenderOptimization::GetSingleton())
     {
         if (!ValidateD3DResources()) {
             logger::error("SecondPassRenderer: Invalid D3D resources provided");
@@ -252,18 +253,36 @@ namespace ThroughScope
         m_context->ClearDepthStencilView(m_mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
         // 清理延迟渲染的G-Buffer以确保光照信息不会残留
-        static const int lightingBuffers[] = { 8, 9, 10, 11, 12, 13, 14, 15 };
-        for (int bufIdx : lightingBuffers) {
-            if (bufIdx < 100 && rendererData->renderTargets[bufIdx].rtView) {
-                float clearValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-                // 对于法线缓冲区，使用默认法线值
-                if (bufIdx == 8) {
-                    clearValue[0] = 0.5f;
-                    clearValue[1] = 0.5f;
-                    clearValue[2] = 1.0f;
-                    clearValue[3] = 1.0f;
+        if (m_renderOptimization->ShouldOptimizeGBufferClear()) {
+            // 优化模式：只清理必要的缓冲区以提升性能
+            static const int essentialBuffers[] = { 8, 9 };  // 只清理法线和主光照buffer
+            for (int bufIdx : essentialBuffers) {
+                if (bufIdx < 100 && rendererData->renderTargets[bufIdx].rtView) {
+                    float clearValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+                    // 对于法线缓冲区，使用默认法线值
+                    if (bufIdx == 8) {
+                        clearValue[0] = 0.5f;
+                        clearValue[1] = 0.5f;
+                        clearValue[2] = 1.0f;
+                        clearValue[3] = 1.0f;
+                    }
+                    m_context->ClearRenderTargetView((ID3D11RenderTargetView*)rendererData->renderTargets[bufIdx].rtView, clearValue);
                 }
-                m_context->ClearRenderTargetView((ID3D11RenderTargetView*)rendererData->renderTargets[bufIdx].rtView, clearValue);
+            }
+        } else {
+            // 完整模式：清理所有G-Buffer
+            static const int lightingBuffers[] = { 8, 9, 10, 11, 12, 13, 14, 15 };
+            for (int bufIdx : lightingBuffers) {
+                if (bufIdx < 100 && rendererData->renderTargets[bufIdx].rtView) {
+                    float clearValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+                    if (bufIdx == 8) {
+                        clearValue[0] = 0.5f;
+                        clearValue[1] = 0.5f;
+                        clearValue[2] = 1.0f;
+                        clearValue[3] = 1.0f;
+                    }
+                    m_context->ClearRenderTargetView((ID3D11RenderTargetView*)rendererData->renderTargets[bufIdx].rtView, clearValue);
+                }
             }
         }
 
@@ -288,8 +307,10 @@ namespace ThroughScope
             m_lightBackup->SetCullingProcess(*DrawWorldCullingProcess);
         }
 
-        // 应用优化的光源状态用于第二次渲染
-        m_lightBackup->ApplyLightStatesForScope();
+        // 应用优化的光源状态用于第二次渲染（使用RenderOptimization设置）
+        m_lightBackup->ApplyLightStatesForScope(
+            m_renderOptimization->IsLightLimitingEnabled(),
+            m_renderOptimization->GetMaxScopeLights());
 
         // 同步累积器的眼睛位置
         SyncAccumulatorEyePosition(m_scopeCamera);

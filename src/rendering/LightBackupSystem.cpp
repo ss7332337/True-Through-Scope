@@ -1,4 +1,5 @@
 #include "LightBackupSystem.h"
+#include <ScopeCamera.h>
 
 namespace ThroughScope
 {
@@ -46,7 +47,7 @@ namespace ThroughScope
         //     m_lightBackups.size(), m_backupCount);
     }
 
-    void LightBackupSystem::ApplyLightStatesForScope()
+    void LightBackupSystem::ApplyLightStatesForScope(bool limitCount, size_t maxLights)
     {
         if (m_lightBackups.empty()) {
             logger::warn("ApplyLightStatesForScope: No backup states available");
@@ -55,9 +56,40 @@ namespace ThroughScope
 
         // logger::debug("Applying {} light states for scope rendering", m_lightBackups.size());
 
-        // 在第二次渲染之前应用优化的光源状态
-        for (const auto& firstRenderState : m_lightBackups) {
-            ApplySingleLightState(firstRenderState);
+        // 如果启用光源数量限制
+        if (limitCount && m_lightBackups.size() > maxLights) {
+            // 获取相机位置用于优先级计算
+            auto scopeCamera = ThroughScope::ScopeCamera::GetScopeCamera();
+            RE::NiPoint3 cameraPos(0, 0, 0);
+            if (scopeCamera) {
+                cameraPos = scopeCamera->world.translate;
+            }
+
+            // 创建光源优先级列表
+            std::vector<std::pair<float, const LightStateBackup*>> lightPriorities;
+            lightPriorities.reserve(m_lightBackups.size());
+
+            for (const auto& backup : m_lightBackups) {
+                float priority = CalculateLightPriority(backup, cameraPos);
+                lightPriorities.push_back({ priority, &backup });
+            }
+
+            // 按优先级降序排序（高优先级在前）
+            std::sort(lightPriorities.begin(), lightPriorities.end(),
+                [](const auto& a, const auto& b) { return a.first > b.first; });
+
+            // 只应用前N个最重要的光源
+            size_t applyCount = std::min(maxLights, lightPriorities.size());
+            logger::info("Limiting scope lights from {} to {}", m_lightBackups.size(), applyCount);
+
+            for (size_t i = 0; i < applyCount; i++) {
+                ApplySingleLightState(*lightPriorities[i].second);
+            }
+        } else {
+            // 不限制光源数量，应用所有光源
+            for (const auto& firstRenderState : m_lightBackups) {
+                ApplySingleLightState(firstRenderState);
+            }
         }
 
         m_applyCount++;
@@ -203,5 +235,48 @@ namespace ThroughScope
             logger::error("Unknown exception while restoring light state for light: 0x{:X}",
                 reinterpret_cast<uintptr_t>(bsLight));
         }
+    }
+
+    float LightBackupSystem::CalculateLightPriority(const LightStateBackup& backup, const RE::NiPoint3& cameraPos) const
+    {
+        auto bsLight = backup.light.get();
+        if (!bsLight) {
+            return 0.0f;
+        }
+
+        float priority = 0.0f;
+
+        // 1. 距离因素（距离越近优先级越高）
+        RE::NiPoint3 lightPos = bsLight->bPointPosition;
+        float distance = (lightPos - cameraPos).Length();
+        float distanceFactor = 1.0f / (1.0f + distance * 0.01f); // 归一化距离影响
+        priority += distanceFactor * 100.0f;
+
+        // 2. 光源强度因素（亮度越高优先级越高）
+        if (bsLight->fLODDimmer > 0.0f) {
+            priority += bsLight->fLODDimmer * 50.0f;
+        }
+
+        // 3. 动态光源优先级更高（通常是重要的游戏光源）
+        if (bsLight->bDynamicLight) {
+            priority += 30.0f;
+        }
+
+        // 4. 未被遮挡的光源优先级更高
+        if (!backup.occluded) {
+            priority += 20.0f;
+        }
+
+        // 5. 非临时光源优先级更高（场景主光源）
+        if (!backup.temporary) {
+            priority += 15.0f;
+        }
+
+        // 6. 视锥体内的光源优先级更高
+        if (backup.frustumCull == 0xFF || backup.frustumCull == 0xFE) {
+            priority += 25.0f;
+        }
+
+        return priority;
     }
 }
