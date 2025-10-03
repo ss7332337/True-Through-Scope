@@ -117,7 +117,7 @@ namespace ThroughScope
 	{
 		if (ScopeCamera::IsRenderingForScope()) {
 			// 在瞄具渲染过程中重新应用光源状态
-			g_lightBackup->ApplyLightStatesForScope();
+			// 启用光源数量限制优化：最多使用16个最重要的光源
 		}
 
 		D3DEventNode(g_hookMgr->g_DeferredLightsImplOriginal(ptr_drawWorld), L"hkDeferredLightsImpl");
