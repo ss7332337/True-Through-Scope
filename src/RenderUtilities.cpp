@@ -52,11 +52,10 @@ namespace ThroughScope
         auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
         ID3D11Device* device = (ID3D11Device*)rendererData->device;
 
-        // Get screen dimensions
-
-
-        unsigned int width = rendererData->renderWindow[0].windowWidth;
-        unsigned int height = rendererData->renderWindow[0].windowHeight;
+        // Get actual render dimensions from BackBuffer or RenderTarget, not window size
+		auto rendererState = RE::BSGraphics::State::GetSingleton();
+		unsigned int width = rendererState.backBufferWidth;
+		unsigned int height = rendererState.backBufferHeight;
 
         logger::info("Creating temporary textures with size {}x{}", width, height);
 

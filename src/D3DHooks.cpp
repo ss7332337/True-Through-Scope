@@ -463,8 +463,9 @@ namespace ThroughScope {
 
 		// 创建全屏三角形输出的RenderTarget
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-		UINT screenWidth = rendererData->renderWindow[0].windowWidth;
-		UINT screenHeight = rendererData->renderWindow[0].windowHeight;
+		auto rendererState = RE::BSGraphics::State::GetSingleton();
+		UINT screenWidth = rendererState.backBufferWidth;
+		UINT screenHeight = rendererState.backBufferHeight;
 
 		// 创建纹理
 		D3D11_TEXTURE2D_DESC textureDesc = {};
@@ -607,12 +608,20 @@ namespace ThroughScope {
 		float clearColor[4] = { 0.0f, 0.0f, 1.0f, 1.0f }; // 蓝色
 		context->ClearRenderTargetView(s_ImageSpaceEffectOutputRTV.Get(), clearColor);
 
-		// 获取当前视口
-		UINT numViewports = 1;
-		D3D11_VIEWPORT viewport;
-		context->RSGetViewports(&numViewports, &viewport);
+		// 获取渲染目标纹理的实际尺寸来设置视口
+		D3D11_TEXTURE2D_DESC outputTexDesc;
+		s_ImageSpaceEffectOutputTexture->GetDesc(&outputTexDesc);
 
-		// 确保视口设置正确
+		// 创建基于实际渲染分辨率的视口
+		D3D11_VIEWPORT viewport = {};
+		viewport.TopLeftX = 0.0f;
+		viewport.TopLeftY = 0.0f;
+		viewport.Width = static_cast<float>(outputTexDesc.Width);
+		viewport.Height = static_cast<float>(outputTexDesc.Height);
+		viewport.MinDepth = 0.0f;
+		viewport.MaxDepth = 1.0f;
+
+		// 设置正确的视口
 		context->RSSetViewports(1, &viewport);
 
 		// 设置着色器
@@ -1231,8 +1240,9 @@ namespace ThroughScope {
 
 
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-		UINT screenWidth = rendererData->renderWindow[0].windowWidth;
-		UINT screenHeight = rendererData->renderWindow[0].windowHeight;
+		auto rendererState = RE::BSGraphics::State::GetSingleton();
+		UINT screenWidth = rendererState.backBufferWidth;
+		UINT screenHeight = rendererState.backBufferHeight;
 
 		// 获取玩家摄像头位置
 		auto playerCamera = RE::PlayerCharacter::GetSingleton()->Get3D(true)->GetObjectByName("Camera");
@@ -1639,6 +1649,48 @@ namespace ThroughScope {
 
 	void WINAPI D3DHooks::hkRSSetViewports(ID3D11DeviceContext* pContext, UINT NumViewports, const D3D11_VIEWPORT* pViewports)
 	{
+		// 如果正在进行瞄具渲染，确保使用正确的全屏viewport
+		// 这样可以防止其他MOD（如BakaFullscreenPipboy）的viewport修改影响瞄具渲染
+		if (ScopeCamera::IsRenderingForScope() && NumViewports > 0 && pViewports != nullptr) {
+			// 获取swap chain的后台缓冲区尺寸来确定正确的viewport
+			Microsoft::WRL::ComPtr<ID3D11Device> device;
+			pContext->GetDevice(&device);
+
+			if (device && s_SwapChain) {
+				Microsoft::WRL::ComPtr<ID3D11Texture2D> backBuffer;
+				if (SUCCEEDED(s_SwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer))) {
+					D3D11_TEXTURE2D_DESC desc;
+					backBuffer->GetDesc(&desc);
+
+					// 检查传入的viewport是否与预期的全屏viewport匹配
+					// 如果不匹配（可能被其他MOD修改了），则强制使用正确的全屏viewport
+					const D3D11_VIEWPORT& vp = pViewports[0];
+					bool needsCorrection = false;
+
+					// 检查viewport是否明显偏离全屏设置
+					if (vp.Width < desc.Width * 0.9f || vp.Height < desc.Height * 0.9f ||
+						vp.TopLeftX > desc.Width * 0.1f || vp.TopLeftY > desc.Height * 0.1f) {
+						needsCorrection = true;
+					}
+
+					if (needsCorrection) {
+						// 创建正确的全屏viewport
+						D3D11_VIEWPORT fullViewport;
+						fullViewport.TopLeftX = 0.0f;
+						fullViewport.TopLeftY = 0.0f;
+						fullViewport.Width = static_cast<float>(desc.Width);
+						fullViewport.Height = static_cast<float>(desc.Height);
+						fullViewport.MinDepth = 0.0f;
+						fullViewport.MaxDepth = 1.0f;
+
+						// 使用正确的全屏viewport
+						return phookD3D11RSSetViewports(pContext, 1, &fullViewport);
+					}
+				}
+			}
+		}
+
+		// 正常情况下透传调用
 		return phookD3D11RSSetViewports(pContext, NumViewports, pViewports);
 	}
 

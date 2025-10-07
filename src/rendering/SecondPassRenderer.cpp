@@ -50,6 +50,10 @@ namespace ThroughScope
         m_lightingSynced = false;
         m_renderExecuted = false;
 
+        // 重置每帧的渲染标志
+        RenderUtilities::SetFirstPassComplete(false);
+        RenderUtilities::SetSecondPassComplete(false);
+
         try {
             // 1. 备份第一次渲染的纹理
             if (!BackupFirstPassTextures()) {
@@ -116,14 +120,17 @@ namespace ThroughScope
         // 检查玩家相机
         auto playerCamera = *ptr_DrawWorldCamera;
         if (!playerCamera) {
+            logger::debug("CanExecuteSecondPass: playerCamera = null");
             return false;
         }
 
         // 检查D3D资源
         if (!ValidateD3DResources()) {
+            logger::debug("CanExecuteSecondPass: ValidateD3DResources = false, error: {}", m_lastError);
             return false;
         }
 
+        logger::debug("CanExecuteSecondPass: All checks passed");
         return true;
     }
 
@@ -166,13 +173,50 @@ namespace ThroughScope
             return false;
         }
 
+        // 验证临时纹理和源纹理的尺寸是否匹配
+        D3D11_TEXTURE2D_DESC tempDesc, rtDesc;
+        m_tempBackBufferTex->GetDesc(&tempDesc);
+        m_rtTexture2D->GetDesc(&rtDesc);
+
+        if (tempDesc.Width != rtDesc.Width || tempDesc.Height != rtDesc.Height || tempDesc.Format != rtDesc.Format) {
+            logger::error("Temporary BackBuffer size mismatch: temp({}x{}, {:X}) vs rt({}x{}, {:X})",
+                tempDesc.Width, tempDesc.Height, (UINT)tempDesc.Format,
+                rtDesc.Width, rtDesc.Height, (UINT)rtDesc.Format);
+            m_lastError = "Temporary BackBuffer size mismatch";
+            return false;
+        }
+
         // 复制当前渲染目标内容到临时BackBuffer
         m_context->CopyResource(m_tempBackBufferTex, m_rtTexture2D);
 
         // 复制主渲染目标到我们的纹理
         if (m_mainRTTexture && m_mainDSTexture) {
-            m_context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), m_mainRTTexture);
-            m_context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), m_mainDSTexture);
+            // 验证尺寸匹配
+            D3D11_TEXTURE2D_DESC firstPassColorDesc, mainRTDesc;
+            RenderUtilities::GetFirstPassColorTexture()->GetDesc(&firstPassColorDesc);
+            m_mainRTTexture->GetDesc(&mainRTDesc);
+
+            if (firstPassColorDesc.Width == mainRTDesc.Width && firstPassColorDesc.Height == mainRTDesc.Height) {
+                m_context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), m_mainRTTexture);
+            } else {
+                logger::warn("Skipping first pass color copy: size mismatch {}x{} vs {}x{}",
+                    firstPassColorDesc.Width, firstPassColorDesc.Height,
+                    mainRTDesc.Width, mainRTDesc.Height);
+            }
+
+            // 验证深度纹理尺寸匹配
+            D3D11_TEXTURE2D_DESC firstPassDepthDesc, mainDSDesc;
+            RenderUtilities::GetFirstPassDepthTexture()->GetDesc(&firstPassDepthDesc);
+            m_mainDSTexture->GetDesc(&mainDSDesc);
+
+            if (firstPassDepthDesc.Width == mainDSDesc.Width && firstPassDepthDesc.Height == mainDSDesc.Height) {
+                m_context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), m_mainDSTexture);
+            } else {
+                logger::warn("Skipping first pass depth copy: size mismatch {}x{} vs {}x{}",
+                    firstPassDepthDesc.Width, firstPassDepthDesc.Height,
+                    mainDSDesc.Width, mainDSDesc.Height);
+            }
+
             RenderUtilities::SetFirstPassComplete(true);
         } else {
             m_lastError = "Failed to find valid render target textures";
@@ -452,14 +496,58 @@ namespace ThroughScope
 
         if (m_texturesBackedUp) {
             // 复制第二次渲染结果到我们的纹理
-            m_context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), m_mainRTTexture);
-            m_context->CopyResource(m_rtTexture2D, m_tempBackBufferTex);
+            D3D11_TEXTURE2D_DESC secondPassColorDesc, mainRTDesc;
+            RenderUtilities::GetSecondPassColorTexture()->GetDesc(&secondPassColorDesc);
+            m_mainRTTexture->GetDesc(&mainRTDesc);
+
+            if (secondPassColorDesc.Width == mainRTDesc.Width && secondPassColorDesc.Height == mainRTDesc.Height) {
+                m_context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), m_mainRTTexture);
+            } else {
+                logger::warn("Skipping second pass color copy: size mismatch {}x{} vs {}x{}",
+                    secondPassColorDesc.Width, secondPassColorDesc.Height,
+                    mainRTDesc.Width, mainRTDesc.Height);
+            }
+
+            // 恢复BackBuffer
+            D3D11_TEXTURE2D_DESC rtDesc, tempBackBufferDesc;
+            m_rtTexture2D->GetDesc(&rtDesc);
+            m_tempBackBufferTex->GetDesc(&tempBackBufferDesc);
+
+            if (rtDesc.Width == tempBackBufferDesc.Width && rtDesc.Height == tempBackBufferDesc.Height) {
+                m_context->CopyResource(m_rtTexture2D, m_tempBackBufferTex);
+            } else {
+                logger::warn("Skipping BackBuffer restore: size mismatch {}x{} vs {}x{}",
+                    rtDesc.Width, rtDesc.Height,
+                    tempBackBufferDesc.Width, tempBackBufferDesc.Height);
+            }
+
             RenderUtilities::SetSecondPassComplete(true);
 
             // 如果第二次渲染完成，恢复主渲染目标内容用于正常显示
             if (RenderUtilities::IsSecondPassComplete()) {
-                m_context->CopyResource(m_mainRTTexture, RenderUtilities::GetFirstPassColorTexture());
-                m_context->CopyResource(m_mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
+                D3D11_TEXTURE2D_DESC firstPassColorDesc, mainRTDesc2;
+                RenderUtilities::GetFirstPassColorTexture()->GetDesc(&firstPassColorDesc);
+                m_mainRTTexture->GetDesc(&mainRTDesc2);
+
+                if (firstPassColorDesc.Width == mainRTDesc2.Width && firstPassColorDesc.Height == mainRTDesc2.Height) {
+                    m_context->CopyResource(m_mainRTTexture, RenderUtilities::GetFirstPassColorTexture());
+                } else {
+                    logger::warn("Skipping first pass color restore: size mismatch {}x{} vs {}x{}",
+                        firstPassColorDesc.Width, firstPassColorDesc.Height,
+                        mainRTDesc2.Width, mainRTDesc2.Height);
+                }
+
+                D3D11_TEXTURE2D_DESC firstPassDepthDesc, mainDSDesc;
+                RenderUtilities::GetFirstPassDepthTexture()->GetDesc(&firstPassDepthDesc);
+                m_mainDSTexture->GetDesc(&mainDSDesc);
+
+                if (firstPassDepthDesc.Width == mainDSDesc.Width && firstPassDepthDesc.Height == mainDSDesc.Height) {
+                    m_context->CopyResource(m_mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
+                } else {
+                    logger::warn("Skipping first pass depth restore: size mismatch {}x{} vs {}x{}",
+                        firstPassDepthDesc.Width, firstPassDepthDesc.Height,
+                        mainDSDesc.Width, mainDSDesc.Height);
+                }
             }
 
             // 恢复渲染目标
@@ -545,6 +633,26 @@ namespace ThroughScope
 
         D3D11_TEXTURE2D_DESC originalDesc;
         m_rtTexture2D->GetDesc(&originalDesc);
+
+        // 如果已存在临时纹理，检查尺寸是否匹配
+        if (m_tempBackBufferTex) {
+            D3D11_TEXTURE2D_DESC existingDesc;
+            m_tempBackBufferTex->GetDesc(&existingDesc);
+
+            // 如果尺寸匹配，直接返回
+            if (existingDesc.Width == originalDesc.Width &&
+                existingDesc.Height == originalDesc.Height &&
+                existingDesc.Format == originalDesc.Format) {
+                return true;
+            }
+
+            // 尺寸不匹配，释放旧纹理
+            logger::info("Recreating temporary BackBuffer: size changed from {}x{} to {}x{}",
+                existingDesc.Width, existingDesc.Height,
+                originalDesc.Width, originalDesc.Height);
+            SAFE_RELEASE(m_tempBackBufferTex);
+            SAFE_RELEASE(m_tempBackBufferSRV);
+        }
 
         D3D11_TEXTURE2D_DESC rtTextureDesc = originalDesc;
         rtTextureDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
