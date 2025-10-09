@@ -120,35 +120,33 @@ float random(float2 st) {
 float4 applyColorGrading(float4 color)
 {
     float4 r0 = color;
-    float3 r1, r2;
 
-    // 对RGB分量取对数前进行安全钳制,避免log(0)导致的负无穷大
-    r0.xyz = log(r0.xyz);
-    
-    // 直接输出alpha通道
-    float4 outputColor;
-    outputColor.w = r0.w;
-    
-    // 应用gamma校正
-    r0.xyz = r0.xyz * 0.454545;
-    r0.xyz = exp(r0.xyz);
-    
-    // 调整颜色范围
-    r0.xyz = r0.xyz * 0.9375 + 0.03125;
-    
-    // 从多个3D LUT纹理采样并混合
-    r1 = lutTexture1.Sample(lutSampler, r0.xyz) * lutWeights.y;
-    r2 = lutTexture0.Sample(lutSampler, r0.xyz) * lutWeights.x;
-    r1 += r2;
-    
-    r2 = lutTexture2.Sample(lutSampler, r0.xyz) * lutWeights.z;
-    r1 += r2;
-    
-    r0.xyz = lutTexture3.Sample(lutSampler, r0.xyz) * lutWeights.w;
-    outputColor.xyz = r1 + r0.xyz;
-    
-    return outputColor;
+    // 对 RGB 分量取对数前进行安全钳制，避免 log(0) / 负数导致的 -INF/NaN
+    float3 rgb = log(max(abs(r0.xyz), 1e-6));
+
+    // gamma 校正：等价于 pow(color, 0.454545)
+    rgb *= 0.454545;
+    rgb = exp(rgb);
+
+    // LUT 坐标范围调整并夹紧到 [0,1]
+    float3 uvw = saturate(rgb * 0.9375 + 0.03125);
+
+    // 从多个 3D LUT 采样（显式 .rgb，避免隐式截断）
+    float3 c0 = lutTexture0.Sample(lutSampler, uvw).rgb;
+    float3 c1 = lutTexture1.Sample(lutSampler, uvw).rgb;
+    float3 c2 = lutTexture2.Sample(lutSampler, uvw).rgb;
+    float3 c3 = lutTexture3.Sample(lutSampler, uvw).rgb;
+
+    // 按权重混合（保持与你原逻辑一致：不做权重归一化）
+    float3 outRGB = c0 * lutWeights.x
+                  + c1 * lutWeights.y
+                  + c2 * lutWeights.z
+                  + c3 * lutWeights.w;
+
+    // 透传 alpha
+    return float4(outRGB, r0.w);
 }
+
 
 // 夜视效果处理
 float4 applyNightVision(float4 color, float2 texcoord)
