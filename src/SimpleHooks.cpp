@@ -63,6 +63,15 @@ namespace ThroughScope
 		g_hookMgr->g_BSShaderAccumulator_RenderOpaqueDecals(thisPtr);
 	}
 
+	void __fastcall hkDoUmbraQuery(uint64_t ptr_drawWorld)
+	{
+		// 在瞄具渲染时跳过Umbra遮挡剔除查询，避免空指针崩溃
+		if (ScopeCamera::IsRenderingForScope()) {
+			return;
+		}
+		g_hookMgr->g_DoUmbraQuery(ptr_drawWorld);
+	}
+
 	void __fastcall hkBSCullingGroup_Process(BSCullingGroup* thisPtr, bool abFirstStageOnly)
 	{
 		g_hookMgr->g_BSCullingGroupProcessOriginal(thisPtr, abFirstStageOnly);

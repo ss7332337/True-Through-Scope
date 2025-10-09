@@ -84,6 +84,7 @@ namespace ThroughScope
 	void __fastcall hkBSShaderAccumulator_RenderBlendedDecals(BSShaderAccumulator* thisPtr);
 	void __fastcall hkBSShaderAccumulator_RenderOpaqueDecals(BSShaderAccumulator* thisPtr);
 	RenderTarget* __fastcall hkRenderer_CreateRenderTarget(Renderer* renderer, int aId, const wchar_t* apName, const RenderTargetProperties* aProperties);
+	void __fastcall hkDoUmbraQuery(uint64_t ptr_drawWorld);
 
 	class HookManager
 	{
@@ -135,6 +136,7 @@ namespace ThroughScope
 		typedef void (*FnBSShaderAccumulator_RenderOpaqueDecals)(BSShaderAccumulator*);
 		typedef RenderTarget* (*FnRenderer_CreateRenderTarget)(Renderer*, int, const wchar_t*, const RenderTargetProperties*);
 		typedef void (*FnOcclusionMapRender)();
+		typedef void (*FnDoUmbraQuery)(uint64_t);
 		#pragma endregion
 
 		#pragma region Original Function Pointers
@@ -183,6 +185,7 @@ namespace ThroughScope
 		FnBSShaderAccumulator_RenderOpaqueDecals g_BSShaderAccumulator_RenderOpaqueDecals = nullptr;
 		FnRenderer_CreateRenderTarget g_Renderer_CreateRenderTarget = nullptr;
 		FnOcclusionMapRender g_OcclusionMapRender = nullptr;
+		FnDoUmbraQuery g_DoUmbraQuery = nullptr;
 		#pragma endregion
 
 	private:
@@ -239,6 +242,7 @@ namespace ThroughScope
 		REL::Relocation<uintptr_t> BSCullingGroup_SetCompoundFrustum_Ori{ REL::ID(158202) };
 
 		REL::Relocation<uintptr_t> DrawWorld_Move1stPersonToOrigin_Ori{ REL::ID(76526) };
+		REL::Relocation<uintptr_t> DrawWorld_DoUmbraQuery_Ori{ REL::ID(1264353) };
 		#pragma endregion
 
 		void RegisterTAAHook();

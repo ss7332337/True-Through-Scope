@@ -25,9 +25,32 @@ namespace ThroughScope
 	}
 	void ResetFirstSpawnState();
 
+bool IsValidPointer(const void* ptr)
+	{
+		if (!ptr)
+			return false;
+
+		// 检查指针是否在合理的地址范围内
+		uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
+		if (addr < 0x10000 || addr == 0xFFFFFFFFFFFFFFFF)
+			return false;
+
+		// 尝试使用IsBadReadPtr检查内存可读性（Windows特定）
+		__try {
+			volatile char test = *reinterpret_cast<const char*>(ptr);
+			(void)test;
+			return true;
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			return false;
+		}
+	}
+
 	bool IsValidObject(NiAVObject* apObj)
 	{
-		if (!apObj || apObj->refCount == 0)
+		if (!IsValidPointer(apObj))
+			return false;
+
+		if (apObj->refCount == 0)
 			return false;
 
 		uintptr_t vtable = *(uintptr_t*)apObj;
@@ -45,12 +68,40 @@ namespace ThroughScope
 		const NiBound* aBound,
 		const unsigned int aFlags)
 	{
+		// 验证thisPtr
+		if (!thisPtr) {
+			logger::error("BSCullingGroup thisPtr is null");
+			return;
+		}
+
+		// 验证apObj
 		if (!IsValidObject(apObj)) {
 			logger::error("Invalid object: 0x{:X}", (uintptr_t)apObj);
 			return;
 		}
 
+		// 验证aBound指针
+		if (!IsValidPointer(aBound)) {
+			const char* objName = (apObj && apObj->name.c_str()) ? apObj->name.c_str() : "unknown";
+			logger::error("NiBound is invalid for object: {} (ptr: 0x{:X})", objName, reinterpret_cast<uintptr_t>(aBound));
+			return;
+		}
+
+		// 在第二次渲染期间，对某些特殊对象进行过滤
+		if (ScopeCamera::IsRenderingForScope()) {
+			// 跳过天气相关对象，避免在瞄准镜场景中渲染
+			if (apObj->name.c_str() && strstr(apObj->name.c_str(), "Weather")) {
+				return;
+			}
+		}
+
+		// 使用异常保护调用原始函数，防止内部崩溃
+		__try {
 		g_hookMgr->g_BSCullingGroupAdd(thisPtr, apObj, aBound, aFlags);
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			const char* objName = (apObj && apObj->name.c_str()) ? apObj->name.c_str() : "unknown";
+			logger::error("Exception in BSCullingGroupAdd for object: {} (flags: 0x{:X})", objName, aFlags);
+		}
 	}
 
 	void hkDrawTriShape(BSGraphics::Renderer* thisPtr, BSGraphics::TriShape* apTriShape, unsigned int auiStartIndex, unsigned int auiNumTriangles)

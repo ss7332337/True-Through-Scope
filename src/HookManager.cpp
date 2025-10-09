@@ -103,6 +103,9 @@ namespace ThroughScope
 		CreateAndEnableHook((LPVOID)DrawWorld_Move1stPersonToOrigin_Ori.address(), &hkDrawWorld_Move1stPersonToOrigin,
 			reinterpret_cast<LPVOID*>(&g_DrawWorld_Move1stPersonToOrigin), "DrawWorld_Move1stPersonToOrigin");
 
+		CreateAndEnableHook((LPVOID)DrawWorld_DoUmbraQuery_Ori.address(), &hkDoUmbraQuery,
+			reinterpret_cast<LPVOID*>(&g_DoUmbraQuery), "DoUmbraQuery");
+
 		CreateAndEnableHook((LPVOID)BSShaderAccumulator_RenderBatches_Ori.address(), &hkBSShaderAccumulator_RenderBatches,
 			reinterpret_cast<LPVOID*>(&g_BSShaderAccumulatorRenderBatches), "BSShaderAccumulator_RenderBatches");
 
