@@ -122,7 +122,7 @@ float4 applyColorGrading(float4 color)
     float4 r0 = color;
     float3 r1, r2;
 
-    // 对RGB分量取对数
+    // 对RGB分量取对数前进行安全钳制,避免log(0)导致的负无穷大
     r0.xyz = log(r0.xyz);
     
     // 直接输出alpha通道

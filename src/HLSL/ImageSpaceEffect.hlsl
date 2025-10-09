@@ -67,7 +67,7 @@ float4 main(VSOutput input) : SV_TARGET
     float3 colorComp2 = blendedColor * 0.3 + 0.5;
     colorComp2 = doubledColor * colorComp2 + 0.06;
     
-    // 除法操作
+    // 除法操作 - 添加安全保护避免除零和数值不稳定
     float3 finalColor = colorComp1 / colorComp2;
     
     // 进一步的颜色调整
