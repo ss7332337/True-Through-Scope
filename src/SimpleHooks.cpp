@@ -48,18 +48,18 @@ namespace ThroughScope
 	void __fastcall hkBSShaderAccumulator_RenderBlendedDecals(BSShaderAccumulator* thisPtr)
 	{
 		// 在瞄具渲染时，根据优化设置跳过贴花渲染
-		if (ScopeCamera::IsRenderingForScope()) {
-			return;
-		}
+		// if (ScopeCamera::IsRenderingForScope()) {
+		// 	return;
+		// }
 		g_hookMgr->g_BSShaderAccumulator_RenderBlendedDecals(thisPtr);
 	}
 
 	void __fastcall hkBSShaderAccumulator_RenderOpaqueDecals(BSShaderAccumulator* thisPtr)
 	{
 		// 在瞄具渲染时，根据优化设置跳过贴花渲染
-		if (ScopeCamera::IsRenderingForScope()) {
-			return;
-		}
+		// if (ScopeCamera::IsRenderingForScope()) {
+		// 	return;
+		// }
 		g_hookMgr->g_BSShaderAccumulator_RenderOpaqueDecals(thisPtr);
 	}
 
@@ -92,8 +92,6 @@ namespace ThroughScope
 		D3DEventNode(g_hookMgr->g_DrawWorldAndUIOriginal(ptr_drawWorld, abBackground), L"hkMain_DrawWorldAndUI");
 	}
 
-	// ===== 包含D3D事件的简单Hook函数 =====
-
 	void __fastcall hkBSDistantObjectInstanceRenderer_Render(uint64_t thisPtr)
 	{
 		// 在瞄具渲染时，根据优化设置跳过远景对象渲染
@@ -121,9 +119,9 @@ namespace ThroughScope
 	void __fastcall hkOcclusionMapRender()
 	{
 		// 在瞄具渲染时，根据优化设置跳过遮挡图渲染
-		if (ScopeCamera::IsRenderingForScope()) {
-			return;
-		}
+		// if (ScopeCamera::IsRenderingForScope()) {
+		// 	return;
+		// }
 		D3DEventNode(g_hookMgr->g_OcclusionMapRender(), L"hkOcclusionMapRender");
 	}
 
