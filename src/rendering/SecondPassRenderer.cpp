@@ -393,6 +393,7 @@ namespace ThroughScope
 
         // 执行第二次渲染
         auto hookMgr = HookManager::GetSingleton();
+        
         hookMgr->g_RenderPreUIOriginal(savedDrawWorld);
 
         // 恢复相机指针

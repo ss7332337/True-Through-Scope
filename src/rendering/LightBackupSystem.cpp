@@ -166,15 +166,11 @@ namespace ThroughScope
         }
 
         try {
-            // 应用视锥体剔除状态
-            if (backup.frustumCull == 0xFF || backup.frustumCull == 0xFE) {
-                bsLight->usFrustumCull = backup.frustumCull;
-            } else {
-                bsLight->usFrustumCull = 0xFF;  // BSL_ALL - 确保光源在瞄具渲染中可见
-            }
+            // 应用视锥体剔除状态 - 强制所有光源可见
+            bsLight->usFrustumCull = 0xFF;  // BSL_ALL
 
-            // 应用基本状态
-            bsLight->SetOccluded(backup.occluded);
+            // 应用基本状态 - 强制不被遮挡
+            bsLight->SetOccluded(false);
             bsLight->SetTemporary(backup.temporary);
             bsLight->SetLODFade(false);  // 暂不持久保存LODFade，保持关闭以提升可见性
             bsLight->fLODDimmer = backup.lodDimmer;
