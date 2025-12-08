@@ -167,7 +167,9 @@ namespace ThroughScope
 
         try {
             // 应用视锥体剔除状态 - 强制所有光源可见
-            bsLight->usFrustumCull = 0xFF;  // BSL_ALL
+            // 重要：DeferredLightsImpl 会跳过 usFrustumCull == 255 的光源！
+            // 255 表示被完全剔除，0 表示未剔除（可见）
+            bsLight->usFrustumCull = 0;  // 设为0表示光源未被剔除，应该被渲染
 
             // 应用基本状态 - 强制不被遮挡
             bsLight->SetOccluded(false);
