@@ -1,8 +1,8 @@
 #pragma once
 
-#include <d3d11.h>
 #include <Windows.h>
 #include <cstdint>
+#include <d3d11.h>
 
 // Forward declarations for CommonLibF4 types
 namespace RE
@@ -85,6 +85,7 @@ namespace ThroughScope
 	void __fastcall hkBSShaderAccumulator_RenderOpaqueDecals(BSShaderAccumulator* thisPtr);
 	RenderTarget* __fastcall hkRenderer_CreateRenderTarget(Renderer* renderer, int aId, const wchar_t* apName, const RenderTargetProperties* aProperties);
 	void __fastcall hkDoUmbraQuery(uint64_t ptr_drawWorld);
+	void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* apCurrentPass);
 
 	class HookManager
 	{
@@ -97,7 +98,7 @@ namespace ThroughScope
 
 		void RegisterAllHooks();
 
-		#pragma region Function Type Definitions
+#pragma region Function Type Definitions
 		typedef void (*FnDrawWorldLightUpdate)(uint64_t);
 		typedef void (*DoZPrePassOriginalFuncType)(uint64_t, NiCamera*, NiCamera*, float, float, float, float);
 		typedef void (*RenderZPrePassOriginalFuncType)(RendererShadowState*, ZPrePassDrawData*, unsigned __int64*, unsigned __int16*, unsigned __int16*);
@@ -137,9 +138,10 @@ namespace ThroughScope
 		typedef RenderTarget* (*FnRenderer_CreateRenderTarget)(Renderer*, int, const wchar_t*, const RenderTargetProperties*);
 		typedef void (*FnOcclusionMapRender)();
 		typedef void (*FnDoUmbraQuery)(uint64_t);
-		#pragma endregion
+		typedef void (*FnBSSkyShader_SetupGeometry)(void*, BSRenderPass*);
+#pragma endregion
 
-		#pragma region Original Function Pointers
+#pragma region Original Function Pointers
 		FnDrawWorldLightUpdate g_DrawWorldLightUpdateOriginal = nullptr;
 		DoZPrePassOriginalFuncType g_pDoZPrePassOriginal = nullptr;
 		RenderZPrePassOriginalFuncType g_RenderZPrePassOriginal = nullptr;
@@ -186,7 +188,8 @@ namespace ThroughScope
 		FnRenderer_CreateRenderTarget g_Renderer_CreateRenderTarget = nullptr;
 		FnOcclusionMapRender g_OcclusionMapRender = nullptr;
 		FnDoUmbraQuery g_DoUmbraQuery = nullptr;
-		#pragma endregion
+		FnBSSkyShader_SetupGeometry g_BSSkyShader_SetupGeometry = nullptr;
+#pragma endregion
 
 	private:
 		HookManager() = default;
@@ -194,7 +197,7 @@ namespace ThroughScope
 		HookManager(const HookManager&) = delete;
 		HookManager& operator=(const HookManager&) = delete;
 
-		#pragma region REL Relocations
+#pragma region REL Relocations
 		REL::Relocation<uintptr_t> DrawWorld_Render_PreUI_Ori{ REL::ID(984743) };
 		REL::Relocation<uintptr_t> DrawWorld_MainAccum_Ori{ REL::ID(718911) };
 		REL::Relocation<uintptr_t> DrawWorld_OcclusionMapRender_Ori{ REL::ID(426737) };
@@ -243,7 +246,13 @@ namespace ThroughScope
 
 		REL::Relocation<uintptr_t> DrawWorld_Move1stPersonToOrigin_Ori{ REL::ID(76526) };
 		REL::Relocation<uintptr_t> DrawWorld_DoUmbraQuery_Ori{ REL::ID(1264353) };
-		#pragma endregion
+
+		// TODO: 使用IDA找到 BSSkyShader::SetupGeometry 的正确 REL::ID
+		// 查找方法：在IDA中搜索字符串 "BSSkyShader" 或查找 BSSkyShader 的虚表
+		// SetupGeometry 通常在虚表偏移 0x48 或 0x50 处
+		// 临时使用占位符 ID，你需要替换为正确的 ID
+		REL::Relocation<uintptr_t> BSSkyShader_SetupGeometry_Ori{ REL::ID(751762) };  // TODO: 填入正确的 REL::ID
+#pragma endregion
 
 		void RegisterTAAHook();
 		void DelayedTAAHook();

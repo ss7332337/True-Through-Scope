@@ -1,17 +1,22 @@
-#include "HookManager.h"
-#include "Utilities.h"
 #include "D3DHooks.h"
-#include "ScopeCamera.h"
-#include "RenderUtilities.h"
 #include "DataPersistence.h"
 #include "GlobalTypes.h"
+#include "HookManager.h"
+#include "RenderUtilities.h"
+#include "ScopeCamera.h"
+#include "Utilities.h"
 #include "rendering/LightBackupSystem.h"
-#include <thread>
+#include <DirectXMath.h>
 #include <chrono>
+#include <cmath>
+#include <thread>
+#include <winternl.h>
+#include <xmmintrin.h>
 
 namespace ThroughScope
 {
 	using namespace Utilities;
+	using namespace RE;
 
 	static HookManager* g_hookMgr = HookManager::GetSingleton();
 	static LightBackupSystem* g_lightBackup = LightBackupSystem::GetSingleton();
@@ -25,7 +30,7 @@ namespace ThroughScope
 	}
 	void ResetFirstSpawnState();
 
-bool IsValidPointer(const void* ptr)
+	bool IsValidPointer(const void* ptr)
 	{
 		if (!ptr)
 			return false;
@@ -97,7 +102,7 @@ bool IsValidPointer(const void* ptr)
 
 		// 使用异常保护调用原始函数，防止内部崩溃
 		__try {
-		g_hookMgr->g_BSCullingGroupAdd(thisPtr, apObj, aBound, aFlags);
+			g_hookMgr->g_BSCullingGroupAdd(thisPtr, apObj, aBound, aFlags);
 		} __except (EXCEPTION_EXECUTE_HANDLER) {
 			const char* objName = (apObj && apObj->name.c_str()) ? apObj->name.c_str() : "unknown";
 			logger::error("Exception in BSCullingGroupAdd for object: {} (flags: 0x{:X})", objName, aFlags);
@@ -123,6 +128,15 @@ bool IsValidPointer(const void* ptr)
 	void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
 	{
 		savedDrawWorld = ptr_drawWorld;
+
+		// 在非瞄具渲染时捕获主相机 FOV
+		if (!ScopeCamera::IsRenderingForScope()) {
+			const auto playerCamera = RE::PlayerCamera::GetSingleton();
+			if (playerCamera) {
+				g_MainCameraFOV = playerCamera->firstPersonFOV;
+			}
+		}
+
 		D3DEventNode(g_hookMgr->g_RenderPreUIOriginal(ptr_drawWorld), L"Render_PreUI");
 	}
 
@@ -169,7 +183,7 @@ bool IsValidPointer(const void* ptr)
 		if (ScopeCamera::IsRenderingForScope()) {
 			// 在瞄具渲染过程中重新应用光源状态
 			// 启用光源数量限制优化：最多使用16个最重要的光源
-			g_lightBackup->ApplyLightStatesForScope(true, 16);
+			g_lightBackup->ApplyLightStatesForScope(false, 16);
 		}
 
 		D3DEventNode(g_hookMgr->g_DeferredLightsImplOriginal(ptr_drawWorld), L"hkDeferredLightsImpl");
@@ -182,23 +196,19 @@ bool IsValidPointer(const void* ptr)
 		D3DHooks::SetForwardStage(false);
 	}
 
-
 	void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 	{
 		SHORT keyPgDown = GetAsyncKeyState(VK_NEXT);
 		SHORT keyPgUp = GetAsyncKeyState(VK_PRIOR);
 
-		if (keyPgUp & 0x1)
-		{
+		if (keyPgUp & 0x1) {
 			BSScrapArray<NiPointer<Actor>> aRetArray;
 			std::vector<Actor*> actorList{};
 			ProcessLists::GetSingleton()->GetActorsWithinRangeOfReference(g_pchar, 20000, &aRetArray);
 			auto imadThermal = Utilities::GetFormFromMod("WestTekTacticalOptics.esp", 0x811)->As<TESImageSpaceModifier>();
-			for (size_t i = 0; i < aRetArray.size(); i++)
-			{
+			for (size_t i = 0; i < aRetArray.size(); i++) {
 				Actor* actor = aRetArray[i].get();
-				if (actor->formID != 0x7 && actor->formID != 0x14)
-				{
+				if (actor->formID != 0x7 && actor->formID != 0x14) {
 					std::string actorName = actor->GetDisplayFullName();
 					logger::info("Found Actor: {}", actorName.c_str());
 				}
@@ -207,20 +217,21 @@ bool IsValidPointer(const void* ptr)
 
 			logger::info("actorList size: {}", actorList.size());
 
-			for (auto actor : actorList)
-			{
+			for (auto actor : actorList) {
 				auto actorNode = actor->Get3D()->IsNode();
-				if (!actorNode) continue;
+				if (!actorNode)
+					continue;
 
 				auto actorBase = actor->GetActorBase();
-				if (!actorBase) continue;
+				if (!actorBase)
+					continue;
 
 				LogNodeHierarchy(actorNode);
 				auto actorNodeChildren = actorNode->children.data();
-				for (size_t j = 0; j < actorNode->children.size(); j++)
-				{
+				for (size_t j = 0; j < actorNode->children.size(); j++) {
 					auto child = actorNodeChildren[j].get();
-					if (!child) continue;
+					if (!child)
+						continue;
 
 					auto childGeo = child->IsTriShape();
 					if (childGeo) {
@@ -231,15 +242,13 @@ bool IsValidPointer(const void* ptr)
 				}
 			}
 		}
-		if (keyPgDown & 0x1)
-		{
+		if (keyPgDown & 0x1) {
 			Utilities::LogPlayerWeaponNodes();
 		}
 
 		auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
 
-		if (!weaponInfo.currentConfig)
-		{
+		if (!weaponInfo.currentConfig) {
 			D3DHooks::SetEnableRender(false);
 			return g_hookMgr->g_PCUpdateMainThread(pChar);
 		}
@@ -274,17 +283,10 @@ bool IsValidPointer(const void* ptr)
 		if (g_pchar->IsInThirdPerson())
 			return g_hookMgr->g_PCUpdateMainThread(pChar);
 
-		if (ScopeCamera::IsSideAim()
-			|| UI::GetSingleton()->GetMenuOpen("PauseMenu")
-			|| UI::GetSingleton()->GetMenuOpen("WorkshopMenu")
-			|| UI::GetSingleton()->GetMenuOpen("CursorMenu")
-			|| UI::GetSingleton()->GetMenuOpen("ScopeMenu")
-			|| UI::GetSingleton()->GetMenuOpen("LooksMenu")
-			) {
+		if (ScopeCamera::IsSideAim() || UI::GetSingleton()->GetMenuOpen("PauseMenu") || UI::GetSingleton()->GetMenuOpen("WorkshopMenu") || UI::GetSingleton()->GetMenuOpen("CursorMenu") || UI::GetSingleton()->GetMenuOpen("ScopeMenu") || UI::GetSingleton()->GetMenuOpen("LooksMenu")) {
 			D3DHooks::SetEnableRender(false);
 		} else {
-			if (IsInADS(g_pchar))
-			{
+			if (IsInADS(g_pchar)) {
 				D3DHooks::HandleFOVInput();
 				D3DHooks::SetEnableRender(true);
 			}
@@ -295,5 +297,106 @@ bool IsValidPointer(const void* ptr)
 		}
 
 		g_hookMgr->g_PCUpdateMainThread(pChar);
+	}
+
+	// TLS 相关的静态重定位对象
+	static REL::Relocation<uint32_t*> ptr_tls_index_sky{ REL::ID(842564) };
+	static REL::Relocation<uintptr_t*> ptr_DefaultContext_sky{ REL::ID(33539) };
+
+	// 星星世界缩放因子（硬编码）
+	// 这个值用于补偿瞄具场景中 viewProjMat 与主相机的缩放差异
+	// 经测试，101 倍可以使星星大小和位置移动与主场景一致
+	static constexpr float STAR_WORLD_SCALE_FACTOR = 120.0f;
+
+	// 检查几何体是否是星星
+	static bool IsStarGeometry(BSRenderPass* apCurrentPass)
+	{
+		if (!apCurrentPass || !apCurrentPass->pGeometry) {
+			return false;
+		}
+
+		// 获取几何体名称
+		const char* geomName = apCurrentPass->pGeometry->name.c_str();
+		if (!geomName) {
+			return false;
+		}
+
+		// 检查名称是否包含 "Star" 或 "star"
+		// 注意：需要根据实际游戏中星星几何体的名称进行调整
+		if (strstr(geomName, "Star") != nullptr || strstr(geomName, "star") != nullptr) {
+			return true;
+		}
+
+		return false;
+	}
+
+	void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* apCurrentPass)
+	{
+		// 如果不在瞄具渲染模式，直接调用原始函数
+		if (!ScopeCamera::IsRenderingForScope()) {
+			g_hookMgr->g_BSSkyShader_SetupGeometry(thisPtr, apCurrentPass);
+			return;
+		}
+
+		// 检查是否有保存的正确矩阵
+		if (!g_ScopeViewProjMatValid) {
+			// 没有保存的矩阵，直接调用原始函数
+			g_hookMgr->g_BSSkyShader_SetupGeometry(thisPtr, apCurrentPass);
+			return;
+		}
+
+		// 从 TLS 获取 BSGraphics::Context
+		_TEB* teb = NtCurrentTeb();
+		auto tls_index = *ptr_tls_index_sky;
+		uintptr_t contextPtr = *(uintptr_t*)(*((uint64_t*)teb->Reserved1[11] + tls_index) + 2848i64);
+		if (!contextPtr) {
+			contextPtr = *ptr_DefaultContext_sky;
+		}
+
+		if (!contextPtr) {
+			g_hookMgr->g_BSSkyShader_SetupGeometry(thisPtr, apCurrentPass);
+			return;
+		}
+
+		auto context = (RE::BSGraphics::Context*)contextPtr;
+		auto& cameraData = context->shadowState.CameraData;
+
+		// 备份当前的投影矩阵（这是被主相机覆盖的错误矩阵）
+		__m128 backupViewProjMat[4];
+		backupViewProjMat[0] = cameraData.viewProjMat[0];
+		backupViewProjMat[1] = cameraData.viewProjMat[1];
+		backupViewProjMat[2] = cameraData.viewProjMat[2];
+		backupViewProjMat[3] = cameraData.viewProjMat[3];
+
+		// 检测是否正在渲染星星
+		bool isRenderingStars = IsStarGeometry(apCurrentPass);
+
+		// 用保存的正确矩阵替换（这是在 SetCameraData 后用瞄具相机生成的矩阵）
+		cameraData.viewProjMat[0] = g_ScopeViewProjMat[0];
+		cameraData.viewProjMat[1] = g_ScopeViewProjMat[1];
+		cameraData.viewProjMat[2] = g_ScopeViewProjMat[2];
+		cameraData.viewProjMat[3] = g_ScopeViewProjMat[3];
+
+		// 备份并修改星星几何体的世界缩放
+		// 使用 101 倍缩放来补偿 viewProjMat 的缩放差异
+		float originalWorldScale = 1.0f;
+		if (isRenderingStars && apCurrentPass->pGeometry) {
+			originalWorldScale = apCurrentPass->pGeometry->world.scale;
+			apCurrentPass->pGeometry->world.scale = originalWorldScale * STAR_WORLD_SCALE_FACTOR;
+		}
+
+		// 调用原始函数（使用修改后的矩阵和世界缩放）
+		g_hookMgr->g_BSSkyShader_SetupGeometry(thisPtr, apCurrentPass);
+
+		// 恢复星星几何体的原始世界缩放
+		if (isRenderingStars && apCurrentPass->pGeometry) {
+			apCurrentPass->pGeometry->world.scale = originalWorldScale;
+		}
+
+		// 恢复原来的 viewProjMat
+		cameraData.viewProjMat[0] = backupViewProjMat[0];
+		cameraData.viewProjMat[1] = backupViewProjMat[1];
+		cameraData.viewProjMat[2] = backupViewProjMat[2];
+		cameraData.viewProjMat[3] = backupViewProjMat[3];
 	}
 }

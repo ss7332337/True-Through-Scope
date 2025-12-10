@@ -45,6 +45,7 @@ namespace ThroughScope
 	extern void __fastcall hkBSCullingGroup_Process(BSCullingGroup* thisPtr, bool abFirstStageOnly);
 	extern void __fastcall hkRTManager_CreateRenderTarget(RenderTargetManager rtm, int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
 	extern void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar);
+	extern void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* apCurrentPass);
 
 	void HookManager::RegisterAllHooks()
 	{
@@ -117,6 +118,9 @@ namespace ThroughScope
 
 		CreateAndEnableHook((LPVOID)Renderer_CreateRenderTarget_Ori.address(), &hkRenderer_CreateRenderTarget,
 			reinterpret_cast<LPVOID*>(&g_Renderer_CreateRenderTarget), "Renderer_CreateRenderTarget");
+
+		CreateAndEnableHook((LPVOID)BSSkyShader_SetupGeometry_Ori.address(), &hkBSSkyShader_SetupGeometry,
+			reinterpret_cast<LPVOID*>(&g_BSSkyShader_SetupGeometry), "BSSkyShader_SetupGeometry");
 
 		RegisterTAAHook();
 

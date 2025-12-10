@@ -28,6 +28,8 @@ else ()
 	)
 endif ()
 
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "")
 set(Boost_USE_STATIC_RUNTIME OFF CACHE BOOL "")
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "")
 

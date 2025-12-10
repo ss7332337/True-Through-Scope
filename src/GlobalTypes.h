@@ -3,8 +3,9 @@
 #include <Windows.h>
 
 // 前向声明
-namespace ThroughScope {
-    class D3DHooks;
+namespace ThroughScope
+{
+	class D3DHooks;
 }
 
 namespace ThroughScope
@@ -22,7 +23,6 @@ namespace ThroughScope
 		RE::BSCullingProcess* cullingProcess;
 	};
 
-
 	// 全局变量声明（在main.cpp中定义）
 	extern std::vector<LightStateBackup> g_LightStateBackups;
 	extern uint64_t savedDrawWorld;
@@ -31,6 +31,15 @@ namespace ThroughScope
 	extern NIFLoader* nifloader;
 	extern HMODULE upscalerModular;
 	extern RE::NiCamera* ggg_ScopeCamera;
+
+	// 保存瞄具渲染时正确的 ViewProjMat（在 SetCameraData 后保存）
+	// 用于 BSSkyShader::SetupGeometry Hook
+	extern __m128 g_ScopeViewProjMat[4];
+	extern bool g_ScopeViewProjMatValid;
+
+	// 保存主相机的 FOV（角度制），在第一次渲染时从 PlayerCamera->firstPersonFOV 获取
+	// 用于 BSSkyShader::SetupGeometry Hook 计算缩放因子
+	extern float g_MainCameraFOV;
 
 	// REL指针声明
 	extern REL::Relocation<RE::ShadowSceneNode**> ptr_DrawWorldShadowNode;

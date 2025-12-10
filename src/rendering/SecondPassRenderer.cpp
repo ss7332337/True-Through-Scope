@@ -2,754 +2,845 @@
 #include "GlobalTypes.h"
 #include "HookManager.h"
 #include "ThermalVision.h"
+#include <winternl.h>
 
 namespace ThroughScope
 {
-    SecondPassRenderer::SecondPassRenderer(ID3D11DeviceContext* context, ID3D11Device* device, D3DHooks* d3dHooks)
-        : m_context(context)
-        , m_device(device)
-        , m_d3dHooks(d3dHooks)
-        , m_lightBackup(LightBackupSystem::GetSingleton())
-        , m_thermalVision(nullptr)
-        , m_renderStateMgr(RenderStateManager::GetSingleton())
-    {
-        if (!ValidateD3DResources()) {
-            logger::error("SecondPassRenderer: Invalid D3D resources provided");
-        }
-    }
-
-    SecondPassRenderer::~SecondPassRenderer()
-    {
-        CleanupResources();
-
-        // 清理热成像资源
-        if (m_thermalRTV) m_thermalRTV->Release();
-        if (m_thermalSRV) m_thermalSRV->Release();
-        if (m_thermalRenderTarget) m_thermalRenderTarget->Release();
-        if (m_thermalVision) {
-            m_thermalVision->Shutdown();
-        }
-    }
-
-    bool SecondPassRenderer::ExecuteSecondPass()
-    {
-        if (!CanExecuteSecondPass()) {
-            logger::warn("Cannot execute second pass: preconditions not met");
-            return false;
-        }
-
-        logger::debug("Starting second pass rendering...");
-
-        // 初始化相机指针
-        m_scopeCamera = ScopeCamera::GetScopeCamera();
-        m_playerCamera = *ptr_DrawWorldCamera;
-
-        // 重置状态标志
-        m_texturesBackedUp = false;
-        m_cameraUpdated = false;
-        m_lightingSynced = false;
-        m_renderExecuted = false;
-
-        // 重置每帧的渲染标志
-        RenderUtilities::SetFirstPassComplete(false);
-        RenderUtilities::SetSecondPassComplete(false);
-
-        try {
-            // 1. 备份第一次渲染的纹理
-            if (!BackupFirstPassTextures()) {
-                logger::error("Failed to backup first pass textures");
-                return false;
-            }
-
-            // 2. 更新瞄具相机配置
-            if (!UpdateScopeCamera()) {
-                logger::error("Failed to update scope camera");
-                RestoreFirstPass();
-                return false;
-            }
-
-            // 3. 清理渲染目标
-            ClearRenderTargets();
-
-            // 4. 同步光照状态
-            if (!SyncLighting()) {
-                logger::error("Failed to sync lighting");
-                RestoreFirstPass();
-                return false;
-            }
-
-            // 5. 执行第二次渲染
-            DrawScopeContent();
-            m_renderExecuted = true;
-
-            // 5.5 如果启用热成像，应用热成像效果
-            if (m_thermalVisionEnabled) {
-                ApplyThermalVisionEffect();
-            }
-
-            // 6. 恢复第一次渲染状态
-            RestoreFirstPass();
-
-            logger::debug("Second pass rendering completed successfully");
-            return true;
-
-        } catch (const std::exception& e) {
-            logger::error("Exception during second pass rendering: {}", e.what());
-            RestoreFirstPass();
-            return false;
-        } catch (...) {
-            logger::error("Unknown exception during second pass rendering");
-            RestoreFirstPass();
-            return false;
-        }
-    }
-
-    bool SecondPassRenderer::CanExecuteSecondPass() const
-    {
-        // 检查渲染状态
-        if (!m_renderStateMgr->IsScopeReady() || !m_renderStateMgr->IsRenderReady() || !D3DHooks::IsEnableRender()) {
-            return false;
-        }
-
-        // 检查瞄具相机
-        auto scopeCamera = ScopeCamera::GetScopeCamera();
-        if (!scopeCamera || !scopeCamera->parent) {
-            return false;
-        }
-
-        // 检查玩家相机
-        auto playerCamera = *ptr_DrawWorldCamera;
-        if (!playerCamera) {
-            logger::debug("CanExecuteSecondPass: playerCamera = null");
-            return false;
-        }
-
-        // 检查D3D资源
-        if (!ValidateD3DResources()) {
-            logger::debug("CanExecuteSecondPass: ValidateD3DResources = false, error: {}", m_lastError);
-            return false;
-        }
-
-        logger::debug("CanExecuteSecondPass: All checks passed");
-        return true;
-    }
-
-    bool SecondPassRenderer::BackupFirstPassTextures()
-    {
-        logger::debug("Backing up first pass textures...");
-
-        auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-        if (!rendererData || !rendererData->context) {
-            m_lastError = "Renderer data or context is null";
-            return false;
-        }
-
-        // 获取主要的渲染目标
-        m_mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
-        m_mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
-        m_mainRTTexture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
-        m_mainDSTexture = (ID3D11Texture2D*)rendererData->depthStencilTargets[2].texture;
-
-        // 获取当前绑定的渲染目标
-        m_context->OMGetRenderTargets(2, m_savedRTVs, nullptr);
-
-        // 获取后缓冲纹理
-        ID3D11Resource* rtResource = nullptr;
-        if (m_savedRTVs[1]) {
-            m_savedRTVs[1]->GetResource(&rtResource);
-            if (rtResource != nullptr) {
-                rtResource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&m_rtTexture2D);
-                rtResource->Release();
-            }
-        }
-
-        if (!m_rtTexture2D) {
-            m_lastError = "Failed to get render target texture";
-            return false;
-        }
-
-        // 创建临时后缓冲纹理
-        if (!CreateTemporaryBackBuffer()) {
-            return false;
-        }
-
-        // 验证临时纹理和源纹理的尺寸是否匹配
-        D3D11_TEXTURE2D_DESC tempDesc, rtDesc;
-        m_tempBackBufferTex->GetDesc(&tempDesc);
-        m_rtTexture2D->GetDesc(&rtDesc);
-
-        if (tempDesc.Width != rtDesc.Width || tempDesc.Height != rtDesc.Height || tempDesc.Format != rtDesc.Format) {
-            logger::error("Temporary BackBuffer size mismatch: temp({}x{}, {:X}) vs rt({}x{}, {:X})",
-                tempDesc.Width, tempDesc.Height, (UINT)tempDesc.Format,
-                rtDesc.Width, rtDesc.Height, (UINT)rtDesc.Format);
-            m_lastError = "Temporary BackBuffer size mismatch";
-            return false;
-        }
-
-        // 复制当前渲染目标内容到临时BackBuffer
-        m_context->CopyResource(m_tempBackBufferTex, m_rtTexture2D);
-
-        // 复制主渲染目标到我们的纹理
-        if (m_mainRTTexture && m_mainDSTexture) {
-            // 验证尺寸匹配
-            D3D11_TEXTURE2D_DESC firstPassColorDesc, mainRTDesc;
-            RenderUtilities::GetFirstPassColorTexture()->GetDesc(&firstPassColorDesc);
-            m_mainRTTexture->GetDesc(&mainRTDesc);
-
-            if (firstPassColorDesc.Width == mainRTDesc.Width && firstPassColorDesc.Height == mainRTDesc.Height) {
-                m_context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), m_mainRTTexture);
-            } else {
-                logger::warn("Skipping first pass color copy: size mismatch {}x{} vs {}x{}",
-                    firstPassColorDesc.Width, firstPassColorDesc.Height,
-                    mainRTDesc.Width, mainRTDesc.Height);
-            }
-
-            // 验证深度纹理尺寸匹配
-            D3D11_TEXTURE2D_DESC firstPassDepthDesc, mainDSDesc;
-            RenderUtilities::GetFirstPassDepthTexture()->GetDesc(&firstPassDepthDesc);
-            m_mainDSTexture->GetDesc(&mainDSDesc);
-
-            if (firstPassDepthDesc.Width == mainDSDesc.Width && firstPassDepthDesc.Height == mainDSDesc.Height) {
-                m_context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), m_mainDSTexture);
-            } else {
-                logger::warn("Skipping first pass depth copy: size mismatch {}x{} vs {}x{}",
-                    firstPassDepthDesc.Width, firstPassDepthDesc.Height,
-                    mainDSDesc.Width, mainDSDesc.Height);
-            }
-
-            RenderUtilities::SetFirstPassComplete(true);
-        } else {
-            m_lastError = "Failed to find valid render target textures";
-            return false;
-        }
-
-        m_texturesBackedUp = true;
-        logger::debug("First pass textures backed up successfully");
-        return true;
-    }
-
-    bool SecondPassRenderer::UpdateScopeCamera()
-    {
-        logger::debug("Updating scope camera...");
-
-        // 创建原始相机的克隆
-        RE::NiCloningProcess tempP{};
-        m_originalCamera = (RE::NiCamera*)(m_playerCamera->CreateClone(tempP));
-        if (!m_originalCamera) {
-            m_lastError = "Failed to clone original camera";
-            return false;
-        }
-
-        // 更新瞄具相机的位置和旋转
-        m_scopeCamera->local.translate = m_originalCamera->local.translate;
-        m_scopeCamera->local.rotate = m_originalCamera->local.rotate;
-        m_scopeCamera->local.translate.y += 15;
-
-        // 更新父节点
-        if (m_scopeCamera->parent) {
-            RE::NiUpdateData parentUpdate{};
-            parentUpdate.camera = m_scopeCamera;
-            m_scopeCamera->parent->Update(parentUpdate);
-        }
-
-        // 更新世界变换
-        m_scopeCamera->world.translate = m_originalCamera->world.translate;
-        m_scopeCamera->world.rotate = m_originalCamera->world.rotate;
-        m_scopeCamera->world.scale = m_originalCamera->world.scale;
-        m_scopeCamera->world.translate.y += 15;
-
-        m_scopeCamera->UpdateWorldBound();
-
-        // 配置瞄具的视锥体
-        ConfigureScopeFrustum(m_scopeCamera, m_originalCamera);
-
-        // 更新相机
-        RE::NiUpdateData updateData{};
-        updateData.camera = m_scopeCamera;
-        m_scopeCamera->Update(updateData);
-        m_scopeCamera->UpdateWorldData(&updateData);
-        m_scopeCamera->UpdateWorldBound();
-
-        m_cameraUpdated = true;
-        logger::debug("Scope camera updated successfully");
-        return true;
-    }
-
-    void SecondPassRenderer::ClearRenderTargets()
-    {
-        logger::debug("Clearing render targets...");
-
-        // 清理主输出，准备第二次渲染
-        float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-
-        auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-        auto RTVs = rendererData->renderTargets;
-
-        // 清理主要的渲染目标
-        for (size_t i = 0; i < 4; i++) {
-            if (RTVs[i].rtView) {
-                m_context->ClearRenderTargetView((ID3D11RenderTargetView*)RTVs[i].rtView, clearColor);
-            }
-        }
-
-        // 清理深度模板缓冲区
-        m_context->ClearDepthStencilView(m_mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
-
-        // 清理延迟渲染的G-Buffer以确保光照信息不会残留
-        if (true) {
-            // 优化模式：只清理必要的缓冲区以提升性能
-            static const int essentialBuffers[] = { 8, 9 };  // 只清理法线和主光照buffer
-            for (int bufIdx : essentialBuffers) {
-                if (bufIdx < 100 && rendererData->renderTargets[bufIdx].rtView) {
-                    float clearValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-                    // 对于法线缓冲区，使用默认法线值
-                    if (bufIdx == 8) {
-                        clearValue[0] = 0.5f;
-                        clearValue[1] = 0.5f;
-                        clearValue[2] = 1.0f;
-                        clearValue[3] = 1.0f;
-                    }
-                    m_context->ClearRenderTargetView((ID3D11RenderTargetView*)rendererData->renderTargets[bufIdx].rtView, clearValue);
-                }
-            }
-        } else {
-            // 完整模式：清理所有G-Buffer
-            static const int lightingBuffers[] = { 8, 9, 10, 11, 12, 13, 14, 15 };
-            for (int bufIdx : lightingBuffers) {
-                if (bufIdx < 100 && rendererData->renderTargets[bufIdx].rtView) {
-                    float clearValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-                    if (bufIdx == 8) {
-                        clearValue[0] = 0.5f;
-                        clearValue[1] = 0.5f;
-                        clearValue[2] = 1.0f;
-                        clearValue[3] = 1.0f;
-                    }
-                    m_context->ClearRenderTargetView((ID3D11RenderTargetView*)rendererData->renderTargets[bufIdx].rtView, clearValue);
-                }
-            }
-        }
-
-        logger::debug("Render targets cleared");
-    }
-
-    bool SecondPassRenderer::SyncLighting()
-    {
-        logger::debug("Syncing lighting for scope rendering...");
-
-        auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
-        if (!pShadowSceneNode) {
-            m_lastError = "Shadow scene node is null";
-            return false;
-        }
-
-        // 备份第一次渲染后的光源状态
-        m_lightBackup->BackupLightStates(pShadowSceneNode);
-
-        // 设置剔除进程
-        if (*DrawWorldCullingProcess) {
-            m_lightBackup->SetCullingProcess(*DrawWorldCullingProcess);
-        }
-
-        // 应用优化的光源状态用于第二次渲染（使用RenderOptimization设置）
-        m_lightBackup->ApplyLightStatesForScope(
-            true,
-            32);
-
-        // 同步累积器的眼睛位置
-        SyncAccumulatorEyePosition(m_scopeCamera);
-
-        m_lightingSynced = true;
-        logger::debug("Lighting synced successfully");
-        return true;
-    }
-
-    void SecondPassRenderer::DrawScopeContent()
-    {
-        logger::debug("Drawing scope content...");
-
-        // 设置性能标记
-        D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
-
-        // 配置DrawWorld系统使用瞄具相机
-        DrawWorld::SetCamera(m_scopeCamera);
-        DrawWorld::SetUpdateCameraFOV(true);
-        DrawWorld::SetAdjusted1stPersonFOV(ScopeCamera::GetTargetFOV());
-        DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
-
-        // 同步BSShaderManager的相机指针
-        *ptr_BSShaderManagerSpCamera = m_scopeCamera;
-
-        // 设置渲染标志
-        ScopeCamera::SetRenderingForScope(true);
-
-        // 备份原始相机指针
-        auto SpCam = *ptr_DrawWorldSpCamera;
-        auto DrawWorldCamera = *ptr_DrawWorldCamera;
-        auto DrawWorldVisCamera = *ptr_DrawWorldVisCamera;
-
-        // 设置瞄具相机为当前相机
-        *ptr_DrawWorldCamera = m_scopeCamera;
-        *ptr_DrawWorldVisCamera = m_scopeCamera;
-
-        // 执行第二次渲染
-        auto hookMgr = HookManager::GetSingleton();
-        
-        hookMgr->g_RenderPreUIOriginal(savedDrawWorld);
-
-        // 恢复相机指针
-        *ptr_DrawWorldCamera = DrawWorldCamera;
-        *ptr_DrawWorldVisCamera = DrawWorldVisCamera;
-
-        // 清除渲染标志
-        ScopeCamera::SetRenderingForScope(false);
-
-        D3DPERF_EndEvent();
-
-        logger::debug("Scope content rendered");
-    }
-
-    void SecondPassRenderer::ApplyThermalVisionEffect()
-    {
-        logger::debug("Applying thermal vision effect...");
-
-        // 初始化热成像系统（如果尚未初始化）
-        if (!m_thermalVision) {
-            m_thermalVision = ThermalVision::GetSingleton();
-            if (!m_thermalVision->Initialize(m_device, m_context)) {
-                logger::error("Failed to initialize thermal vision system");
-                return;
-            }
-        }
-
-        // 创建热成像渲染目标（如果尚未创建）
-        if (!m_thermalRenderTarget) {
-            // 获取当前渲染目标的描述
-            D3D11_TEXTURE2D_DESC desc;
-            m_mainRTTexture->GetDesc(&desc);
-
-            // 创建热成像渲染目标
-            desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-            HRESULT hr = m_device->CreateTexture2D(&desc, nullptr, &m_thermalRenderTarget);
-            if (FAILED(hr)) {
-                logger::error("Failed to create thermal render target");
-                return;
-            }
-
-            // 创建RTV
-            hr = m_device->CreateRenderTargetView(m_thermalRenderTarget, nullptr, &m_thermalRTV);
-            if (FAILED(hr)) {
-                logger::error("Failed to create thermal RTV");
-                return;
-            }
-
-            // 创建SRV
-            hr = m_device->CreateShaderResourceView(m_thermalRenderTarget, nullptr, &m_thermalSRV);
-            if (FAILED(hr)) {
-                logger::error("Failed to create thermal SRV");
-                return;
-            }
-        }
-
-        // 获取深度缓冲的SRV（用于温度估算）
-        ID3D11ShaderResourceView* depthSRV = nullptr;
-        if (m_mainDSTexture) {
-            D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-            srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
-            srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-            srvDesc.Texture2D.MipLevels = 1;
-
-            ID3D11ShaderResourceView* tempDepthSRV = nullptr;
-            HRESULT hr = m_device->CreateShaderResourceView(m_mainDSTexture, &srvDesc, &tempDepthSRV);
-            if (SUCCEEDED(hr)) {
-                depthSRV = tempDepthSRV;
-            }
-        }
-
-        // 应用热成像效果
-        // 将第二次渲染的结果作为源，处理后输出到热成像渲染目标
-        m_thermalVision->ApplyThermalEffect(m_mainRTV, m_thermalRTV, depthSRV);
-
-        // 将热成像结果复制回主渲染目标
-        m_context->CopyResource(m_mainRTTexture, m_thermalRenderTarget);
-
-        // 清理临时深度SRV
-        if (depthSRV) {
-            depthSRV->Release();
-        }
-
-        logger::debug("Thermal vision effect applied");
-    }
-
-    void SecondPassRenderer::RestoreFirstPass()
-    {
-        logger::debug("Restoring first pass state...");
-
-        if (m_lightingSynced) {
-            // 恢复光源状态
-            m_lightBackup->RestoreLightStates();
-
-            // 恢复阴影节点状态
-            auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
-            if (pShadowSceneNode) {
-                pShadowSceneNode->bDisableLightUpdate = false;
-            }
-        }
-
-        if (m_texturesBackedUp) {
-            // 复制第二次渲染结果到我们的纹理
-            D3D11_TEXTURE2D_DESC secondPassColorDesc, mainRTDesc;
-            RenderUtilities::GetSecondPassColorTexture()->GetDesc(&secondPassColorDesc);
-            m_mainRTTexture->GetDesc(&mainRTDesc);
-
-            if (secondPassColorDesc.Width == mainRTDesc.Width && secondPassColorDesc.Height == mainRTDesc.Height) {
-                m_context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), m_mainRTTexture);
-            } else {
-                logger::warn("Skipping second pass color copy: size mismatch {}x{} vs {}x{}",
-                    secondPassColorDesc.Width, secondPassColorDesc.Height,
-                    mainRTDesc.Width, mainRTDesc.Height);
-            }
-
-            // 恢复BackBuffer
-            D3D11_TEXTURE2D_DESC rtDesc, tempBackBufferDesc;
-            m_rtTexture2D->GetDesc(&rtDesc);
-            m_tempBackBufferTex->GetDesc(&tempBackBufferDesc);
-
-            if (rtDesc.Width == tempBackBufferDesc.Width && rtDesc.Height == tempBackBufferDesc.Height) {
-                m_context->CopyResource(m_rtTexture2D, m_tempBackBufferTex);
-            } else {
-                logger::warn("Skipping BackBuffer restore: size mismatch {}x{} vs {}x{}",
-                    rtDesc.Width, rtDesc.Height,
-                    tempBackBufferDesc.Width, tempBackBufferDesc.Height);
-            }
-
-            RenderUtilities::SetSecondPassComplete(true);
-
-            // 如果第二次渲染完成，恢复主渲染目标内容用于正常显示
-            if (RenderUtilities::IsSecondPassComplete()) {
-                D3D11_TEXTURE2D_DESC firstPassColorDesc, mainRTDesc2;
-                RenderUtilities::GetFirstPassColorTexture()->GetDesc(&firstPassColorDesc);
-                m_mainRTTexture->GetDesc(&mainRTDesc2);
-
-                if (firstPassColorDesc.Width == mainRTDesc2.Width && firstPassColorDesc.Height == mainRTDesc2.Height) {
-                    m_context->CopyResource(m_mainRTTexture, RenderUtilities::GetFirstPassColorTexture());
-                } else {
-                    logger::warn("Skipping first pass color restore: size mismatch {}x{} vs {}x{}",
-                        firstPassColorDesc.Width, firstPassColorDesc.Height,
-                        mainRTDesc2.Width, mainRTDesc2.Height);
-                }
-
-                D3D11_TEXTURE2D_DESC firstPassDepthDesc, mainDSDesc;
-                RenderUtilities::GetFirstPassDepthTexture()->GetDesc(&firstPassDepthDesc);
-                m_mainDSTexture->GetDesc(&mainDSDesc);
-
-                if (firstPassDepthDesc.Width == mainDSDesc.Width && firstPassDepthDesc.Height == mainDSDesc.Height) {
-                    m_context->CopyResource(m_mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
-                } else {
-                    logger::warn("Skipping first pass depth restore: size mismatch {}x{} vs {}x{}",
-                        firstPassDepthDesc.Width, firstPassDepthDesc.Height,
-                        mainDSDesc.Width, mainDSDesc.Height);
-                }
-            }
-
-            // 恢复渲染目标
-            if (m_savedRTVs[1]) {
-                m_context->OMSetRenderTargets(1, &m_savedRTVs[1], nullptr);
-            }
-
-            // 渲染瞄具内容
-            int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
-            if (scopeNodeIndexCount != -1) {
-                try {
-                    RenderUtilities::SetRender_PreUIComplete(true);
-                    m_d3dHooks->SetScopeTexture(m_context);
-                    D3DHooks::isSelfDrawCall = true;
-                    m_context->DrawIndexed(scopeNodeIndexCount, 0, 0);
-                    D3DHooks::isSelfDrawCall = false;
-                    RenderUtilities::SetRender_PreUIComplete(false);
-                } catch (...) {
-                    logger::error("Exception during scope content rendering");
-                    RenderUtilities::SetRender_PreUIComplete(false);
-                }
-            }
-        }
-
-        if (m_cameraUpdated) {
-            // 恢复原始相机
-            DrawWorld::SetCamera(m_originalCamera);
-            DrawWorld::SetUpdateCameraFOV(true);
-
-            RE::NiUpdateData nData;
-            nData.camera = m_originalCamera;
-            m_originalCamera->Update(nData);
-        }
-
-        logger::debug("First pass state restored");
-    }
-
-    void SecondPassRenderer::CleanupResources()
-    {
-        SAFE_RELEASE(m_tempBackBufferTex);
-        SAFE_RELEASE(m_tempBackBufferSRV);
-        SAFE_RELEASE(m_rtTexture2D);
-        SAFE_RELEASE(m_savedRTVs[0]);
-        SAFE_RELEASE(m_savedRTVs[1]);
-
-        // 清理Camera克隆
-        if (m_originalCamera) {
-            if (m_originalCamera->DecRefCount() == 0) {
-                m_originalCamera->DeleteThis();
-            }
-            m_originalCamera = nullptr;
-        }
-
-        // 重置状态标志
-        m_texturesBackedUp = false;
-        m_cameraUpdated = false;
-        m_lightingSynced = false;
-        m_renderExecuted = false;
-    }
-
-    bool SecondPassRenderer::ValidateD3DResources() const
-    {
-        if (!m_context || !m_device || !m_d3dHooks) {
-            m_lastError = "D3D resources are null";
-            return false;
-        }
-
-        auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-        if (!rendererData || !rendererData->context) {
-            m_lastError = "Renderer data or context is null";
-            return false;
-        }
-
-        return true;
-    }
-
-    bool SecondPassRenderer::CreateTemporaryBackBuffer()
-    {
-        if (!m_rtTexture2D) {
-            m_lastError = "No render target texture available";
-            return false;
-        }
-
-        D3D11_TEXTURE2D_DESC originalDesc;
-        m_rtTexture2D->GetDesc(&originalDesc);
-
-        // 如果已存在临时纹理，检查尺寸是否匹配
-        if (m_tempBackBufferTex) {
-            D3D11_TEXTURE2D_DESC existingDesc;
-            m_tempBackBufferTex->GetDesc(&existingDesc);
-
-            // 如果尺寸匹配，直接返回
-            if (existingDesc.Width == originalDesc.Width &&
-                existingDesc.Height == originalDesc.Height &&
-                existingDesc.Format == originalDesc.Format) {
-                return true;
-            }
-
-            // 尺寸不匹配，释放旧纹理
-            logger::info("Recreating temporary BackBuffer: size changed from {}x{} to {}x{}",
-                existingDesc.Width, existingDesc.Height,
-                originalDesc.Width, originalDesc.Height);
-            SAFE_RELEASE(m_tempBackBufferTex);
-            SAFE_RELEASE(m_tempBackBufferSRV);
-        }
-
-        D3D11_TEXTURE2D_DESC rtTextureDesc = originalDesc;
-        rtTextureDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-
-        HRESULT hr = m_device->CreateTexture2D(&rtTextureDesc, nullptr, &m_tempBackBufferTex);
-        if (FAILED(hr)) {
-            m_lastError = "Failed to create temporary BackBuffer texture";
-            return false;
-        }
-
-        hr = m_device->CreateShaderResourceView(m_tempBackBufferTex, NULL, &m_tempBackBufferSRV);
-        if (FAILED(hr)) {
-            m_lastError = "Failed to create temporary BackBuffer SRV";
-            SAFE_RELEASE(m_tempBackBufferTex);
-            return false;
-        }
-
-        return true;
-    }
-
-    void SecondPassRenderer::ConfigureScopeFrustum(RE::NiCamera* scopeCamera, RE::NiCamera* originalCamera)
-    {
-        if (!scopeCamera || !originalCamera) {
-            return;
-        }
-
-        // 使用原始相机的视锥体作为基础
-        scopeCamera->viewFrustum = originalCamera->viewFrustum;
-
-        // 调整视锥体参数以适应瞄具的FOV
-        float aspectRatio = scopeCamera->viewFrustum.right / scopeCamera->viewFrustum.top;
-        float targetFOV = ScopeCamera::GetTargetFOV();
-
-        // 限制FOV范围以避免极端俯仰角下的数值不稳定
-        float pitch = asin(-scopeCamera->world.rotate.entry[2][1]);
-        float pitchDeg = pitch * 57.295779513f;
-        if (abs(pitchDeg) > 70.0f) {
-            float factor = (90.0f - abs(pitchDeg)) / 20.0f;
-            factor = std::max(0.3f, std::min(1.0f, factor));
-            targetFOV = targetFOV * factor;
-        }
-
-        float fovRad = targetFOV * 0.01745329251f;
-        float halfFovTan = tan(fovRad * 0.5f);
-
-        // 根据FOV重新计算视锥体边界
-        scopeCamera->viewFrustum.top = scopeCamera->viewFrustum.nearPlane * halfFovTan;
-        scopeCamera->viewFrustum.bottom = -scopeCamera->viewFrustum.top;
-        scopeCamera->viewFrustum.right = scopeCamera->viewFrustum.top * aspectRatio;
-        scopeCamera->viewFrustum.left = -scopeCamera->viewFrustum.right;
-
-        // 保持远裁剪面距离
-        scopeCamera->viewFrustum.farPlane = originalCamera->viewFrustum.farPlane;
-    }
-
-    void SecondPassRenderer::SyncAccumulatorEyePosition(RE::NiCamera* scopeCamera)
-    {
-        if (!scopeCamera) {
-            return;
-        }
-
-        auto pDrawWorldAccum = *ptr_DrawWorldAccum;
-        auto p1stPersonAccum = *ptr_Draw1stPersonAccum;
-        auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
-
-        RE::NiPoint3A scopeEyePos = RE::NiPoint3A(scopeCamera->world.translate.x, scopeCamera->world.translate.y, scopeCamera->world.translate.z);
-
-        if (pDrawWorldAccum) {
-            pDrawWorldAccum->kEyePosition = scopeEyePos;
-            pDrawWorldAccum->ClearActivePasses(false);
-            pDrawWorldAccum->m_pkCamera = scopeCamera;
-        }
-
-        if (p1stPersonAccum) {
-            p1stPersonAccum->kEyePosition = scopeEyePos;
-        }
-
-        if (pShadowSceneNode) {
-            pShadowSceneNode->kEyePosition = scopeEyePos;
-            pShadowSceneNode->bDisableLightUpdate = false;
-            pShadowSceneNode->fStoredFarClip = scopeCamera->viewFrustum.farPlane;
-            pShadowSceneNode->bAlwaysUpdateLights = true;
-        }
-
-        // 配置几何剔除进程
-        auto geomListCullProc0 = *DrawWorldGeomListCullProc0;
-        auto geomListCullProc1 = *DrawWorldGeomListCullProc1;
-
-        if (geomListCullProc0) {
-            geomListCullProc0->m_pkCamera = scopeCamera;
-            geomListCullProc0->SetFrustum(&scopeCamera->viewFrustum);
-        }
-
-        if (geomListCullProc1) {
-            geomListCullProc1->m_pkCamera = scopeCamera;
-            geomListCullProc1->SetFrustum(&scopeCamera->viewFrustum);
-        }
-    }
+	SecondPassRenderer::SecondPassRenderer(ID3D11DeviceContext* context, ID3D11Device* device, D3DHooks* d3dHooks) 
+		: m_context(context)
+		, m_device(device)
+		, m_d3dHooks(d3dHooks)
+		, m_lightBackup(LightBackupSystem::GetSingleton())
+		, m_thermalVision(nullptr)
+		, m_renderStateMgr(RenderStateManager::GetSingleton())
+	{
+		if (!ValidateD3DResources()) {
+			logger::error("SecondPassRenderer: Invalid D3D resources provided");
+		}
+	}
+
+	SecondPassRenderer::~SecondPassRenderer()
+	{
+		CleanupResources();
+
+		// 清理热成像资源
+		if (m_thermalRTV) m_thermalRTV->Release();
+		if (m_thermalSRV) m_thermalSRV->Release();
+		if (m_thermalRenderTarget) m_thermalRenderTarget->Release();
+		if (m_thermalVision) {
+			m_thermalVision->Shutdown();
+		}
+	}
+
+	bool SecondPassRenderer::ExecuteSecondPass()
+	{
+		if (!CanExecuteSecondPass()) {
+			logger::warn("Cannot execute second pass: preconditions not met");
+			return false;
+		}
+
+		logger::debug("Starting second pass rendering...");
+
+		// 初始化相机指针
+		m_scopeCamera = ScopeCamera::GetScopeCamera();
+		m_playerCamera = *ptr_DrawWorldCamera;
+
+		// 重置状态标志
+		m_texturesBackedUp = false;
+		m_cameraUpdated = false;
+		m_lightingSynced = false;
+		m_renderExecuted = false;
+
+		// 重置每帧的渲染标志
+		RenderUtilities::SetFirstPassComplete(false);
+		RenderUtilities::SetSecondPassComplete(false);
+
+		try {
+			// 1. 备份第一次渲染的纹理
+			if (!BackupFirstPassTextures()) {
+				logger::error("Failed to backup first pass textures");
+				return false;
+			}
+
+			// 2. 更新瞄具相机配置
+			if (!UpdateScopeCamera()) {
+				logger::error("Failed to update scope camera");
+				RestoreFirstPass();
+				return false;
+			}
+
+			// 3. 清理渲染目标
+			ClearRenderTargets();
+
+			// 4. 同步光照状态
+			if (!SyncLighting()) {
+				logger::error("Failed to sync lighting");
+				RestoreFirstPass();
+				return false;
+			}
+
+			// 5. 执行第二次渲染
+			DrawScopeContent();
+			m_renderExecuted = true;
+
+			// 5.5 如果启用热成像，应用热成像效果
+			if (m_thermalVisionEnabled) {
+				ApplyThermalVisionEffect();
+			}
+
+			// 6. 恢复第一次渲染状态
+			RestoreFirstPass();
+
+			logger::debug("Second pass rendering completed successfully");
+			return true;
+
+		} catch (const std::exception& e) {
+			logger::error("Exception during second pass rendering: {}", e.what());
+			RestoreFirstPass();
+			return false;
+		} catch (...) {
+			logger::error("Unknown exception during second pass rendering");
+			RestoreFirstPass();
+			return false;
+		}
+	}
+
+	bool SecondPassRenderer::CanExecuteSecondPass() const
+	{
+		// 检查渲染状态
+		if (!m_renderStateMgr->IsScopeReady() || !m_renderStateMgr->IsRenderReady() || !D3DHooks::IsEnableRender()) {
+			return false;
+		}
+
+		// 检查瞄具相机
+		auto scopeCamera = ScopeCamera::GetScopeCamera();
+		if (!scopeCamera || !scopeCamera->parent) {
+			return false;
+		}
+
+		// 检查玩家相机
+		auto playerCamera = *ptr_DrawWorldCamera;
+		if (!playerCamera) {
+			logger::debug("CanExecuteSecondPass: playerCamera = null");
+			return false;
+		}
+
+		// 检查D3D资源
+		if (!ValidateD3DResources()) {
+			logger::debug("CanExecuteSecondPass: ValidateD3DResources = false, error: {}", m_lastError);
+			return false;
+		}
+
+		logger::debug("CanExecuteSecondPass: All checks passed");
+		return true;
+	}
+
+	bool SecondPassRenderer::BackupFirstPassTextures()
+	{
+		logger::debug("Backing up first pass textures...");
+
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		if (!rendererData || !rendererData->context) {
+			m_lastError = "Renderer data or context is null";
+			return false;
+		}
+
+		// 获取主要的渲染目标
+		m_mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
+		m_mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
+		m_mainRTTexture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
+		m_mainDSTexture = (ID3D11Texture2D*)rendererData->depthStencilTargets[2].texture;
+
+		// 获取当前绑定的渲染目标
+		m_context->OMGetRenderTargets(2, m_savedRTVs, nullptr);
+
+		// 获取后缓冲纹理
+		ID3D11Resource* rtResource = nullptr;
+		if (m_savedRTVs[1]) {
+			m_savedRTVs[1]->GetResource(&rtResource);
+			if (rtResource != nullptr) {
+				rtResource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&m_rtTexture2D);
+				rtResource->Release();
+			}
+		}
+
+		if (!m_rtTexture2D) {
+			m_lastError = "Failed to get render target texture";
+			return false;
+		}
+
+		// 创建临时后缓冲纹理
+		if (!CreateTemporaryBackBuffer()) {
+			return false;
+		}
+
+		// 验证临时纹理和源纹理的尺寸是否匹配
+		D3D11_TEXTURE2D_DESC tempDesc, rtDesc;
+		m_tempBackBufferTex->GetDesc(&tempDesc);
+		m_rtTexture2D->GetDesc(&rtDesc);
+
+		if (tempDesc.Width != rtDesc.Width || tempDesc.Height != rtDesc.Height || tempDesc.Format != rtDesc.Format) {
+			logger::error("Temporary BackBuffer size mismatch: temp({}x{}, {:X}) vs rt({}x{}, {:X})",
+				tempDesc.Width, tempDesc.Height, (UINT)tempDesc.Format,
+				rtDesc.Width, rtDesc.Height, (UINT)rtDesc.Format);
+			m_lastError = "Temporary BackBuffer size mismatch";
+			return false;
+		}
+
+		// 复制当前渲染目标内容到临时BackBuffer
+		m_context->CopyResource(m_tempBackBufferTex, m_rtTexture2D);
+
+		// 复制主渲染目标到我们的纹理
+		if (m_mainRTTexture && m_mainDSTexture) {
+			// 验证尺寸匹配
+			D3D11_TEXTURE2D_DESC firstPassColorDesc, mainRTDesc;
+			RenderUtilities::GetFirstPassColorTexture()->GetDesc(&firstPassColorDesc);
+			m_mainRTTexture->GetDesc(&mainRTDesc);
+
+			if (firstPassColorDesc.Width == mainRTDesc.Width && firstPassColorDesc.Height == mainRTDesc.Height) {
+				m_context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), m_mainRTTexture);
+			} else {
+				logger::warn("Skipping first pass color copy: size mismatch {}x{} vs {}x{}",
+					firstPassColorDesc.Width, firstPassColorDesc.Height,
+					mainRTDesc.Width, mainRTDesc.Height);
+			}
+
+			// 验证深度纹理尺寸匹配
+			D3D11_TEXTURE2D_DESC firstPassDepthDesc, mainDSDesc;
+			RenderUtilities::GetFirstPassDepthTexture()->GetDesc(&firstPassDepthDesc);
+			m_mainDSTexture->GetDesc(&mainDSDesc);
+
+			if (firstPassDepthDesc.Width == mainDSDesc.Width && firstPassDepthDesc.Height == mainDSDesc.Height) {
+				m_context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), m_mainDSTexture);
+			} else {
+				logger::warn("Skipping first pass depth copy: size mismatch {}x{} vs {}x{}",
+					firstPassDepthDesc.Width, firstPassDepthDesc.Height,
+					mainDSDesc.Width, mainDSDesc.Height);
+			}
+
+			RenderUtilities::SetFirstPassComplete(true);
+		} else {
+			m_lastError = "Failed to find valid render target textures";
+			return false;
+		}
+
+		m_texturesBackedUp = true;
+		logger::debug("First pass textures backed up successfully");
+		return true;
+	}
+
+	bool SecondPassRenderer::UpdateScopeCamera()
+	{
+		logger::debug("Updating scope camera...");
+
+		// 创建原始相机的克隆
+		RE::NiCloningProcess tempP{};
+		m_originalCamera = (RE::NiCamera*)(m_playerCamera->CreateClone(tempP));
+		if (!m_originalCamera) {
+			m_lastError = "Failed to clone original camera";
+			return false;
+		}
+
+		// 更新瞄具相机的位置和旋转
+		m_scopeCamera->local.translate = m_originalCamera->local.translate;
+		m_scopeCamera->local.rotate = m_originalCamera->local.rotate;
+		m_scopeCamera->local.translate.y += 15;
+
+		// 更新父节点
+		if (m_scopeCamera->parent) {
+			RE::NiUpdateData parentUpdate{};
+			parentUpdate.camera = m_scopeCamera;
+			m_scopeCamera->parent->Update(parentUpdate);
+		}
+
+		// 更新世界变换
+		m_scopeCamera->world.translate = m_originalCamera->world.translate;
+		m_scopeCamera->world.rotate = m_originalCamera->world.rotate;
+		m_scopeCamera->world.scale = m_originalCamera->world.scale;
+		m_scopeCamera->world.translate.y += 15;
+
+		m_scopeCamera->UpdateWorldBound();
+
+		// 配置瞄具的视锥体
+		ConfigureScopeFrustum(m_scopeCamera, m_originalCamera);
+
+		// 更新相机
+		RE::NiUpdateData updateData{};
+		updateData.camera = m_scopeCamera;
+		m_scopeCamera->Update(updateData);
+		m_scopeCamera->UpdateWorldData(&updateData);
+		m_scopeCamera->UpdateWorldBound();
+
+		m_cameraUpdated = true;
+		logger::debug("Scope camera updated successfully");
+		return true;
+	}
+
+	void SecondPassRenderer::ClearRenderTargets()
+	{
+		logger::debug("Clearing render targets...");
+
+		// 清理主输出，准备第二次渲染
+		float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		auto RTVs = rendererData->renderTargets;
+
+		// 清理主要的渲染目标
+		for (size_t i = 0; i < 4; i++) {
+			if (RTVs[i].rtView) {
+				m_context->ClearRenderTargetView((ID3D11RenderTargetView*)RTVs[i].rtView, clearColor);
+			}
+		}
+
+		// 清理深度模板缓冲区
+		m_context->ClearDepthStencilView(m_mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+		// 清理延迟渲染的G-Buffer以确保光照信息不会残留
+		if (true) {
+			// 优化模式：只清理必要的缓冲区以提升性能
+			static const int essentialBuffers[] = { 8, 9 };  // 只清理法线和主光照buffer
+			for (int bufIdx : essentialBuffers) {
+				if (bufIdx < 100 && rendererData->renderTargets[bufIdx].rtView) {
+					float clearValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+					// 对于法线缓冲区，使用默认法线值
+					if (bufIdx == 8) {
+						clearValue[0] = 0.5f;
+						clearValue[1] = 0.5f;
+						clearValue[2] = 1.0f;
+						clearValue[3] = 1.0f;
+					}
+					m_context->ClearRenderTargetView((ID3D11RenderTargetView*)rendererData->renderTargets[bufIdx].rtView, clearValue);
+				}
+			}
+		} else {
+			// 完整模式：清理所有G-Buffer
+			static const int lightingBuffers[] = { 8, 9, 10, 11, 12, 13, 14, 15 };
+			for (int bufIdx : lightingBuffers) {
+				if (bufIdx < 100 && rendererData->renderTargets[bufIdx].rtView) {
+					float clearValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+					if (bufIdx == 8) {
+						clearValue[0] = 0.5f;
+						clearValue[1] = 0.5f;
+						clearValue[2] = 1.0f;
+						clearValue[3] = 1.0f;
+					}
+					m_context->ClearRenderTargetView((ID3D11RenderTargetView*)rendererData->renderTargets[bufIdx].rtView, clearValue);
+				}
+			}
+		}
+
+		logger::debug("Render targets cleared");
+	}
+
+	bool SecondPassRenderer::SyncLighting()
+	{
+		logger::debug("Syncing lighting for scope rendering...");
+
+		auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
+		if (!pShadowSceneNode) {
+			m_lastError = "Shadow scene node is null";
+			return false;
+		}
+
+		// 备份第一次渲染后的光源状态
+		m_lightBackup->BackupLightStates(pShadowSceneNode);
+
+		// 设置剔除进程
+		if (*DrawWorldCullingProcess) {
+			m_lightBackup->SetCullingProcess(*DrawWorldCullingProcess);
+		}
+
+		// 应用优化的光源状态用于第二次渲染（使用RenderOptimization设置）
+		m_lightBackup->ApplyLightStatesForScope(
+			false,
+			32);
+
+		// 同步累积器的眼睛位置
+		SyncAccumulatorEyePosition(m_scopeCamera);
+
+		m_lightingSynced = true;
+		logger::debug("Lighting synced successfully");
+		return true;
+	}
+
+	void SecondPassRenderer::DrawScopeContent()
+	{
+		logger::debug("Drawing scope content...");
+
+		// 设置性能标记
+		D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
+
+		// 配置DrawWorld系统使用瞄具相机
+		DrawWorld::SetCamera(m_scopeCamera);
+		DrawWorld::SetUpdateCameraFOV(true);
+		DrawWorld::SetAdjusted1stPersonFOV(ScopeCamera::GetTargetFOV());
+		DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
+
+		// 同步BSShaderManager的相机指针
+		*ptr_BSShaderManagerSpCamera = m_scopeCamera;
+
+		// 设置渲染标志
+		ScopeCamera::SetRenderingForScope(true);
+
+		// 备份原始相机指针
+		auto SpCam = *ptr_DrawWorldSpCamera;
+		auto DrawWorldCamera = *ptr_DrawWorldCamera;
+		auto DrawWorldVisCamera = *ptr_DrawWorldVisCamera;
+
+		// 获取渲染状态
+		auto gState = RE::BSGraphics::State::GetSingleton();
+
+		// 在 SetCameraData 前重新配置视锥体（NiCamera::Update 调用可能重置了 viewFrustum）
+		{
+			float targetFOV = ScopeCamera::GetTargetFOV();
+			float fovRad = targetFOV * 0.01745329251f;  // degrees to radians
+			float halfFovTan = tan(fovRad * 0.5f);
+
+			// 从渲染状态获取实际宽高比
+			float aspectRatio = 1.7777778f;  // 默认 16:9
+			if (gState.backBufferHeight > 0) {
+				aspectRatio = static_cast<float>(gState.backBufferWidth) / static_cast<float>(gState.backBufferHeight);
+			}
+
+			// 重新设置视锥体参数
+			m_scopeCamera->viewFrustum.top = m_scopeCamera->viewFrustum.nearPlane * halfFovTan;
+			m_scopeCamera->viewFrustum.bottom = -m_scopeCamera->viewFrustum.top;
+			m_scopeCamera->viewFrustum.right = m_scopeCamera->viewFrustum.top * aspectRatio;
+			m_scopeCamera->viewFrustum.left = -m_scopeCamera->viewFrustum.right;
+		}
+
+		// 设置瞄具相机为当前相机
+		*ptr_DrawWorldCamera = m_scopeCamera;
+		*ptr_DrawWorldVisCamera = m_scopeCamera;
+
+		// 更新渲染系统的相机数据（视图/投影矩阵）
+		// 这对于正确渲染天空盒和其他依赖相机数据的效果至关重要
+		gState.SetCameraData(m_scopeCamera, true,
+			m_scopeCamera->viewFrustum.nearPlane,
+			m_scopeCamera->viewFrustum.farPlane);
+
+		// 保存正确的 viewProjMat 用于 BSSkyShader::SetupGeometry Hook
+		{
+			static REL::Relocation<uint32_t*> ptr_tls_index{ REL::ID(842564) };
+			static REL::Relocation<uintptr_t*> ptr_DefaultContext{ REL::ID(33539) };
+
+			_TEB* teb = NtCurrentTeb();
+			auto tls_index = *ptr_tls_index;
+			uintptr_t contextPtr = *(uintptr_t*)(*((uint64_t*)teb->Reserved1[11] + tls_index) + 2848i64);
+			if (!contextPtr) {
+				contextPtr = *ptr_DefaultContext;
+			}
+
+			if (contextPtr) {
+				auto context = (RE::BSGraphics::Context*)contextPtr;
+				auto viewProjMat = context->shadowState.CameraData.viewProjMat;
+				g_ScopeViewProjMat[0] = viewProjMat[0];
+				g_ScopeViewProjMat[1] = viewProjMat[1];
+				g_ScopeViewProjMat[2] = viewProjMat[2];
+				g_ScopeViewProjMat[3] = viewProjMat[3];
+				g_ScopeViewProjMatValid = true;
+			}
+		}
+
+		// 更新 PosAdjust 用于天空渲染
+		RE::NiPoint3 backupPosAdjust;
+		bool posAdjustUpdated = false;
+
+		if (m_scopeCamera) {
+			// 获取当前 PosAdjust 用于备份
+			static REL::Relocation<uint32_t*> ptr_tls_index{ REL::ID(842564) };
+			static REL::Relocation<uintptr_t*> ptr_DefaultContext{ REL::ID(33539) };
+
+			_TEB* teb = NtCurrentTeb();
+			auto tls_index = *ptr_tls_index;
+
+			uintptr_t contextPtr = *(uintptr_t*)(*((uint64_t*)teb->Reserved1[11] + tls_index) + 2848i64);
+			if (!contextPtr) {
+				contextPtr = *ptr_DefaultContext;
+			}
+
+			if (contextPtr) {
+				auto context = (RE::BSGraphics::Context*)contextPtr;
+				backupPosAdjust = context->shadowState.PosAdjust;
+
+				// 设置 PosAdjust 为瞄具相机的世界位置
+				RE::NiPoint3 scopePosAdjust;
+				scopePosAdjust.x = m_scopeCamera->world.translate.x;
+				scopePosAdjust.y = m_scopeCamera->world.translate.y;
+				scopePosAdjust.z = m_scopeCamera->world.translate.z;
+
+				RE::BSGraphics::Renderer::GetSingleton().SetPosAdjust(&scopePosAdjust);
+				posAdjustUpdated = true;
+			}
+
+			// 执行第二次渲染
+			auto hookMgr = HookManager::GetSingleton();
+			hookMgr->g_RenderPreUIOriginal(savedDrawWorld);
+
+			// 恢复 PosAdjust
+			if (posAdjustUpdated) {
+				RE::BSGraphics::Renderer::GetSingleton().SetPosAdjust(&backupPosAdjust);
+			}
+
+			// 恢复相机指针
+			*ptr_DrawWorldCamera = DrawWorldCamera;
+			*ptr_DrawWorldVisCamera = DrawWorldVisCamera;
+
+			// 清除保存的矩阵有效性标志
+			g_ScopeViewProjMatValid = false;
+
+			// 清除渲染标志
+			ScopeCamera::SetRenderingForScope(false);
+
+			D3DPERF_EndEvent();
+
+			logger::debug("Scope content rendered");
+		}
+	}
+
+	void SecondPassRenderer::ApplyThermalVisionEffect()
+	{
+		logger::debug("Applying thermal vision effect...");
+
+		// 初始化热成像系统（如果尚未初始化）
+		if (!m_thermalVision) {
+			m_thermalVision = ThermalVision::GetSingleton();
+			if (!m_thermalVision->Initialize(m_device, m_context)) {
+				logger::error("Failed to initialize thermal vision system");
+				return;
+			}
+		}
+
+		// 创建热成像渲染目标（如果尚未创建）
+		if (!m_thermalRenderTarget) {
+			// 获取当前渲染目标的描述
+			D3D11_TEXTURE2D_DESC desc;
+			m_mainRTTexture->GetDesc(&desc);
+
+			// 创建热成像渲染目标
+			desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+			HRESULT hr = m_device->CreateTexture2D(&desc, nullptr, &m_thermalRenderTarget);
+			if (FAILED(hr)) {
+				logger::error("Failed to create thermal render target");
+				return;
+			}
+
+			// 创建RTV
+			hr = m_device->CreateRenderTargetView(m_thermalRenderTarget, nullptr, &m_thermalRTV);
+			if (FAILED(hr)) {
+				logger::error("Failed to create thermal RTV");
+				return;
+			}
+
+			// 创建SRV
+			hr = m_device->CreateShaderResourceView(m_thermalRenderTarget, nullptr, &m_thermalSRV);
+			if (FAILED(hr)) {
+				logger::error("Failed to create thermal SRV");
+				return;
+			}
+		}
+
+		// 获取深度缓冲的SRV（用于温度估算）
+		ID3D11ShaderResourceView* depthSRV = nullptr;
+		if (m_mainDSTexture) {
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = 1;
+
+			ID3D11ShaderResourceView* tempDepthSRV = nullptr;
+			HRESULT hr = m_device->CreateShaderResourceView(m_mainDSTexture, &srvDesc, &tempDepthSRV);
+			if (SUCCEEDED(hr)) {
+				depthSRV = tempDepthSRV;
+			}
+		}
+
+		// 应用热成像效果
+		// 将第二次渲染的结果作为源，处理后输出到热成像渲染目标
+		m_thermalVision->ApplyThermalEffect(m_mainRTV, m_thermalRTV, depthSRV);
+
+		// 将热成像结果复制回主渲染目标
+		m_context->CopyResource(m_mainRTTexture, m_thermalRenderTarget);
+
+		// 清理临时深度SRV
+		if (depthSRV) {
+			depthSRV->Release();
+		}
+
+		logger::debug("Thermal vision effect applied");
+	}
+
+	void SecondPassRenderer::RestoreFirstPass()
+	{
+		logger::debug("Restoring first pass state...");
+
+		if (m_lightingSynced) {
+			// 恢复光源状态
+			m_lightBackup->RestoreLightStates();
+
+			// 恢复阴影节点状态
+			auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
+			if (pShadowSceneNode) {
+				pShadowSceneNode->bDisableLightUpdate = false;
+			}
+		}
+
+		if (m_texturesBackedUp) {
+			// 复制第二次渲染结果到我们的纹理
+			D3D11_TEXTURE2D_DESC secondPassColorDesc, mainRTDesc;
+			RenderUtilities::GetSecondPassColorTexture()->GetDesc(&secondPassColorDesc);
+			m_mainRTTexture->GetDesc(&mainRTDesc);
+
+			if (secondPassColorDesc.Width == mainRTDesc.Width && secondPassColorDesc.Height == mainRTDesc.Height) {
+				m_context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), m_mainRTTexture);
+			} else {
+				logger::warn("Skipping second pass color copy: size mismatch {}x{} vs {}x{}",
+					secondPassColorDesc.Width, secondPassColorDesc.Height,
+					mainRTDesc.Width, mainRTDesc.Height);
+			}
+
+			// 恢复BackBuffer
+			D3D11_TEXTURE2D_DESC rtDesc, tempBackBufferDesc;
+			m_rtTexture2D->GetDesc(&rtDesc);
+			m_tempBackBufferTex->GetDesc(&tempBackBufferDesc);
+
+			if (rtDesc.Width == tempBackBufferDesc.Width && rtDesc.Height == tempBackBufferDesc.Height) {
+				m_context->CopyResource(m_rtTexture2D, m_tempBackBufferTex);
+			} else {
+				logger::warn("Skipping BackBuffer restore: size mismatch {}x{} vs {}x{}",
+					rtDesc.Width, rtDesc.Height,
+					tempBackBufferDesc.Width, tempBackBufferDesc.Height);
+			}
+
+			RenderUtilities::SetSecondPassComplete(true);
+
+			// 如果第二次渲染完成，恢复主渲染目标内容用于正常显示
+			if (RenderUtilities::IsSecondPassComplete()) {
+				D3D11_TEXTURE2D_DESC firstPassColorDesc, mainRTDesc2;
+				RenderUtilities::GetFirstPassColorTexture()->GetDesc(&firstPassColorDesc);
+				m_mainRTTexture->GetDesc(&mainRTDesc2);
+
+				if (firstPassColorDesc.Width == mainRTDesc2.Width && firstPassColorDesc.Height == mainRTDesc2.Height) {
+					m_context->CopyResource(m_mainRTTexture, RenderUtilities::GetFirstPassColorTexture());
+				} else {
+					logger::warn("Skipping first pass color restore: size mismatch {}x{} vs {}x{}",
+						firstPassColorDesc.Width, firstPassColorDesc.Height,
+						mainRTDesc2.Width, mainRTDesc2.Height);
+				}
+
+				D3D11_TEXTURE2D_DESC firstPassDepthDesc, mainDSDesc;
+				RenderUtilities::GetFirstPassDepthTexture()->GetDesc(&firstPassDepthDesc);
+				m_mainDSTexture->GetDesc(&mainDSDesc);
+
+				if (firstPassDepthDesc.Width == mainDSDesc.Width && firstPassDepthDesc.Height == mainDSDesc.Height) {
+					m_context->CopyResource(m_mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
+				} else {
+					logger::warn("Skipping first pass depth restore: size mismatch {}x{} vs {}x{}",
+						firstPassDepthDesc.Width, firstPassDepthDesc.Height,
+						mainDSDesc.Width, mainDSDesc.Height);
+				}
+			}
+
+			// 恢复渲染目标
+			if (m_savedRTVs[1]) {
+				m_context->OMSetRenderTargets(1, &m_savedRTVs[1], nullptr);
+			}
+
+			// 渲染瞄具内容
+			int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
+			if (scopeNodeIndexCount != -1) {
+				try {
+					RenderUtilities::SetRender_PreUIComplete(true);
+					m_d3dHooks->SetScopeTexture(m_context);
+					D3DHooks::isSelfDrawCall = true;
+					m_context->DrawIndexed(scopeNodeIndexCount, 0, 0);
+					D3DHooks::isSelfDrawCall = false;
+					RenderUtilities::SetRender_PreUIComplete(false);
+				} catch (...) {
+					logger::error("Exception during scope content rendering");
+					RenderUtilities::SetRender_PreUIComplete(false);
+				}
+			}
+		}
+
+		if (m_cameraUpdated) {
+			// 恢复原始相机
+			DrawWorld::SetCamera(m_originalCamera);
+			DrawWorld::SetUpdateCameraFOV(true);
+
+			RE::NiUpdateData nData;
+			nData.camera = m_originalCamera;
+			m_originalCamera->Update(nData);
+		}
+
+		logger::debug("First pass state restored");
+	}
+
+	void SecondPassRenderer::CleanupResources()
+	{
+		SAFE_RELEASE(m_tempBackBufferTex);
+		SAFE_RELEASE(m_tempBackBufferSRV);
+		SAFE_RELEASE(m_rtTexture2D);
+		SAFE_RELEASE(m_savedRTVs[0]);
+		SAFE_RELEASE(m_savedRTVs[1]);
+
+		// 清理Camera克隆
+		if (m_originalCamera) {
+			if (m_originalCamera->DecRefCount() == 0) {
+				m_originalCamera->DeleteThis();
+			}
+			m_originalCamera = nullptr;
+		}
+
+		// 重置状态标志
+		m_texturesBackedUp = false;
+		m_cameraUpdated = false;
+		m_lightingSynced = false;
+		m_renderExecuted = false;
+	}
+
+	bool SecondPassRenderer::ValidateD3DResources() const
+	{
+		if (!m_context || !m_device || !m_d3dHooks) {
+			m_lastError = "D3D resources are null";
+			return false;
+		}
+
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		if (!rendererData || !rendererData->context) {
+			m_lastError = "Renderer data or context is null";
+			return false;
+		}
+
+		return true;
+	}
+
+	bool SecondPassRenderer::CreateTemporaryBackBuffer()
+	{
+		if (!m_rtTexture2D) {
+			m_lastError = "No render target texture available";
+			return false;
+		}
+
+		D3D11_TEXTURE2D_DESC originalDesc;
+		m_rtTexture2D->GetDesc(&originalDesc);
+
+		// 如果已存在临时纹理，检查尺寸是否匹配
+		if (m_tempBackBufferTex) {
+			D3D11_TEXTURE2D_DESC existingDesc;
+			m_tempBackBufferTex->GetDesc(&existingDesc);
+
+			// 如果尺寸匹配，直接返回
+			if (existingDesc.Width == originalDesc.Width &&
+				existingDesc.Height == originalDesc.Height &&
+				existingDesc.Format == originalDesc.Format) {
+				return true;
+			}
+
+			// 尺寸不匹配，释放旧纹理
+			logger::info("Recreating temporary BackBuffer: size changed from {}x{} to {}x{}",
+				existingDesc.Width, existingDesc.Height,
+				originalDesc.Width, originalDesc.Height);
+			SAFE_RELEASE(m_tempBackBufferTex);
+			SAFE_RELEASE(m_tempBackBufferSRV);
+		}
+
+		D3D11_TEXTURE2D_DESC rtTextureDesc = originalDesc;
+		rtTextureDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+		HRESULT hr = m_device->CreateTexture2D(&rtTextureDesc, nullptr, &m_tempBackBufferTex);
+		if (FAILED(hr)) {
+			m_lastError = "Failed to create temporary BackBuffer texture";
+			return false;
+		}
+
+		hr = m_device->CreateShaderResourceView(m_tempBackBufferTex, NULL, &m_tempBackBufferSRV);
+		if (FAILED(hr)) {
+			m_lastError = "Failed to create temporary BackBuffer SRV";
+			SAFE_RELEASE(m_tempBackBufferTex);
+			return false;
+		}
+
+		return true;
+	}
+
+	void SecondPassRenderer::ConfigureScopeFrustum(RE::NiCamera* scopeCamera, RE::NiCamera* originalCamera)
+	{
+		if (!scopeCamera || !originalCamera) {
+			return;
+		}
+
+		// 使用原始相机的视锥体作为基础
+		scopeCamera->viewFrustum = originalCamera->viewFrustum;
+
+		// 调整视锥体参数以适应瞄具的FOV
+		float aspectRatio = scopeCamera->viewFrustum.right / scopeCamera->viewFrustum.top;
+		float targetFOV = ScopeCamera::GetTargetFOV();
+
+		// 限制FOV范围以避免极端俯仰角下的数值不稳定
+		float pitch = asin(-scopeCamera->world.rotate.entry[2][1]);
+		float pitchDeg = pitch * 57.295779513f;
+		if (abs(pitchDeg) > 70.0f) {
+			float factor = (90.0f - abs(pitchDeg)) / 20.0f;
+			factor = std::max(0.3f, std::min(1.0f, factor));
+			targetFOV = targetFOV * factor;
+		}
+
+		float fovRad = targetFOV * 0.01745329251f;
+		float halfFovTan = tan(fovRad * 0.5f);
+
+		// 根据FOV重新计算视锥体边界
+		scopeCamera->viewFrustum.top = scopeCamera->viewFrustum.nearPlane * halfFovTan;
+		scopeCamera->viewFrustum.bottom = -scopeCamera->viewFrustum.top;
+		scopeCamera->viewFrustum.right = scopeCamera->viewFrustum.top * aspectRatio;
+		scopeCamera->viewFrustum.left = -scopeCamera->viewFrustum.right;
+
+		// 保持远裁剪面距离
+		scopeCamera->viewFrustum.farPlane = originalCamera->viewFrustum.farPlane;
+	}
+
+	void SecondPassRenderer::SyncAccumulatorEyePosition(RE::NiCamera* scopeCamera)
+	{
+		if (!scopeCamera) {
+			return;
+		}
+
+		auto pDrawWorldAccum = *ptr_DrawWorldAccum;
+		auto p1stPersonAccum = *ptr_Draw1stPersonAccum;
+		auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
+
+		RE::NiPoint3A scopeEyePos = RE::NiPoint3A(scopeCamera->world.translate.x, scopeCamera->world.translate.y, scopeCamera->world.translate.z);
+
+		if (pDrawWorldAccum) {
+			pDrawWorldAccum->kEyePosition = scopeEyePos;
+			pDrawWorldAccum->ClearActivePasses(false);
+			pDrawWorldAccum->m_pkCamera = scopeCamera;
+		}
+
+		if (p1stPersonAccum) {
+			p1stPersonAccum->kEyePosition = scopeEyePos;
+		}
+
+		if (pShadowSceneNode) {
+			pShadowSceneNode->kEyePosition = scopeEyePos;
+			pShadowSceneNode->bDisableLightUpdate = false;
+			pShadowSceneNode->fStoredFarClip = scopeCamera->viewFrustum.farPlane;
+			pShadowSceneNode->bAlwaysUpdateLights = true;
+		}
+
+		// 配置几何剔除进程
+		auto geomListCullProc0 = *DrawWorldGeomListCullProc0;
+		auto geomListCullProc1 = *DrawWorldGeomListCullProc1;
+
+		if (geomListCullProc0) {
+			geomListCullProc0->m_pkCamera = scopeCamera;
+			geomListCullProc0->SetFrustum(&scopeCamera->viewFrustum);
+		}
+
+		if (geomListCullProc1) {
+			geomListCullProc1->m_pkCamera = scopeCamera;
+			geomListCullProc1->SetFrustum(&scopeCamera->viewFrustum);
+		}
+	}
 }
