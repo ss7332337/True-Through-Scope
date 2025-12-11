@@ -59,10 +59,22 @@ namespace ThroughScope
             }
         };
 
+        // 遍历所有光源列表并备份每个光源
+        for (const auto& light : shadowNode->lLightList) {
+            backupLight(light);
+        }
+        for (const auto& light : shadowNode->lShadowLightList) {
+            backupLight(light);
+        }
+        for (const auto& light : shadowNode->lAmbientLightList) {
+            backupLight(light);
+        }
+
         m_backupCount++;
         logger::debug("Successfully backed up {} light states (operation #{})",
             m_lightBackups.size(), m_backupCount);
     }
+
 
     void LightBackupSystem::ApplyLightStatesForScope(bool limitCount, size_t maxLights)
     {
@@ -72,6 +84,15 @@ namespace ThroughScope
         }
 
         logger::debug("Applying {} light states for scope rendering", m_lightBackups.size());
+
+        // DeferredLightsImpl 依赖这些计数器来决定渲染多少个光源
+        if (m_shadowNode) {
+            m_shadowNode->uiVisibleNonShadowLights = m_visibleNonShadowLights;
+            m_shadowNode->uiVisibleShadowLights = m_visibleShadowLights;
+            m_shadowNode->uiVisibleAmbientLights = m_visibleAmbientLights;
+            logger::debug("Set visible light counts: NonShadow={}, Shadow={}, Ambient={}",
+                m_visibleNonShadowLights, m_visibleShadowLights, m_visibleAmbientLights);
+        }
 
         // 如果启用光源数量限制
         if (limitCount && m_lightBackups.size() > maxLights) {
