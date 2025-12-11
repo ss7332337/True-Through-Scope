@@ -2,6 +2,9 @@
 
 #include "PCH.h"
 #include "GlobalTypes.h"
+#include "RE/Bethesda/BSShaderManager.hpp"
+#include "RE/Bethesda/Sky.hpp"
+#include "RE/Bethesda/ImageSpaceManager.hpp"
 
 namespace ThroughScope
 {
@@ -41,7 +44,6 @@ namespace ThroughScope
         bool HasBackupStates() const;
         size_t GetBackupCount() const;
         void SetCullingProcess(RE::BSCullingProcess* cullingProcess);
-
     private:
         LightBackupSystem() = default;
         ~LightBackupSystem() = default;
@@ -59,6 +61,14 @@ namespace ThroughScope
 
         /// 剔除进程指针，用于光源剔除
         RE::BSCullingProcess* m_cullingProcess = nullptr;
+
+        /// ShadowSceneNode 指针，用于恢复可见性计数器
+        RE::ShadowSceneNode* m_shadowNode = nullptr;
+
+        /// 光源可见性计数器备份（DeferredLightsImpl 依赖这些计数器决定是否渲染）
+        std::uint32_t m_visibleNonShadowLights = 0;
+        std::uint32_t m_visibleShadowLights = 0;
+        std::uint32_t m_visibleAmbientLights = 0;
 
         // ========== 统计信息 ==========
         mutable size_t m_backupCount = 0;

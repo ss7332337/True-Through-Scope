@@ -3,6 +3,8 @@
 
 namespace ThroughScope
 {
+    // BSShaderManagerState 全局指针
+    static REL::Relocation<RE::BSShaderManagerState*> ptr_BSShaderManagerState{ REL::ID(1327069) };
     LightBackupSystem* LightBackupSystem::GetSingleton()
     {
         static LightBackupSystem instance;
@@ -16,17 +18,33 @@ namespace ThroughScope
             return;
         }
 
+        // 保存ShadowSceneNode指针
+        m_shadowNode = shadowNode;
+
         // 清空之前的备份
         m_lightBackups.clear();
 
-        // 预分配空间
-        m_lightBackups.reserve(shadowNode->lLightList.size());
+        // 备份可见性计数器（DeferredLightsImpl 依赖这些计数器决定是否渲染光源）
+        m_visibleNonShadowLights = shadowNode->uiVisibleNonShadowLights;
+        m_visibleShadowLights = shadowNode->uiVisibleShadowLights;
+        m_visibleAmbientLights = shadowNode->uiVisibleAmbientLights;
 
-        logger::debug("Backing up {} lights from ShadowSceneNode", shadowNode->lLightList.size());
+        // 计算所有光源列表的总大小，预分配空间
+        size_t totalLights = shadowNode->lLightList.size() + 
+                            shadowNode->lShadowLightList.size() + 
+                            shadowNode->lAmbientLightList.size();
+        m_lightBackups.reserve(totalLights);
 
-        // 保存所有光源的当前状态（第一次渲染后的状态）
-        for (size_t i = 0; i < shadowNode->lLightList.size(); i++) {
-            auto bsLight = shadowNode->lLightList[i];
+        logger::debug("Backing up lights from ShadowSceneNode: {} normal, {} shadow, {} ambient (visible: {}/{}/{})",
+            shadowNode->lLightList.size(),
+            shadowNode->lShadowLightList.size(),
+            shadowNode->lAmbientLightList.size(),
+            m_visibleNonShadowLights,
+            m_visibleShadowLights,
+            m_visibleAmbientLights);
+
+        // Lambda函数用于备份单个光源
+        auto backupLight = [this](const RE::NiPointer<RE::BSLight>& bsLight) {
             if (bsLight && bsLight.get() && IsValidLight(bsLight.get())) {
                 LightStateBackup backup{};
                 backup.light = bsLight;
@@ -37,10 +55,9 @@ namespace ThroughScope
                 backup.lodDimmer = bsLight->fLODDimmer;
                 backup.camera = bsLight->spCamera;
                 backup.cullingProcess = bsLight->pCullingProcess;
-
                 m_lightBackups.push_back(backup);
             }
-        }
+        };
 
         m_backupCount++;
         logger::debug("Successfully backed up {} light states (operation #{})",
