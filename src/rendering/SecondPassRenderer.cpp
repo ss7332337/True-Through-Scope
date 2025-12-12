@@ -39,7 +39,6 @@ namespace ThroughScope
 			return false;
 		}
 
-		logger::debug("Starting second pass rendering...");
 
 		// 初始化相机指针
 		m_scopeCamera = ScopeCamera::GetScopeCamera();
@@ -90,8 +89,6 @@ namespace ThroughScope
 
 			// 6. 恢复第一次渲染状态
 			RestoreFirstPass();
-
-			logger::debug("Second pass rendering completed successfully");
 			return true;
 
 		} catch (const std::exception& e) {
@@ -130,15 +127,11 @@ namespace ThroughScope
 			logger::debug("CanExecuteSecondPass: ValidateD3DResources = false, error: {}", m_lastError);
 			return false;
 		}
-
-		logger::debug("CanExecuteSecondPass: All checks passed");
 		return true;
 	}
 
 	bool SecondPassRenderer::BackupFirstPassTextures()
 	{
-		logger::debug("Backing up first pass textures...");
-
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
 		if (!rendererData || !rendererData->context) {
 			m_lastError = "Renderer data or context is null";
@@ -225,14 +218,11 @@ namespace ThroughScope
 		}
 
 		m_texturesBackedUp = true;
-		logger::debug("First pass textures backed up successfully");
 		return true;
 	}
 
 	bool SecondPassRenderer::UpdateScopeCamera()
 	{
-		logger::debug("Updating scope camera...");
-
 		// 创建原始相机的克隆
 		RE::NiCloningProcess tempP{};
 		m_originalCamera = (RE::NiCamera*)(m_playerCamera->CreateClone(tempP));
@@ -272,13 +262,11 @@ namespace ThroughScope
 		m_scopeCamera->UpdateWorldBound();
 
 		m_cameraUpdated = true;
-		logger::debug("Scope camera updated successfully");
 		return true;
 	}
 
 	void SecondPassRenderer::ClearRenderTargets()
 	{
-		logger::debug("Clearing render targets...");
 
 		// 清理主输出，准备第二次渲染
 		float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
@@ -329,13 +317,10 @@ namespace ThroughScope
 				}
 			}
 		}
-
-		logger::debug("Render targets cleared");
 	}
 
 	bool SecondPassRenderer::SyncLighting()
 	{
-		logger::debug("Syncing lighting for scope rendering...");
 
 		auto pShadowSceneNode = *ptr_DrawWorldShadowNode;
 		if (!pShadowSceneNode) {
@@ -360,13 +345,11 @@ namespace ThroughScope
 		SyncAccumulatorEyePosition(m_scopeCamera);
 
 		m_lightingSynced = true;
-		logger::debug("Lighting synced successfully");
 		return true;
 	}
 
 	void SecondPassRenderer::DrawScopeContent()
 	{
-		logger::debug("Drawing scope content...");
 
 		// 设置性能标记
 		D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
@@ -573,8 +556,6 @@ namespace ThroughScope
 
 	void SecondPassRenderer::RestoreFirstPass()
 	{
-		logger::debug("Restoring first pass state...");
-
 		if (m_lightingSynced) {
 			// 恢复光源状态
 			m_lightBackup->RestoreLightStates();
@@ -673,8 +654,6 @@ namespace ThroughScope
 			nData.camera = m_originalCamera;
 			m_originalCamera->Update(nData);
 		}
-
-		logger::debug("First pass state restored");
 	}
 
 	void SecondPassRenderer::CleanupResources()

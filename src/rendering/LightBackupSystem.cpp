@@ -172,8 +172,6 @@ namespace ThroughScope
     void LightBackupSystem::SetCullingProcess(RE::BSCullingProcess* cullingProcess)
     {
         m_cullingProcess = cullingProcess;
-        logger::debug("Set culling process: 0x{:X}",
-            reinterpret_cast<uintptr_t>(cullingProcess));
     }
 
     bool LightBackupSystem::IsValidLight(RE::BSLight* light) const
