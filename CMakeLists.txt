@@ -186,6 +186,8 @@ set_hlsl_properties(src/HLSL/ImageSpaceEffectVS.hlsl Vertex main)
 set_hlsl_properties(src/HLSL/ImageSpaceEffect.hlsl Pixel main)
 set_hlsl_properties(src/HLSL/ThermalVision_CS.hlsl Compute main)
 set_hlsl_properties(src/HLSL/ThermalVision_PS.hlsl Pixel main)
+set_hlsl_properties(src/HLSL/ScopeHDR_VS.hlsl Vertex main)
+set_hlsl_properties(src/HLSL/ScopeHDR_PS.hlsl Pixel main)
 
 target_include_directories(
 	${PROJECT_NAME}

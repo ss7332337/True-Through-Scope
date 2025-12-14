@@ -9,6 +9,26 @@
 namespace ThroughScope
 {
     /**
+     * @brief 环境光状态备份结构体
+     *
+     * 保存全局环境光参数，用于确保瞄具渲染时环境光照的一致性
+     */
+    struct AmbientLightStateBackup
+    {
+        // BSShaderManagerState 中的环境光参数
+        RE::NiTransform DirectionalAmbientTransform;
+        RE::NiTransform LocalDirectionalAmbientTransform;
+        RE::NiColorA AmbientSpecular;
+        uint8_t bAmbientSpecularEnabled = 0;
+
+        // BSShaderManager 静态数组 (3个方向 x 2个分量)
+        RE::NiColor DirectionalAmbientColorsA[3][2];
+        RE::NiColor LocalDirectionalAmbientColorsA[3][2];
+
+        bool isValid = false;
+    };
+
+    /**
      * @brief 光照状态备份系统
      *
      * 负责在第二次渲染过程中备份、应用和恢复光源状态
@@ -44,6 +64,28 @@ namespace ThroughScope
         bool HasBackupStates() const;
         size_t GetBackupCount() const;
         void SetCullingProcess(RE::BSCullingProcess* cullingProcess);
+
+        /**
+         * @brief 备份环境光状态
+         *
+         * 备份 BSShaderManagerState 中的环境光参数和 BSShaderManager 静态数组
+         */
+        void BackupAmbientLightStates();
+
+        /**
+         * @brief 恢复环境光状态
+         *
+         * 将备份的环境光状态恢复到渲染系统
+         */
+        void RestoreAmbientLightStates();
+
+        /**
+         * @brief 应用环境光状态
+         *
+         * 将备份的环境光值应用到渲染系统，确保瞄具渲染时使用正确的环境光
+         */
+        void ApplyAmbientLightStates();
+
     private:
         LightBackupSystem() = default;
         ~LightBackupSystem() = default;
@@ -58,6 +100,9 @@ namespace ThroughScope
 
         /// 光源状态备份列表
         std::vector<LightStateBackup> m_lightBackups;
+
+        /// 环境光状态备份
+        AmbientLightStateBackup m_ambientBackup;
 
         /// 剔除进程指针，用于光源剔除
         RE::BSCullingProcess* m_cullingProcess = nullptr;

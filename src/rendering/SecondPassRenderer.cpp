@@ -2,6 +2,8 @@
 #include "GlobalTypes.h"
 #include "HookManager.h"
 #include "ThermalVision.h"
+#include "HDRStateCache.h"
+#include "RE/Bethesda/ImageSpaceManager.hpp"
 #include <winternl.h>
 
 namespace ThroughScope
@@ -26,6 +28,8 @@ namespace ThroughScope
 		// 清理热成像资源
 		if (m_thermalRTV) m_thermalRTV->Release();
 		if (m_thermalSRV) m_thermalSRV->Release();
+		if (m_hdrTempTexture) m_hdrTempTexture->Release();
+		if (m_hdrTempSRV) m_hdrTempSRV->Release();
 		if (m_thermalRenderTarget) m_thermalRenderTarget->Release();
 		if (m_thermalVision) {
 			m_thermalVision->Shutdown();
@@ -35,11 +39,10 @@ namespace ThroughScope
 	bool SecondPassRenderer::ExecuteSecondPass()
 	{
 		if (!CanExecuteSecondPass()) {
-			logger::warn("Cannot execute second pass: preconditions not met");
+			logger::warn("[HDR-DEBUG] ExecuteSecondPass: CanExecuteSecondPass returned FALSE");
 			return false;
 		}
-
-
+		
 		// 初始化相机指针
 		m_scopeCamera = ScopeCamera::GetScopeCamera();
 		m_playerCamera = *ptr_DrawWorldCamera;
@@ -82,7 +85,10 @@ namespace ThroughScope
 			DrawScopeContent();
 			m_renderExecuted = true;
 
-			// 5.5 如果启用热成像，应用热成像效果
+			// 5.5 应用自定义 HDR 后处理（不再依赖引擎状态捕获）
+			ApplyCustomHDREffect();
+
+			// 5.6 如果启用热成像，应用热成像效果
 			if (m_thermalVisionEnabled) {
 				ApplyThermalVisionEffect();
 			}
@@ -105,7 +111,8 @@ namespace ThroughScope
 	bool SecondPassRenderer::CanExecuteSecondPass() const
 	{
 		// 检查渲染状态
-		if (!m_renderStateMgr->IsScopeReady() || !m_renderStateMgr->IsRenderReady() || !D3DHooks::IsEnableRender()) {
+		// 注意：移除了 IsEnableRender 检查，因为它在主线程设置，可能与渲染线程有竞争
+		if (!m_renderStateMgr->IsScopeReady() || !m_renderStateMgr->IsRenderReady()) {
 			return false;
 		}
 
@@ -350,6 +357,33 @@ namespace ThroughScope
 
 	void SecondPassRenderer::DrawScopeContent()
 	{
+		// 为所有 render targets 设置调试名称，方便在 RenderDoc 中识别
+		static bool debugNamesSet = false;
+		if (!debugNamesSet) {
+			auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+			if (rendererData) {
+				// 定义调试名称 GUID (WKPDID_D3DDebugObjectName)
+				static const GUID debugNameGUID = { 0x429b8c22, 0x9188, 0x4b0c, { 0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00 } };
+				
+				for (int i = 0; i < 101; i++) {
+					auto& rt = rendererData->renderTargets[i];
+					if (rt.texture) {
+						char name[64];
+						sprintf_s(name, "GameRT_%d", i);
+						
+						ID3D11Texture2D* nativeTexture = reinterpret_cast<ID3D11Texture2D*>(rt.texture);
+						nativeTexture->SetPrivateData(debugNameGUID, (UINT)strlen(name), name);
+						
+						D3D11_TEXTURE2D_DESC desc;
+						nativeTexture->GetDesc(&desc);
+						logger::info("[RT-DEBUG] renderTargets[{}]: {}x{}, Format={}", 
+							i, desc.Width, desc.Height, (int)desc.Format);
+					}
+				}
+				debugNamesSet = true;
+				logger::info("[RT-DEBUG] Finished setting debug names for render targets");
+			}
+		}
 
 		// 设置性能标记
 		D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
@@ -550,6 +584,398 @@ namespace ThroughScope
 		}
 
 		logger::debug("Thermal vision effect applied");
+	}
+
+	void SecondPassRenderer::ApplyEngineHDREffect()
+	{
+		D3DPERF_BeginEvent(0xFF00FF00, L"SecondPass_EngineHDR");
+
+		// 检查 HDR 状态缓存是否有效
+		if (!g_HDRStateCache.IsValid()) {
+			logger::warn("ApplyEngineHDREffect: HDR state cache is not valid, skipping");
+			D3DPERF_EndEvent();
+			return;
+		}
+
+		// 获取 ImageSpaceManager 单例来获取屏幕三角形
+		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
+		if (!imageSpaceManager) {
+			logger::warn("ApplyEngineHDREffect: ImageSpaceManager is null");
+			D3DPERF_EndEvent();
+			return;
+		}
+
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		if (!rendererData) {
+			logger::warn("ApplyEngineHDREffect: RendererData is null");
+			D3DPERF_EndEvent();
+			return;
+		}
+
+		// 为所有 render targets 设置调试名称，方便在 RenderDoc 中识别
+		static bool debugNamesSet = false;
+		if (!debugNamesSet) {
+			// 定义调试名称 GUID (WKPDID_D3DDebugObjectName)
+			static const GUID debugNameGUID = { 0x429b8c22, 0x9188, 0x4b0c, { 0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00 } };
+			
+			for (int i = 0; i < 32; i++) {  // 假设最多 32 个 render targets
+				auto& rt = rendererData->renderTargets[i];
+				if (rt.texture) {
+					char name[64];
+					sprintf_s(name, "GameRT_%d", i);
+					
+					// 转换为原生 D3D11 接口
+					ID3D11Texture2D* nativeTexture = reinterpret_cast<ID3D11Texture2D*>(rt.texture);
+					nativeTexture->SetPrivateData(debugNameGUID, (UINT)strlen(name), name);
+					
+					D3D11_TEXTURE2D_DESC desc;
+					nativeTexture->GetDesc(&desc);
+					logger::info("[RT-DEBUG] renderTargets[{}]: {}x{}, Format={}", 
+						i, desc.Width, desc.Height, (int)desc.Format);
+				}
+			}
+			debugNamesSet = true;
+			logger::info("[RT-DEBUG] Finished setting debug names for render targets");
+		}
+
+		try {
+			// 备份当前完整渲染状态
+			HDRStateCache stateBackup;
+            stateBackup.Capture(m_context);
+            
+            // 检查 HDR 状态是否已捕获，如果没有则跳过
+            if (!g_HDRStateCache.IsValid()) {
+                logger::warn("[HDR-DEBUG] ApplyEngineHDREffect: g_HDRStateCache NOT VALID, skipping");
+                stateBackup.Apply(m_context);
+                D3DPERF_EndEvent();
+                return;
+            }
+            
+            // 检查 HDR 状态是否是当前帧捕获的（关键！防止使用过时状态）
+            if (!D3DHooks::IsHDRStateCurrentFrame()) {
+                logger::warn("[HDR-DEBUG] ApplyEngineHDREffect: HDR state is from frame #{}, current is #{}, skipping",
+                    D3DHooks::GetHDRCapturedFrame(), D3DHooks::GetFrameNumber());
+                stateBackup.Apply(m_context);
+                D3DPERF_EndEvent();
+                return;
+            }
+            
+            // 获取主渲染目标纹理
+            ID3D11Texture2D* mainRtTex = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
+            if (!mainRtTex) {
+                logger::warn("ApplyEngineHDREffect: MainRT texture is null");
+                stateBackup.Apply(m_context); // 恢复状态
+                D3DPERF_EndEvent();
+                return;
+            }
+
+            // 获取其描述
+            D3D11_TEXTURE2D_DESC mainDesc;
+            mainRtTex->GetDesc(&mainDesc);
+
+            // 检查并创建/重建临时纹理
+            bool needCreate = false;
+            if (!m_hdrTempTexture) {
+                needCreate = true;
+            } else {
+                D3D11_TEXTURE2D_DESC tempDesc;
+                m_hdrTempTexture->GetDesc(&tempDesc);
+                if (tempDesc.Width != mainDesc.Width || tempDesc.Height != mainDesc.Height || tempDesc.Format != mainDesc.Format) {
+                    m_hdrTempTexture->Release();
+                    m_hdrTempTexture = nullptr;
+                    if (m_hdrTempSRV) {
+                        m_hdrTempSRV->Release();
+                        m_hdrTempSRV = nullptr;
+                    }
+                    needCreate = true;
+                }
+            }
+
+            if (needCreate) {
+                D3D11_TEXTURE2D_DESC desc = mainDesc;
+                desc.BindFlags = D3D11_BIND_SHADER_RESOURCE; // 只需要作为 SRV
+                desc.Usage = D3D11_USAGE_DEFAULT;
+                desc.CPUAccessFlags = 0;
+                desc.MiscFlags = 0;
+
+                HRESULT hr = m_device->CreateTexture2D(&desc, nullptr, &m_hdrTempTexture);
+                if (FAILED(hr)) {
+                    logger::error("ApplyEngineHDREffect: Failed to create temp texture");
+                    stateBackup.Apply(m_context); // 恢复状态
+                    D3DPERF_EndEvent();
+                    return;
+                }
+
+                hr = m_device->CreateShaderResourceView(m_hdrTempTexture, nullptr, &m_hdrTempSRV);
+                if (FAILED(hr)) {
+                    logger::error("ApplyEngineHDREffect: Failed to create temp SRV");
+                    m_hdrTempTexture->Release();
+                    m_hdrTempTexture = nullptr;
+                    stateBackup.Apply(m_context); // 恢复状态
+                    D3DPERF_EndEvent();
+                    return;
+                }
+                // logger::debug("ApplyEngineHDREffect: Created temp texture {}x{}", desc.Width, desc.Height);
+            }
+
+            // 复制 MainRT 到 临时纹理
+            m_context->CopyResource(m_hdrTempTexture, mainRtTex);
+			
+			// 应用捕获的 HDR 状态（shader、常量缓冲区等）
+			g_HDRStateCache.Apply(m_context);
+			
+			// 关键：先清除所有 PS SRV 绑定，避免与 RTV 冲突
+			ID3D11ShaderResourceView* nullSRVs[16] = {};
+			m_context->PSSetShaderResources(0, 16, nullSRVs);
+			
+			// 设置输出渲染目标（MainRT 4）
+			// 必须在设置 SRV 之前设置 RTV，否则 MainRT 同时作为 SRV 和 RTV 会冲突
+			ID3D11RenderTargetView* mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
+			if (mainRTV) {
+				m_context->OMSetRenderTargets(1, &mainRTV, nullptr);
+			}
+			
+			// 现在安全地设置 SRV
+			// t0 = Bloom - 使用复制的纹理（避免开枪时内容被修改）
+			// t1 = Scene - 使用临时纹理避免读写冲突
+			// t2 = Luminance - 使用复制的纹理（避免开枪时内容被修改）
+			// t3 = Mask - 保留捕获的原始 SRV（mask可能依赖场景内容）
+
+			// 使用复制的纹理SRV，如果复制失败则回退到原始SRV
+			ID3D11ShaderResourceView* srv0 = g_HDRStateCache.bloomSRVCopy.Get();
+			if (!srv0) {
+				srv0 = g_HDRStateCache.psSRVs[0].Get();  // 回退到原始SRV
+				logger::warn("[HDR-DEBUG] Using fallback original Bloom SRV");
+			}
+			ID3D11ShaderResourceView* srv2 = g_HDRStateCache.luminanceSRVCopy.Get();
+			if (!srv2) {
+				srv2 = g_HDRStateCache.psSRVs[2].Get();  // 回退到原始SRV
+				logger::warn("[HDR-DEBUG] Using fallback original Luminance SRV");
+			}
+			ID3D11ShaderResourceView* srv3 = g_HDRStateCache.psSRVs[3].Get();  // Mask保持原始
+
+			if (srv0) {
+				m_context->PSSetShaderResources(0, 1, &srv0);  // t0: Bloom (复制)
+			}
+			if (m_hdrTempSRV) {
+				m_context->PSSetShaderResources(1, 1, &m_hdrTempSRV);  // t1: Scene (临时纹理，避免冲突)
+			}
+			if (srv2) {
+				m_context->PSSetShaderResources(2, 1, &srv2);  // t2: Luminance (复制)
+			}
+			if (srv3) {
+				m_context->PSSetShaderResources(3, 1, &srv3);  // t3: Mask (原始)
+			}
+			
+			// 设置正确的 viewport
+			auto gState = RE::BSGraphics::State::GetSingleton();
+			D3D11_VIEWPORT vp = {};
+			vp.Width = static_cast<float>(gState.backBufferWidth);
+			vp.Height = static_cast<float>(gState.backBufferHeight);
+			vp.MinDepth = 0.0f;
+			vp.MaxDepth = 1.0f;
+			vp.TopLeftX = 0.0f;
+			vp.TopLeftY = 0.0f;
+			m_context->RSSetViewports(1, &vp);
+			
+			// 绘制全屏三角形
+			m_context->Draw(3, 0);
+
+			// 清除所有 SRV 绑定以避免资源冲突
+			ID3D11ShaderResourceView* nullSRVsCleanup[4] = { nullptr, nullptr, nullptr, nullptr };
+			m_context->PSSetShaderResources(0, 4, nullSRVsCleanup);
+			
+			// 清除 RTV 绑定，防止后续 CopyResource 出错
+			ID3D11RenderTargetView* nullRTV = nullptr;
+			m_context->OMSetRenderTargets(1, &nullRTV, nullptr);
+
+			// 恢复完整渲染状态
+            stateBackup.Apply(m_context);
+			stateBackup.Clear();
+
+		} catch (...) {
+			logger::error("ApplyEngineHDREffect: Exception during HDR effect rendering");
+		}
+
+		D3DPERF_EndEvent();
+	}
+
+	void SecondPassRenderer::ApplyCustomHDREffect()
+	{
+		D3DPERF_BeginEvent(0xFF00FF00, L"SecondPass_CustomHDR");
+
+		// 初始化 ScopeHDR（如果尚未初始化）
+		if (!m_scopeHDR) {
+			m_scopeHDR = ScopeHDR::GetSingleton();
+			if (!m_scopeHDR->IsInitialized()) {
+				if (!m_scopeHDR->Initialize(m_device, m_context)) {
+					logger::error("ApplyCustomHDREffect: Failed to initialize ScopeHDR");
+					D3DPERF_EndEvent();
+					return;
+				}
+			}
+		}
+
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		if (!rendererData) {
+			logger::warn("ApplyCustomHDREffect: RendererData is null");
+			D3DPERF_EndEvent();
+			return;
+		}
+
+		try {
+			// 输入: 从 rt4 读取当前瞄具场景
+			ID3D11Texture2D* mainRtTex = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
+			// 输出: 写入 rt4 (RestoreFirstPass 从 rt4 复制到 SecondPassColorTexture)
+			ID3D11RenderTargetView* outputRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
+
+			if (!mainRtTex || !outputRTV) {
+				logger::warn("ApplyCustomHDREffect: MainRT texture or output RTV is null");
+				D3DPERF_EndEvent();
+				return;
+			}
+
+			// 获取纹理描述
+			D3D11_TEXTURE2D_DESC mainDesc;
+			mainRtTex->GetDesc(&mainDesc);
+
+			// 创建或重建临时纹理（用于保存场景内容，避免读写冲突）
+			bool needCreate = false;
+			if (!m_hdrTempTexture) {
+				needCreate = true;
+			} else {
+				D3D11_TEXTURE2D_DESC tempDesc;
+				m_hdrTempTexture->GetDesc(&tempDesc);
+				if (tempDesc.Width != mainDesc.Width || tempDesc.Height != mainDesc.Height || tempDesc.Format != mainDesc.Format) {
+					if (m_hdrTempTexture) m_hdrTempTexture->Release();
+					if (m_hdrTempSRV) m_hdrTempSRV->Release();
+					m_hdrTempTexture = nullptr;
+					m_hdrTempSRV = nullptr;
+					needCreate = true;
+				}
+			}
+
+			if (needCreate) {
+				D3D11_TEXTURE2D_DESC desc = mainDesc;
+				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+				desc.Usage = D3D11_USAGE_DEFAULT;
+				desc.CPUAccessFlags = 0;
+				desc.MiscFlags = 0;
+
+				HRESULT hr = m_device->CreateTexture2D(&desc, nullptr, &m_hdrTempTexture);
+				if (FAILED(hr)) {
+					logger::error("ApplyCustomHDREffect: Failed to create temp texture");
+					D3DPERF_EndEvent();
+					return;
+				}
+
+				hr = m_device->CreateShaderResourceView(m_hdrTempTexture, nullptr, &m_hdrTempSRV);
+				if (FAILED(hr)) {
+					logger::error("ApplyCustomHDREffect: Failed to create temp SRV");
+					m_hdrTempTexture->Release();
+					m_hdrTempTexture = nullptr;
+					D3DPERF_EndEvent();
+					return;
+				}
+			}
+
+			// 复制当前场景到临时纹理
+			m_context->CopyResource(m_hdrTempTexture, mainRtTex);
+
+			// 清除 RTV 绑定，确保 CopyResource 完成
+			ID3D11RenderTargetView* nullRTV = nullptr;
+			m_context->OMSetRenderTargets(1, &nullRTV, nullptr);
+
+			// 应用自定义 HDR 效果
+			// 参数: sceneTexture, bloomTexture, luminanceTexture, maskTexture, outputRTV
+			// 对于瞄具场景:
+			// - 场景纹理: 临时纹理 (刚刚复制的瞄具渲染结果)
+			// - Bloom: 使用 g_HDRStateCache 中捕获的 bloom (如果有效), 否则使用默认
+			// - Luminance: 使用固定曝光，所以不需要
+			// - Mask: 不需要 (已设置 SkipMaskCheck = true)
+
+			ID3D11ShaderResourceView* bloomSRV = nullptr;
+			ID3D11ShaderResourceView* luminanceSRV = nullptr;
+
+			if (g_HDRStateCache.IsValid()) {
+				// 优先使用复制的 bloom 纹理，如果没有则使用原始
+				bloomSRV = g_HDRStateCache.bloomSRVCopy.Get();
+				if (!bloomSRV) {
+					bloomSRV = g_HDRStateCache.psSRVs[0].Get();
+				}
+
+				// 获取 luminance 纹理（用于自动曝光模式）
+				// 优先使用复制的，如果没有则使用原始
+				luminanceSRV = g_HDRStateCache.luminanceSRVCopy.Get();
+				if (!luminanceSRV) {
+					luminanceSRV = g_HDRStateCache.psSRVs[2].Get();
+				}
+			}
+
+			// 配置 HDR 参数
+			m_scopeHDR->SetSkipHDRTonemapping(false);  // 启用完整 HDR + Color Grading
+			m_scopeHDR->SetExposure(0);
+			m_scopeHDR->SetExposureMultiplier(0.8f);
+			 
+			// 色调校正: 偏蓝时添加暖色补偿 (r, g, b, weight)
+			// weight 越大效果越明显，0.0 = 无效果
+			m_scopeHDR->SetColorTint(1.0f, 0.85f, 0.7f, 0.2f);
+
+			// 从 ImageSpaceManager 获取 LUT 纹理和混合权重
+			auto imageSpaceMgr = RE::ImageSpaceManager::GetSingleton();
+			if (imageSpaceMgr && !m_scopeHDR->HasLUTTextures()) {
+				// 检查是否有 LUT 纹理 (静态资源，只需捕获一次)
+				const auto& lutData = imageSpaceMgr->lutData;
+				ID3D11ShaderResourceView* lut0 = nullptr;
+				ID3D11ShaderResourceView* lut1 = nullptr;
+				ID3D11ShaderResourceView* lut2 = nullptr;
+				ID3D11ShaderResourceView* lut3 = nullptr;
+
+				if (lutData.texture[0]) lut0 = (ID3D11ShaderResourceView*)lutData.texture[0]->pSRView;
+				if (lutData.texture[1]) lut1 = (ID3D11ShaderResourceView*)lutData.texture[1]->pSRView;
+				if (lutData.texture[2]) lut2 = (ID3D11ShaderResourceView*)lutData.texture[2]->pSRView;
+				if (lutData.texture[3]) lut3 = (ID3D11ShaderResourceView*)lutData.texture[3]->pSRView;
+
+				// 只要有任何一个 LUT 纹理存在就设置
+				if (lut0 || lut1 || lut2 || lut3) {
+					m_scopeHDR->SetLUTTextures(lut0, lut1, lut2, lut3);
+					m_scopeHDR->SetColorGradingEnabled(true);
+				} else {
+					// 没有 LUT 纹理，禁用 Color Grading 以避免采样 nullptr
+					m_scopeHDR->SetColorGradingEnabled(false);
+				}
+			}
+
+			// 每帧更新 LUT 混合权重（权重可能会变化）
+			if (imageSpaceMgr && m_scopeHDR->HasLUTTextures()) {
+				const auto& lutData = imageSpaceMgr->lutData;
+				m_scopeHDR->SetLUTBlendWeights(
+					lutData.weight[0],
+					lutData.weight[1],
+					lutData.weight[2],
+					lutData.weight[3]
+				);
+			}
+
+			// 获取 Mask 纹理 (GameRT_24 = TAA Jitter Mask)
+			ID3D11ShaderResourceView* maskSRV = nullptr;
+			if (rendererData->renderTargets[24].srView) {
+				maskSRV = (ID3D11ShaderResourceView*)rendererData->renderTargets[24].srView;
+			}
+
+			m_scopeHDR->Apply(
+				m_hdrTempSRV,     // 场景纹理 (从 rt4 复制到临时纹理)
+				bloomSRV,         // Bloom (可选)
+				luminanceSRV,     // Luminance (用于自动曝光，如果 FixedExposure > 0 则忽略)
+				maskSRV,          // Mask (GameRT_24)
+				outputRTV         // 输出到 rt4
+			);
+
+		} catch (...) {
+			logger::error("ApplyCustomHDREffect: Exception during HDR effect rendering");
+		}
+
+		D3DPERF_EndEvent();
 	}
 
 	void SecondPassRenderer::RestoreFirstPass()

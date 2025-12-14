@@ -28,6 +28,9 @@ set(SOURCES
 	src/rendering/ThermalVisionControl.cpp
 	src/rendering/ThermalVision.cpp
 	src/rendering/TemperatureDetection.cpp
+	src/rendering/ScopeHDR.cpp
+	src/ImageSpaceDebugHook.cpp
+	src/HDRStateCache.cpp
 )
 	
 	

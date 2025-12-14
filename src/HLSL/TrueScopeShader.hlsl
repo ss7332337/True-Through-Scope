@@ -64,7 +64,8 @@ cbuffer ScopeConstants : register(b0)
     
     int enableSphericalDistortion;      // 是否启用球形畸变 (0 = 禁用, 1 = 启用)
     int enableChromaticAberration;      // 是否启用色散效果 (0 = 禁用, 1 = 启用)
-    float2 sphericalDistortionPadding;  // 填充对齐
+    float brightnessBoost;              // 亮度增强系数
+    float ambientOffset;                // 环境光补偿
 }
             
 struct PS_INPUT
@@ -353,6 +354,7 @@ float4 main(PS_INPUT input) : SV_TARGET
                                 useChromaticSampling);
     
     float4 color = chromaticColor;
+    //color *= 100;
 
     float2 eye_velocity = clampMagnitude(abseyeDirectionLerp.xy, 1.5f);
 
@@ -367,11 +369,6 @@ float4 main(PS_INPUT input) : SV_TARGET
     reticleTexCoord = float2(1.0 - reticleTexCoord.x, reticleTexCoord.y);
     float4 reticleColor = reticleTexture.Sample(scopeSampler, reticleTexCoord);
     
-    
-    // 应用Color Grading色彩分级（替代原来的亮度提升）
-    color = applyColorGrading(color);
-    color *= 1.3f;
-    
     // 计算夜视和热成像效果（无分支）
     float4 nightVisionColor = applyNightVision(color, texCoord);
     float4 thermalColor = applyThermal(color, texCoord);
@@ -380,6 +377,7 @@ float4 main(PS_INPUT input) : SV_TARGET
     color = lerp(color, nightVisionColor, float(enableNightVision));
     color = lerp(color, thermalColor, float(enableThermalVision));
     
+    // 叠加准星
     color = reticleColor * reticleColor.a + color * (1 - reticleColor.a);
 
     // 改进的视差效果：避免完全消除光照

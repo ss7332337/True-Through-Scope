@@ -8,6 +8,7 @@
 #include <ScopeCamera.h>
 #include <wrl/client.h>
 #include <d3dcompiler.h>
+#include "HDRStateCache.h"
 
 #include <DDSTextureLoader11.h>
 #include "ImGuiManager.h"
@@ -85,6 +86,9 @@ namespace ThroughScope {
 	float D3DHooks::s_CurrentScopeSwayAmount = 0.1f;
 	float D3DHooks::s_CurrentMaxTravel = 0.05f;
 	float D3DHooks::s_CurrentRadius = 0.3f;
+    bool D3DHooks::s_IsCapturingHDR = false; // 定义静态变量
+    uint64_t D3DHooks::s_FrameNumber = 0;  // 帧计数器
+    uint64_t D3DHooks::s_HDRCapturedFrame = 0;  // HDR 状态捕获的帧号
 
 	// 夜视效果参数初始化
 	float D3DHooks::s_NightVisionIntensity = 1.0f;
@@ -290,7 +294,7 @@ namespace ThroughScope {
 						for (int i = 0; i < 4; i++) {
 							s_LUTWeights[i] = weights[i];
 						}
-	
+
 						context->Unmap(tempBuffer, 0);
 					} else {
 						// 如果映射失败，使用从调试中观察到的默认权重
@@ -941,6 +945,17 @@ namespace ThroughScope {
 		if (isSelfDrawCall)
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 
+		// 注意：HDR 状态捕获已移至 ImageSpaceDebugHook.cpp 中的 hkImageSpaceEffectHDR_Render
+		// 因为 HDR::Render 使用 Draw() 而非 DrawIndexed()，所以这里的捕获代码从未生效
+		// 保留此代码块作为备用，但 s_IsCapturingHDR 不再被设置为 true
+		if (s_IsCapturingHDR) {
+			// (已弃用) 原本期望在这里捕获 HDR 状态，但 HDR::Render 不使用 DrawIndexed
+			if (pContext) {
+				g_HDRStateCache.Capture(pContext);
+				s_HDRCapturedFrame = s_FrameNumber;
+			}
+		}
+
 		bool isScopeQuad = IsScopeQuadBeingDrawn(pContext, IndexCount);
 		//bool isScopeQuad = IsScopeQuadBeingDrawnShape(pContext, IndexCount);
 		if (isScopeQuad) {
@@ -1476,6 +1491,8 @@ namespace ThroughScope {
 		newCBData.sphericalDistortionCenter[1] = s_SphericalDistortionCenterY;
 		newCBData.enableSphericalDistortion = s_EnableSphericalDistortion;
 		newCBData.enableChromaticAberration = s_EnableChromaticAberration;
+		newCBData.brightnessBoost = 1.0f;   // No additional brightness boost (gamma correction only)
+		newCBData.ambientOffset = 0.0f;     // Unused
 
 		// 检查是否需要更新常量缓冲区
 		static int s_ForceUpdateCounter = 0;
@@ -1595,6 +1612,9 @@ namespace ThroughScope {
 
 	HRESULT WINAPI D3DHooks::hkPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
 	{
+		// 递增帧计数器
+		s_FrameNumber++;
+		
 		// 防止递归调用
 		if (s_InPresent) {
 			return s_OriginalPresent(pSwapChain, SyncInterval, Flags);

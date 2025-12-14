@@ -162,7 +162,8 @@ namespace ThroughScope {
 
 			int enableSphericalDistortion;      // 是否启用球形畸变 (0 = 禁用, 1 = 启用)
 			int enableChromaticAberration;      // 是否启用色散效果 (0 = 禁用, 1 = 启用)
-			float sphericalDistortionPadding[2];  // 填充对齐
+			float brightnessBoost;              // 亮度增强系数
+			float ambientOffset;                // 环境光补偿 (Lift/Pedestal)
 		};
 
 		// 缓存的常量缓冲区数据，用于比较是否需要更新
@@ -182,6 +183,8 @@ namespace ThroughScope {
 			float sphericalDistortionCenter[2] = {0, 0};
 			int enableSphericalDistortion = 0;
 			int enableChromaticAberration = 0;
+			float brightnessBoost = 1.0f;
+			float ambientOffset = 0.0f;
 			
 			bool NeedsUpdate(const ScopeConstantBuffer& newData) const {
 				return screenWidth != newData.screenWidth ||
@@ -197,7 +200,9 @@ namespace ThroughScope {
 					   sphericalDistortionRadius != newData.sphericalDistortionRadius ||
 					   memcmp(sphericalDistortionCenter, newData.sphericalDistortionCenter, sizeof(sphericalDistortionCenter)) != 0 ||
 					   enableSphericalDistortion != newData.enableSphericalDistortion ||
-					   enableChromaticAberration != newData.enableChromaticAberration;
+					   enableChromaticAberration != newData.enableChromaticAberration ||
+					   brightnessBoost != newData.brightnessBoost ||
+					   ambientOffset != newData.ambientOffset;
 			}
 			
 			void UpdateFrom(const ScopeConstantBuffer& newData) {
@@ -215,6 +220,8 @@ namespace ThroughScope {
 				memcpy(sphericalDistortionCenter, newData.sphericalDistortionCenter, sizeof(sphericalDistortionCenter));
 				enableSphericalDistortion = newData.enableSphericalDistortion;
 				enableChromaticAberration = newData.enableChromaticAberration;
+				brightnessBoost = newData.brightnessBoost;
+				ambientOffset = newData.ambientOffset;
 			}
 		};
 
@@ -451,6 +458,14 @@ namespace ThroughScope {
 		UINT GetDrawIndexedIndex(ID3D11DeviceContext* context);
 	public:
 		static void HandleFOVInput();
+		
+		static bool s_IsCapturingHDR;
+		static uint64_t s_FrameNumber;  // 帧计数器
+		static uint64_t s_HDRCapturedFrame;  // HDR 状态捕获的帧号
+		
+		static uint64_t GetFrameNumber() { return s_FrameNumber; }
+		static uint64_t GetHDRCapturedFrame() { return s_HDRCapturedFrame; }
+		static bool IsHDRStateCurrentFrame() { return s_HDRCapturedFrame == s_FrameNumber; }
 
     };
 }

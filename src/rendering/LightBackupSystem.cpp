@@ -1,5 +1,7 @@
 #include "LightBackupSystem.h"
 #include <ScopeCamera.h>
+#include "LightBackupSystem.h"
+#include <ScopeCamera.h>
 
 namespace ThroughScope
 {
@@ -24,24 +26,18 @@ namespace ThroughScope
         // 清空之前的备份
         m_lightBackups.clear();
 
-        // 备份可见性计数器（DeferredLightsImpl 依赖这些计数器决定是否渲染光源）
+        // 备份可见性计数器
         m_visibleNonShadowLights = shadowNode->uiVisibleNonShadowLights;
         m_visibleShadowLights = shadowNode->uiVisibleShadowLights;
         m_visibleAmbientLights = shadowNode->uiVisibleAmbientLights;
 
-        // 计算所有光源列表的总大小，预分配空间
+        // 计算所有光源列表的总大小
         size_t totalLights = shadowNode->lLightList.size() + 
                             shadowNode->lShadowLightList.size() + 
                             shadowNode->lAmbientLightList.size();
         m_lightBackups.reserve(totalLights);
 
-        logger::debug("Backing up lights from ShadowSceneNode: {} normal, {} shadow, {} ambient (visible: {}/{}/{})",
-            shadowNode->lLightList.size(),
-            shadowNode->lShadowLightList.size(),
-            shadowNode->lAmbientLightList.size(),
-            m_visibleNonShadowLights,
-            m_visibleShadowLights,
-            m_visibleAmbientLights);
+        m_lightBackups.reserve(totalLights);
 
         // Lambda函数用于备份单个光源
         auto backupLight = [this](const RE::NiPointer<RE::BSLight>& bsLight) {
@@ -70,9 +66,10 @@ namespace ThroughScope
             backupLight(light);
         }
 
+        // 备份环境光状态
+        BackupAmbientLightStates();
+
         m_backupCount++;
-        logger::debug("Successfully backed up {} light states (operation #{})",
-            m_lightBackups.size(), m_backupCount);
     }
 
 
@@ -82,56 +79,22 @@ namespace ThroughScope
             logger::warn("ApplyLightStatesForScope: No backup states available");
             return;
         }
-
-        logger::debug("Applying {} light states for scope rendering", m_lightBackups.size());
+        // 首先应用环境光状态，确保瞄具渲染时使用正确的环境光
+        ApplyAmbientLightStates();
 
         // DeferredLightsImpl 依赖这些计数器来决定渲染多少个光源
         if (m_shadowNode) {
             m_shadowNode->uiVisibleNonShadowLights = m_visibleNonShadowLights;
             m_shadowNode->uiVisibleShadowLights = m_visibleShadowLights;
             m_shadowNode->uiVisibleAmbientLights = m_visibleAmbientLights;
-            logger::debug("Set visible light counts: NonShadow={}, Shadow={}, Ambient={}",
-                m_visibleNonShadowLights, m_visibleShadowLights, m_visibleAmbientLights);
         }
 
-        // 如果启用光源数量限制
-        if (limitCount && m_lightBackups.size() > maxLights) {
-            // 获取相机位置用于优先级计算
-            auto scopeCamera = ThroughScope::ScopeCamera::GetScopeCamera();
-            RE::NiPoint3 cameraPos(0, 0, 0);
-            if (scopeCamera) {
-                cameraPos = scopeCamera->world.translate;
-            }
-
-            // 创建光源优先级列表
-            std::vector<std::pair<float, const LightStateBackup*>> lightPriorities;
-            lightPriorities.reserve(m_lightBackups.size());
-
-            for (const auto& backup : m_lightBackups) {
-                float priority = CalculateLightPriority(backup, cameraPos);
-                lightPriorities.push_back({ priority, &backup });
-            }
-
-            // 按优先级降序排序（高优先级在前）
-            std::sort(lightPriorities.begin(), lightPriorities.end(),
-                [](const auto& a, const auto& b) { return a.first > b.first; });
-
-            // 只应用前N个最重要的光源
-            size_t applyCount = std::min(maxLights, lightPriorities.size());
-            logger::info("Limiting scope lights from {} to {}", m_lightBackups.size(), applyCount);
-
-            for (size_t i = 0; i < applyCount; i++) {
-                ApplySingleLightState(*lightPriorities[i].second);
-            }
-        } else {
-            // 不限制光源数量，应用所有光源
-            for (const auto& firstRenderState : m_lightBackups) {
-                ApplySingleLightState(firstRenderState);
-            }
+        // 直接应用所有光源
+        for (const auto& backup : m_lightBackups) {
+            ApplySingleLightState(backup);
         }
 
         m_applyCount++;
-        logger::debug("Applied light states for scope rendering (operation #{})", m_applyCount);
     }
 
     void LightBackupSystem::RestoreLightStates()
@@ -141,7 +104,8 @@ namespace ThroughScope
             return;
         }
 
-        logger::debug("Restoring {} light states", m_lightBackups.size());
+        // 恢复环境光状态
+        RestoreAmbientLightStates();
 
         // 恢复原始光源状态
         for (const auto& backup : m_lightBackups) {
@@ -149,7 +113,6 @@ namespace ThroughScope
         }
 
         m_restoreCount++;
-        logger::debug("Restored light states (operation #{})", m_restoreCount);
     }
 
     void LightBackupSystem::Clear()
@@ -157,6 +120,122 @@ namespace ThroughScope
         logger::debug("Clearing {} light backup states", m_lightBackups.size());
         m_lightBackups.clear();
         m_cullingProcess = nullptr;
+        m_ambientBackup.isValid = false;
+    }
+
+    void LightBackupSystem::BackupAmbientLightStates()
+    {
+        // 获取 BSShaderManagerState
+        auto pState = ptr_BSShaderManagerState.get();
+        if (!pState) {
+            logger::warn("BackupAmbientLightStates: BSShaderManagerState is null");
+            m_ambientBackup.isValid = false;
+            return;
+        }
+
+        // 备份 Transform 和 Specular 参数
+        m_ambientBackup.DirectionalAmbientTransform = pState->DirectionalAmbientTransform;
+        m_ambientBackup.LocalDirectionalAmbientTransform = pState->LocalDirectionalAmbientTransform;
+        m_ambientBackup.AmbientSpecular = pState->AmbientSpecular;
+        m_ambientBackup.bAmbientSpecularEnabled = pState->bAmbientSpecularEnabled;
+        
+        // 备份 BSShaderManager 的环境光颜色数组（这是实际影响渲染的数据！）
+        auto directionalColors = RE::BSShaderManager::GetDirectionalAmbientColorsA();
+        auto localColors = RE::BSShaderManager::GetLocalDirectionalAmbientColorsA();
+        
+        if (directionalColors) {
+            for (int i = 0; i < 3; i++) {
+                for (int j = 0; j < 2; j++) {
+                    m_ambientBackup.DirectionalAmbientColorsA[i][j] = directionalColors[i][j];
+                }
+            }
+        }
+        
+        if (localColors) {
+            for (int i = 0; i < 3; i++) {
+                for (int j = 0; j < 2; j++) {
+                    m_ambientBackup.LocalDirectionalAmbientColorsA[i][j] = localColors[i][j];
+                }
+            }
+            // logger::debug("Backed up LocalDirectionalAmbientColorsA: [{:.3f},{:.3f},{:.3f}] [{:.3f},{:.3f},{:.3f}] [{:.3f},{:.3f},{:.3f}]",
+            //     localColors[0][0].r, localColors[0][0].g, localColors[0][0].b,
+            //     localColors[1][0].r, localColors[1][0].g, localColors[1][0].b,
+            //     localColors[2][0].r, localColors[2][0].g, localColors[2][0].b);
+        }
+
+        m_ambientBackup.isValid = true;
+    }
+
+    void LightBackupSystem::RestoreAmbientLightStates()
+    {
+        if (!m_ambientBackup.isValid) {
+            return;
+        }
+
+        auto pState = ptr_BSShaderManagerState.get();
+        if (pState) {
+            pState->DirectionalAmbientTransform = m_ambientBackup.DirectionalAmbientTransform;
+            pState->LocalDirectionalAmbientTransform = m_ambientBackup.LocalDirectionalAmbientTransform;
+            pState->AmbientSpecular = m_ambientBackup.AmbientSpecular;
+            pState->bAmbientSpecularEnabled = m_ambientBackup.bAmbientSpecularEnabled;
+        }
+        
+        // 恢复 BSShaderManager 的环境光颜色数组
+        auto directionalColors = RE::BSShaderManager::GetDirectionalAmbientColorsA();
+        auto localColors = RE::BSShaderManager::GetLocalDirectionalAmbientColorsA();
+        
+        if (directionalColors) {
+            for (int i = 0; i < 3; i++) {
+                for (int j = 0; j < 2; j++) {
+                    directionalColors[i][j] = m_ambientBackup.DirectionalAmbientColorsA[i][j];
+                }
+            }
+        }
+        
+        if (localColors) {
+            for (int i = 0; i < 3; i++) {
+                for (int j = 0; j < 2; j++) {
+                    localColors[i][j] = m_ambientBackup.LocalDirectionalAmbientColorsA[i][j];
+                }
+            }
+        }
+        
+    }
+
+    void LightBackupSystem::ApplyAmbientLightStates()
+    {
+        if (!m_ambientBackup.isValid) {
+            return;
+        }
+
+        // 应用 BSShaderManagerState 中的环境光参数 (Transforms)
+        auto pState = ptr_BSShaderManagerState.get();
+        if (pState) {
+            pState->DirectionalAmbientTransform = m_ambientBackup.DirectionalAmbientTransform;
+            pState->LocalDirectionalAmbientTransform = m_ambientBackup.LocalDirectionalAmbientTransform;
+            pState->AmbientSpecular = m_ambientBackup.AmbientSpecular;
+            pState->bAmbientSpecularEnabled = m_ambientBackup.bAmbientSpecularEnabled;
+        }
+
+        // 应用 BSShaderManager 的环境光颜色数组（关键！这影响实际渲染的环境光颜色）
+        auto directionalColors = RE::BSShaderManager::GetDirectionalAmbientColorsA();
+        auto localColors = RE::BSShaderManager::GetLocalDirectionalAmbientColorsA();
+        
+        if (directionalColors) {
+            for (int i = 0; i < 3; i++) {
+                for (int j = 0; j < 2; j++) {
+                    directionalColors[i][j] = m_ambientBackup.DirectionalAmbientColorsA[i][j];
+                }
+            }
+        }
+        
+        if (localColors) {
+            for (int i = 0; i < 3; i++) {
+                for (int j = 0; j < 2; j++) {
+                    localColors[i][j] = m_ambientBackup.LocalDirectionalAmbientColorsA[i][j];
+                }
+            }
+        }
     }
 
     bool LightBackupSystem::HasBackupStates() const
@@ -271,46 +350,5 @@ namespace ThroughScope
         }
     }
 
-    float LightBackupSystem::CalculateLightPriority(const LightStateBackup& backup, const RE::NiPoint3& cameraPos) const
-    {
-        auto bsLight = backup.light.get();
-        if (!bsLight) {
-            return 0.0f;
-        }
 
-        float priority = 0.0f;
-
-        // 1. 距离因素（距离越近优先级越高）
-        RE::NiPoint3 lightPos = bsLight->bPointPosition;
-        float distance = (lightPos - cameraPos).Length();
-        float distanceFactor = 1.0f / (1.0f + distance * 0.01f); // 归一化距离影响
-        priority += distanceFactor * 100.0f;
-
-        // 2. 光源强度因素（亮度越高优先级越高）
-        if (bsLight->fLODDimmer > 0.0f) {
-            priority += bsLight->fLODDimmer * 50.0f;
-        }
-
-        // 3. 动态光源优先级更高（通常是重要的游戏光源）
-        if (bsLight->bDynamicLight) {
-            priority += 30.0f;
-        }
-
-        // 4. 未被遮挡的光源优先级更高
-        if (!backup.occluded) {
-            priority += 20.0f;
-        }
-
-        // 5. 非临时光源优先级更高（场景主光源）
-        if (!backup.temporary) {
-            priority += 15.0f;
-        }
-
-        // 6. 视锥体内的光源优先级更高
-        if (backup.frustumCull == 0xFF || backup.frustumCull == 0xFE) {
-            priority += 25.0f;
-        }
-
-        return priority;
-    }
 }

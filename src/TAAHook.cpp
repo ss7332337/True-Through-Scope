@@ -33,8 +33,10 @@ namespace ThroughScope
 			D3DHooks::CaptureLUTTextures(context);
 		}
 
-		// 1. 先执行原本的TAA
+		// 1. 先执行原本的TAA (添加调试标记)
+		D3DPERF_BeginEvent(0xFFFF0000, L"ImageSpaceEffect_TAA");
 		g_hookMgr->g_TAA(thisPtr, a_geometry, a_param);
+		D3DPERF_EndEvent();
 
 		//if (ScopeCamera::IsRenderingForScope())
 		//	return;
@@ -51,12 +53,12 @@ namespace ThroughScope
 			return;
 		}
 
-		// 创建第二次渲染器并执行渲染
+		// 创建第二次渲染器并执行渲染 (添加调试标记)
+		D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_SecondPass");
 		SecondPassRenderer renderer(context, device, d3dHooks);
-		if (renderer.ExecuteSecondPass()) {
-			logger::debug("Second pass rendering completed successfully");
-		} else {
-			logger::warn("Second pass rendering failed or was skipped");
+		if (!renderer.ExecuteSecondPass()){
+			logger::warn("[HDR-DEBUG] hkTAA: ExecuteSecondPass returned FALSE");
 		}
+		D3DPERF_EndEvent();
 	}
 }

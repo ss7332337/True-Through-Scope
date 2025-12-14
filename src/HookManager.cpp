@@ -1,5 +1,6 @@
 #include "HookManager.h"
 #include "Utilities.h"
+#include "ImageSpaceDebugHook.h"
 #include <MinHook.h>
 #include <thread>
 #include <chrono>
@@ -123,6 +124,9 @@ namespace ThroughScope
 			reinterpret_cast<LPVOID*>(&g_BSSkyShader_SetupGeometry), "BSSkyShader_SetupGeometry");
 
 		RegisterTAAHook();
+		
+		// 注册 ImageSpace 调试 Hook
+		RegisterImageSpaceDebugHooks();
 
 		logger::info("Hooks registered successfully");
 	}

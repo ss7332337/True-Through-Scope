@@ -143,7 +143,15 @@ namespace ThroughScope
 	void __fastcall hkRenderZPrePass(BSGraphics::RendererShadowState* rshadowState, BSGraphics::ZPrePassDrawData* aZPreData,
 		unsigned __int64* aVertexDesc, unsigned __int16* aCullmode, unsigned __int16* aDepthBiasMode)
 	{
-		g_hookMgr->g_RenderZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode);
+		if (ScopeCamera::IsRenderingForScope()) {
+			__try {
+				g_hookMgr->g_RenderZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode);
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				// 静默跳过会导致崩溃的绘制调用
+			}
+		} else {
+			g_hookMgr->g_RenderZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode);
+		}
 	}
 
 	void __fastcall hkRenderAlphaTestZPrePass(BSGraphics::RendererShadowState* rshadowState,
@@ -153,7 +161,16 @@ namespace ThroughScope
 		unsigned __int16* aDepthBiasMode,
 		ID3D11SamplerState** aCurSamplerState)
 	{
-		g_hookMgr->g_RenderAlphaTestZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode, aCurSamplerState);
+		// 仅在瞄具渲染期间验证 pTriShape 有效性
+		if (ScopeCamera::IsRenderingForScope()) {
+			__try {
+				g_hookMgr->g_RenderZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode);
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				// 静默跳过会导致崩溃的绘制调用
+			}
+		} else {
+			g_hookMgr->g_RenderZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode);
+		}
 	}
 
 	void __fastcall hkRenderer_DoZPrePass(uint64_t thisPtr, NiCamera* apFirstPersonCamera, NiCamera* apWorldCamera, float afFPNear, float afFPFar, float afNear, float afFar)
