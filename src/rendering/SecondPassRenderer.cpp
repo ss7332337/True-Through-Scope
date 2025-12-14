@@ -477,8 +477,6 @@ namespace ThroughScope
 			ScopeCamera::SetRenderingForScope(false);
 
 			D3DPERF_EndEvent();
-
-			logger::debug("Scope content rendered");
 		}
 	}
 
