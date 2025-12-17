@@ -30,11 +30,16 @@ namespace ThroughScope
             float deltaRot[3] = { 0.0f, 0.0f, 0.0f };  // Pitch, Yaw, Roll
             float deltaScale = 1.5f;
             
-            // 视差设置
-            float relativeFogRadius = 0.5f;
-            float scopeSwayAmount = 0.1f;
-            float maxTravel = 0.05f;
-            float parallaxRadius = 0.3f;
+            // 新的视差设置
+            float parallaxStrength = 0.05f;        // 视差偏移强度
+            float parallaxSmoothing = 0.5f;        // 时域平滑
+            float exitPupilRadius = 0.45f;         // 出瞳半径
+            float exitPupilSoftness = 0.15f;       // 出瞳边缘柔和度
+            float vignetteStrength = 0.3f;         // 晕影强度
+            float vignetteRadius = 0.7f;           // 晕影起始半径
+            float vignetteSoftness = 0.3f;         // 晕影柔和度
+            float eyeReliefDistance = 0.5f;        // 眼距
+            bool  enableParallax = true;           // 启用视差
 
 			//新添加的检测项
 			float nightVisionIntensity = 1.0f;
@@ -88,11 +93,16 @@ namespace ThroughScope
 		int m_MinFov = 5;
 		int m_MaxFov = 100;
         
-        // 视差设置
-        float m_ParallaxRelativeFogRadius = 0.5f;
-        float m_ParallaxScopeSwayAmount = 0.1f;
-        float m_ParallaxMaxTravel = 0.05f;
-        float m_ParallaxRadius = 0.3f;
+        // 新的视差设置
+        float m_ParallaxStrength = 0.05f;
+        float m_ParallaxSmoothing = 0.5f;
+        float m_ExitPupilRadius = 0.45f;
+        float m_ExitPupilSoftness = 0.15f;
+        float m_VignetteStrength = 0.3f;
+        float m_VignetteRadius = 0.7f;
+        float m_VignetteSoftness = 0.3f;
+        float m_EyeReliefDistance = 0.5f;
+        bool  m_EnableParallax = true;
 
         // 夜视效果设置
         float m_NightVisionIntensity = 1.0f;

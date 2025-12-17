@@ -193,10 +193,15 @@ namespace ThroughScope
 
 			// Load parallax settings with defaults
 			const auto& parallaxJson = configJson.value("parallax", nlohmann::json::object());
-			config.parallaxSettings.relativeFogRadius = getValue(parallaxJson, "relativeFogRadius", 0.5f);
-			config.parallaxSettings.scopeSwayAmount = getValue(parallaxJson, "scopeSwayAmount", 0.5f);
-			config.parallaxSettings.maxTravel = getValue(parallaxJson, "maxTravel", 0.5f);
-			config.parallaxSettings.radius = getValue(parallaxJson, "radius", 0.5f);
+			config.parallaxSettings.parallaxStrength = getValue(parallaxJson, "parallaxStrength", 0.05f);
+			config.parallaxSettings.parallaxSmoothing = getValue(parallaxJson, "parallaxSmoothing", 0.5f);
+			config.parallaxSettings.exitPupilRadius = getValue(parallaxJson, "exitPupilRadius", 0.45f);
+			config.parallaxSettings.exitPupilSoftness = getValue(parallaxJson, "exitPupilSoftness", 0.15f);
+			config.parallaxSettings.vignetteStrength = getValue(parallaxJson, "vignetteStrength", 0.3f);
+			config.parallaxSettings.vignetteRadius = getValue(parallaxJson, "vignetteRadius", 0.7f);
+			config.parallaxSettings.vignetteSoftness = getValue(parallaxJson, "vignetteSoftness", 0.3f);
+			config.parallaxSettings.eyeReliefDistance = getValue(parallaxJson, "eyeReliefDistance", 0.5f);
+			config.parallaxSettings.enableParallax = getValue(parallaxJson, "enableParallax", true);
 
 			// Load scope settings with defaults
 			const auto& scopeJson = configJson.value("scopeSettings", nlohmann::json::object());
@@ -284,10 +289,15 @@ namespace ThroughScope
 
 			// Parallax settings
 			configJson["parallax"] = {
-				{ "relativeFogRadius", config.parallaxSettings.relativeFogRadius },
-				{ "scopeSwayAmount", config.parallaxSettings.scopeSwayAmount },
-				{ "maxTravel", config.parallaxSettings.maxTravel },
-				{ "radius", config.parallaxSettings.radius }
+				{ "parallaxStrength", config.parallaxSettings.parallaxStrength },
+				{ "parallaxSmoothing", config.parallaxSettings.parallaxSmoothing },
+				{ "exitPupilRadius", config.parallaxSettings.exitPupilRadius },
+				{ "exitPupilSoftness", config.parallaxSettings.exitPupilSoftness },
+				{ "vignetteStrength", config.parallaxSettings.vignetteStrength },
+				{ "vignetteRadius", config.parallaxSettings.vignetteRadius },
+				{ "vignetteSoftness", config.parallaxSettings.vignetteSoftness },
+				{ "eyeReliefDistance", config.parallaxSettings.eyeReliefDistance },
+				{ "enableParallax", config.parallaxSettings.enableParallax }
 			};
 
 			// Scope settings
@@ -369,10 +379,15 @@ namespace ThroughScope
 
 		// Set default parallax settings
 		presetConfig.parallaxSettings = {
-			0.5f,   // relativeFogRadius
-			0.1f,   // scopeSwayAmount
-			0.05f,  // maxTravel
-			0.3f    // radius
+			0.05f,   // parallaxStrength
+			0.5f,    // parallaxSmoothing
+			0.45f,   // exitPupilRadius
+			0.15f,   // exitPupilSoftness
+			0.3f,    // vignetteStrength
+			0.7f,    // vignetteRadius
+			0.3f,    // vignetteSoftness
+			0.5f,    // eyeReliefDistance
+			true     // enableParallax
 		};
 
 		// Set default scope settings

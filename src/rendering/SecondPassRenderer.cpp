@@ -3,6 +3,7 @@
 #include "HookManager.h"
 #include "ThermalVision.h"
 #include "HDRStateCache.h"
+#include "ScopePostProcess.h"
 #include "RE/Bethesda/ImageSpaceManager.hpp"
 #include <winternl.h>
 
@@ -85,8 +86,8 @@ namespace ThroughScope
 			DrawScopeContent();
 			m_renderExecuted = true;
 
-			// 5.5 应用自定义 HDR 后处理（不再依赖引擎状态捕获）
-			ApplyCustomHDREffect();
+			// 5.6 应用自定义 HDR 后处理
+			ApplyCustomHDREffect(); 
 
 			// 5.6 如果启用热成像，应用热成像效果
 			if (m_thermalVisionEnabled) {
@@ -804,17 +805,9 @@ namespace ThroughScope
 	{
 		D3DPERF_BeginEvent(0xFF00FF00, L"SecondPass_CustomHDR");
 
-		// 初始化 ScopeHDR（如果尚未初始化）
-		if (!m_scopeHDR) {
-			m_scopeHDR = ScopeHDR::GetSingleton();
-			if (!m_scopeHDR->IsInitialized()) {
-				if (!m_scopeHDR->Initialize(m_device, m_context)) {
-					logger::error("ApplyCustomHDREffect: Failed to initialize ScopeHDR");
-					D3DPERF_EndEvent();
-					return;
-				}
-			}
-		}
+		// 配置: 是否使用新的完整后处理管线 (Bloom + DOF + HDR)
+		// 设置为 true 使用新管线，false 使用旧的 ScopeHDR
+		static bool useNewPostProcessPipeline = true;
 
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
 		if (!rendererData) {
@@ -886,89 +879,172 @@ namespace ThroughScope
 			ID3D11RenderTargetView* nullRTV = nullptr;
 			m_context->OMSetRenderTargets(1, &nullRTV, nullptr);
 
-			// 应用自定义 HDR 效果
-			// 参数: sceneTexture, bloomTexture, luminanceTexture, maskTexture, outputRTV
-			// 对于瞄具场景:
-			// - 场景纹理: 临时纹理 (刚刚复制的瞄具渲染结果)
-			// - Bloom: 使用 g_HDRStateCache 中捕获的 bloom (如果有效), 否则使用默认
-			// - Luminance: 使用固定曝光，所以不需要
-			// - Mask: 不需要 (已设置 SkipMaskCheck = true)
-
+			// 获取纹理资源
 			ID3D11ShaderResourceView* bloomSRV = nullptr;
 			ID3D11ShaderResourceView* luminanceSRV = nullptr;
+			ID3D11ShaderResourceView* depthSRV = nullptr;
+			ID3D11ShaderResourceView* maskSRV = nullptr;
 
-			if (g_HDRStateCache.IsValid()) {
-				// 优先使用复制的 bloom 纹理，如果没有则使用原始
-				bloomSRV = g_HDRStateCache.bloomSRVCopy.Get();
-				if (!bloomSRV) {
-					bloomSRV = g_HDRStateCache.psSRVs[0].Get();
+			// ========== 独立计算瞄镜场景亮度 ==========
+			// 配置: 是否使用独立亮度计算 (true = 使用 LuminancePass, false = 使用主画面捕获的亮度)
+			static bool useScopeLuminance = true;  // 启用独立亮度计算
+
+			if (useScopeLuminance) {
+				// 初始化 LuminancePass
+				if (!m_luminancePass) {
+					m_luminancePass = LuminancePass::GetSingleton();
+					if (!m_luminancePass->IsInitialized()) {
+						if (!m_luminancePass->Initialize(m_device, m_context)) {
+							logger::error("ApplyCustomHDREffect: Failed to initialize LuminancePass");
+							m_luminancePass = nullptr;
+						} else {
+							logger::info("ApplyCustomHDREffect: LuminancePass initialized successfully");
+						}
+					}
 				}
 
-				// 获取 luminance 纹理（用于自动曝光模式）
-				// 优先使用复制的，如果没有则使用原始
+				// 使用瞄镜场景计算独立亮度
+				if (m_luminancePass && m_luminancePass->IsInitialized()) {
+					luminanceSRV = m_luminancePass->Compute(
+						m_hdrTempSRV,
+						mainDesc.Width,
+						mainDesc.Height,
+						0.016f  // deltaTime, 约60fps
+					);
+
+					if (luminanceSRV) {
+						//logger::debug("ApplyCustomHDREffect: Using scope-specific luminance");
+					}
+				}
+			}
+
+			// 回退到主画面捕获的亮度
+			if (!luminanceSRV && g_HDRStateCache.IsValid()) {
 				luminanceSRV = g_HDRStateCache.luminanceSRVCopy.Get();
 				if (!luminanceSRV) {
 					luminanceSRV = g_HDRStateCache.psSRVs[2].Get();
 				}
+				logger::debug("ApplyCustomHDREffect: Fallback to captured main scene luminance");
 			}
 
-			// 配置 HDR 参数
-			m_scopeHDR->SetSkipHDRTonemapping(false);  // 启用完整 HDR + Color Grading
-			m_scopeHDR->SetExposure(0);
-			m_scopeHDR->SetExposureMultiplier(0.8f);
-			 
-			// 色调校正: 偏蓝时添加暖色补偿 (r, g, b, weight)
-			// weight 越大效果越明显，0.0 = 无效果
-			m_scopeHDR->SetColorTint(1.0f, 0.85f, 0.7f, 0.2f);
-
-			// 从 ImageSpaceManager 获取 LUT 纹理和混合权重
-			auto imageSpaceMgr = RE::ImageSpaceManager::GetSingleton();
-			if (imageSpaceMgr && !m_scopeHDR->HasLUTTextures()) {
-				// 检查是否有 LUT 纹理 (静态资源，只需捕获一次)
-				const auto& lutData = imageSpaceMgr->lutData;
-				ID3D11ShaderResourceView* lut0 = nullptr;
-				ID3D11ShaderResourceView* lut1 = nullptr;
-				ID3D11ShaderResourceView* lut2 = nullptr;
-				ID3D11ShaderResourceView* lut3 = nullptr;
-
-				if (lutData.texture[0]) lut0 = (ID3D11ShaderResourceView*)lutData.texture[0]->pSRView;
-				if (lutData.texture[1]) lut1 = (ID3D11ShaderResourceView*)lutData.texture[1]->pSRView;
-				if (lutData.texture[2]) lut2 = (ID3D11ShaderResourceView*)lutData.texture[2]->pSRView;
-				if (lutData.texture[3]) lut3 = (ID3D11ShaderResourceView*)lutData.texture[3]->pSRView;
-
-				// 只要有任何一个 LUT 纹理存在就设置
-				if (lut0 || lut1 || lut2 || lut3) {
-					m_scopeHDR->SetLUTTextures(lut0, lut1, lut2, lut3);
-					m_scopeHDR->SetColorGradingEnabled(true);
-				} else {
-					// 没有 LUT 纹理，禁用 Color Grading 以避免采样 nullptr
-					m_scopeHDR->SetColorGradingEnabled(false);
+			// 获取 Bloom 纹理
+			if (g_HDRStateCache.IsValid()) {
+				bloomSRV = g_HDRStateCache.bloomSRVCopy.Get();
+				if (!bloomSRV) {
+					bloomSRV = g_HDRStateCache.psSRVs[0].Get();
 				}
 			}
 
-			// 每帧更新 LUT 混合权重（权重可能会变化）
-			if (imageSpaceMgr && m_scopeHDR->HasLUTTextures()) {
-				const auto& lutData = imageSpaceMgr->lutData;
-				m_scopeHDR->SetLUTBlendWeights(
-					lutData.weight[0],
-					lutData.weight[1],
-					lutData.weight[2],
-					lutData.weight[3]
-				);
+			// 获取深度纹理 (用于 DOF)
+			// 使用 srViewDepth (offset 0x88) 而不是 dsView
+			// dsView 是 DepthStencilView，不能转换为 ShaderResourceView
+			if (rendererData->depthStencilTargets[2].srViewDepth) {
+				depthSRV = (ID3D11ShaderResourceView*)rendererData->depthStencilTargets[2].srViewDepth;
 			}
 
 			// 获取 Mask 纹理 (GameRT_24 = TAA Jitter Mask)
-			ID3D11ShaderResourceView* maskSRV = nullptr;
 			if (rendererData->renderTargets[24].srView) {
 				maskSRV = (ID3D11ShaderResourceView*)rendererData->renderTargets[24].srView;
 			}
 
+			// ========== 新版后处理管线 ==========
+			if (useNewPostProcessPipeline) {
+				// 初始化 ScopePostProcess
+				if (!m_postProcess) {
+					m_postProcess = ScopePostProcess::GetSingleton();
+					if (!m_postProcess->IsInitialized()) {
+						if (!m_postProcess->Initialize(m_device, m_context)) {
+							logger::error("ApplyCustomHDREffect: Failed to initialize ScopePostProcess, falling back to legacy");
+							useNewPostProcessPipeline = false;
+						}
+					}
+				}
+
+				if (m_postProcess && m_postProcess->IsInitialized()) {
+					// 配置后处理参数
+					PostProcessConfig config;
+					config.bloomEnabled = false;  // Bloom 纹理似乎是空的，暂时禁用
+					config.bloomIntensity = 1.0f;
+					config.dofEnabled = false;  // DOF 暂时禁用
+					config.dofStrength = 0.3f;
+					config.focalPlane = 10.0f;
+					config.focalRange = 5.0f;
+					config.nearBlurEnabled = true;
+					config.farBlurEnabled = true;
+					config.hdrEnabled = true;   // 启用 HDR（场景可能需要曝光调整）
+					config.lutEnabled = true;
+
+					// 设置 LUT 纹理 (从 ImageSpaceManager 获取)
+					auto imageSpaceMgr = RE::ImageSpaceManager::GetSingleton();
+					if (imageSpaceMgr) {
+						const auto& lutData = imageSpaceMgr->lutData;
+						ID3D11ShaderResourceView* lut0 = lutData.texture[0] ? (ID3D11ShaderResourceView*)lutData.texture[0]->pSRView : nullptr;
+						ID3D11ShaderResourceView* lut1 = lutData.texture[1] ? (ID3D11ShaderResourceView*)lutData.texture[1]->pSRView : nullptr;
+						ID3D11ShaderResourceView* lut2 = lutData.texture[2] ? (ID3D11ShaderResourceView*)lutData.texture[2]->pSRView : nullptr;
+						ID3D11ShaderResourceView* lut3 = lutData.texture[3] ? (ID3D11ShaderResourceView*)lutData.texture[3]->pSRView : nullptr;
+
+						if (lut0 || lut1 || lut2 || lut3) {
+							m_postProcess->SetLUTTextures(lut0, lut1, lut2, lut3);
+						}
+
+						// 更新 LUT 混合权重 (传递给 LUTPass)
+						auto* lutPass = m_postProcess->GetLUTPass();
+						if (lutPass) {
+							lutPass->SetLUTWeights(
+								lutData.weight[0],
+								lutData.weight[1],
+								lutData.weight[2],
+								lutData.weight[3]
+							);
+						}
+					}
+
+					// 应用完整后处理流水线
+					m_postProcess->Apply(
+						m_hdrTempSRV,     // 场景纹理
+						bloomSRV,         // Bloom 纹理
+						depthSRV,         // 深度纹理 (用于 DOF)
+						luminanceSRV,     // Luminance (用于自动曝光)
+						maskSRV,          // Mask
+						outputRTV,        // 输出
+						mainDesc.Width,
+						mainDesc.Height,
+						config
+					);
+
+					D3DPERF_EndEvent();
+					return;
+				}
+			}
+
+			// ========== 旧版后处理 (ScopeHDR only) ==========
+			// 如果新管线失败或被禁用，回退到旧版本
+			if (!m_scopeHDR) {
+				m_scopeHDR = ScopeHDR::GetSingleton();
+				if (!m_scopeHDR->IsInitialized()) {
+					if (!m_scopeHDR->Initialize(m_device, m_context)) {
+						logger::error("ApplyCustomHDREffect: Failed to initialize ScopeHDR");
+						D3DPERF_EndEvent();
+						return;
+					}
+				}
+			}
+
+			// 配置 HDR 参数
+			//m_scopeHDR->SetSkipHDRTonemapping(false);
+			//m_scopeHDR->SetExposure(0);
+			//m_scopeHDR->SetExposureMultiplier(1.0f);
+			//m_scopeHDR->GetConstants().WhitePoint = 0.03f;
+
+			// 注意: LUT 纹理和混合权重现在由 ScopePostProcess -> LUTPass 处理
+			// 此处直接调用 m_scopeHDR 只进行 HDR tonemapping
+
 			m_scopeHDR->Apply(
-				m_hdrTempSRV,     // 场景纹理 (从 rt4 复制到临时纹理)
-				bloomSRV,         // Bloom (可选)
-				luminanceSRV,     // Luminance (用于自动曝光，如果 FixedExposure > 0 则忽略)
-				maskSRV,          // Mask (GameRT_24)
-				outputRTV         // 输出到 rt4
+				m_hdrTempSRV,
+				bloomSRV,
+				luminanceSRV,
+				maskSRV,
+				outputRTV
 			);
 
 		} catch (...) {
@@ -980,6 +1056,7 @@ namespace ThroughScope
 
 	void SecondPassRenderer::RestoreFirstPass()
 	{
+		D3DPERF_BeginEvent(0xFFF00000, L"SecondPassRenderer::RestoreFirstPass");
 		if (m_lightingSynced) {
 			// 恢复光源状态
 			m_lightBackup->RestoreLightStates();
@@ -1078,6 +1155,7 @@ namespace ThroughScope
 			nData.camera = m_originalCamera;
 			m_originalCamera->Update(nData);
 		}
+		D3DPERF_EndEvent();
 	}
 
 	void SecondPassRenderer::CleanupResources()

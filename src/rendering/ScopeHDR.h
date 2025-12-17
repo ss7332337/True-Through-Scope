@@ -38,14 +38,8 @@ namespace ThroughScope
         // 控制参数
         float BloomStrength;    // Bloom 强度 (默认 1.0)
         float FixedExposure;    // 固定曝光值 (> 0 则使用固定值，<= 0 使用自动曝光)
-        int   SkipHDRTonemapping; // 跳过 HDR tonemapping，只应用 Color Grading (默认 0 = false)
-        int   ApplyColorGrading;  // 是否应用 Color Grading/LUT (默认 1 = true)
-
-        // Color Grading / LUT 参数
-        float LUTBlendWeight0;  // LUT 0 混合权重 (cb2[1].x)
-        float LUTBlendWeight1;  // LUT 1 混合权重 (cb2[1].y)
-        float LUTBlendWeight2;  // LUT 2 混合权重 (cb2[1].z)
-        float LUTBlendWeight3;  // LUT 3 混合权重 (cb2[1].w)
+        int   SkipHDRTonemapping; // 跳过 HDR tonemapping (默认 0 = false)
+        int   _Padding4;        // 对齐填充
 
         // 默认构造函数
         ScopeHDRConstants()
@@ -56,10 +50,10 @@ namespace ThroughScope
             MiddleGray = 0.18f;
             WhitePoint = 0.03f;
 
-            Saturation = 1.0f;
+            Saturation = 1.2f;    // 增加饱和度补偿褪色
             _Padding1 = 0.0f;
             BlendIntensity = 1.0f;
-            Contrast = 1.0f;
+            Contrast = 1.3f;      // 增加对比度
 
             ColorTintR = 0.0f;
             ColorTintG = 0.0f;
@@ -68,19 +62,13 @@ namespace ThroughScope
 
             BloomUVScaleX = 1.0f;
             BloomUVScaleY = 1.0f;
-            ExposureMultiplier = 1.0f;  // 自动曝光乘数，<1 变暗，>1 变亮
+            ExposureMultiplier = 1.5f;  // 自动曝光乘数（调试：尝试穿透黑色遮罩）
             _Padding3 = 0.0f;
 
             BloomStrength = 1.0f;
-            FixedExposure = 1.0f;  // 固定曝光值，与主场景保持一致
-            SkipHDRTonemapping = 0; // 不跳过 HDR tonemapping，同时应用 HDR + Color Grading
-            ApplyColorGrading = 1;  // 默认启用 Color Grading
-
-            // LUT 混合权重 - 默认只使用第一个 LUT
-            LUTBlendWeight0 = 1.0f;
-            LUTBlendWeight1 = 0.0f;
-            LUTBlendWeight2 = 0.0f;
-            LUTBlendWeight3 = 0.0f;
+            FixedExposure = 0.0f;  // 使用自动曝光（从 LuminancePass 计算）
+            SkipHDRTonemapping = 0; // 启用 HDR tonemapping
+            _Padding4 = 0;
         }
     };
 
@@ -122,7 +110,6 @@ namespace ThroughScope
         void SetBloomStrength(float strength) { m_constants.BloomStrength = strength; }
         void SetSaturation(float saturation) { m_constants.Saturation = saturation; }
         void SetContrast(float contrast) { m_constants.Contrast = contrast; }
-        void SetColorGradingEnabled(bool enabled) { m_constants.ApplyColorGrading = enabled ? 1 : 0; }
         void SetSkipHDRTonemapping(bool skip) { m_constants.SkipHDRTonemapping = skip ? 1 : 0; }
         void SetColorTint(float r, float g, float b, float weight) {
             m_constants.ColorTintR = r;
@@ -130,16 +117,6 @@ namespace ThroughScope
             m_constants.ColorTintB = b;
             m_constants.ColorTintW = weight;
         }
-
-        // LUT 纹理设置 (静态资源，只需设置一次)
-        void SetLUTTextures(
-            ID3D11ShaderResourceView* lut0,
-            ID3D11ShaderResourceView* lut1,
-            ID3D11ShaderResourceView* lut2,
-            ID3D11ShaderResourceView* lut3
-        );
-        void SetLUTBlendWeights(float w0, float w1, float w2, float w3);
-        bool HasLUTTextures() const { return m_lutTexturesSet; }
 
         bool IsInitialized() const { return m_initialized; }
 
@@ -176,12 +153,6 @@ namespace ThroughScope
         // 状态
         ScopeHDRConstants m_constants;
         bool m_initialized = false;
-
-        // LUT 纹理 (3D textures for Color Grading)
-        // 这些是从游戏引擎捕获的静态资源
-        ID3D11ShaderResourceView* m_lutTextures[4] = { nullptr, nullptr, nullptr, nullptr };
-        ComPtr<ID3D11SamplerState> m_lutSampler;  // 3D 纹理采样器
-        bool m_lutTexturesSet = false;
 
         // 渲染状态 - 显式创建以确保正确应用
         ComPtr<ID3D11BlendState> m_noBlendState;          // 禁用混合

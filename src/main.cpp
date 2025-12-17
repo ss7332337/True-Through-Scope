@@ -27,7 +27,7 @@ using namespace RE::BSGraphics;
 
 #pragma region Pointer
 // 本地REL指针（不在GlobalTypes.h中）
-REL::Relocation<NiAVObject**> ptr_DrawWorld1stPerson{ REL::ID(1491228) };
+// ptr_DrawWorld1stPerson 已移至 ThroughScope 命名空间（见下方定义）
 REL::Relocation<bool*> ptr_DrawWorld_b1stPersonEnable{ REL::ID(922366) };
 REL::Relocation<bool*> ptr_DrawWorld_b1stPersonInWorld{ REL::ID(34473) };
 REL::Relocation<BSCullingGroup**> ptr_k1stPersonCullingGroup{ REL::ID(731482) };
@@ -82,6 +82,7 @@ REL::Relocation<RE::BSGeometryListCullingProcess**> ThroughScope::DrawWorldGeomL
 REL::Relocation<RE::BSCullingProcess**> ThroughScope::DrawWorldCullingProcess{ REL::ID(520184) };
 REL::Relocation<uint32_t*> ThroughScope::FPZPrePassDrawDataCount{ REL::ID(163482) };
 REL::Relocation<uint32_t*> ThroughScope::FPAlphaTestZPrePassDrawDataCount{ REL::ID(382658) };
+REL::Relocation<RE::NiAVObject**> ThroughScope::ptr_DrawWorld1stPerson{ REL::ID(1491228) };
 
 // 渲染状态管理器
 static ThroughScope::RenderStateManager* g_renderStateMgr = ThroughScope::RenderStateManager::GetSingleton();
@@ -302,6 +303,9 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 			logger::info("TrueThroughScope: Game data ready, initializing plugin");
 			ThroughScope::d3dHooks->Initialize();
 			InitializePlugin();
+
+			// 激光调试模式（已修复，默认关闭）
+			// ThroughScope::SetLaserInvestigationMode(true);
 		} else if (msg->type == F4SE::MessagingInterface::kPostLoadGame) {
 			logger::info("TrueThroughScope: Load a save, reset scope status");
 			ResetFirstSpawnState();

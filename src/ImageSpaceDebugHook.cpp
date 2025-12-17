@@ -18,6 +18,7 @@ namespace ThroughScope
     static FnImageSpaceEffect_Render g_MotionBlur_Render_Original = nullptr;
     static FnImageSpaceEffect_Render g_FullScreenBlur_Render_Original = nullptr;
     static FnImageSpaceEffect_Render g_PipboyScreen_Render_Original = nullptr;
+    static FnImageSpaceEffect_Render g_GetHit_Render_Original = nullptr;
 
     // Hook 函数 - HDR
     void __fastcall hkImageSpaceEffectHDR_Render(RE::ImageSpaceEffect* thisPtr, RE::BSTriShape* a_geometry, RE::ImageSpaceEffectParam* a_param)
@@ -80,6 +81,14 @@ namespace ThroughScope
         D3DPERF_EndEvent();
     }
 
+    // Hook 函数 - GetHit
+    void __fastcall hkImageSpaceEffectGetHit_Render(RE::ImageSpaceEffect* thisPtr, RE::BSTriShape* a_geometry, RE::ImageSpaceEffectParam* a_param)
+    {
+        D3DPERF_BeginEvent(0xFFFF8000, L"ImageSpaceEffect_GetHit");  // Orange
+        g_GetHit_Render_Original(thisPtr, a_geometry, a_param);
+        D3DPERF_EndEvent();
+    }
+
     // 注册 ImageSpace 调试 Hook - 使用 VTABLE hook
     void RegisterImageSpaceDebugHooks()
     {
@@ -108,6 +117,13 @@ namespace ThroughScope
             REL::Relocation<std::uintptr_t> vtable_BokehDOF(RE::ImageSpaceEffectBokehDepthOfField::VTABLE[0]);
             g_DOF_Render_Original = reinterpret_cast<FnImageSpaceEffect_Render>(vtable_BokehDOF.write_vfunc(1, &hkImageSpaceEffectDOF_Render));
             logger::info("  - Hooked ImageSpaceEffectBokehDepthOfField::Render");
+        }
+
+        // Hook ImageSpaceEffectGetHit::Render (VTABLE index 1)
+        {
+            REL::Relocation<std::uintptr_t> vtable_GetHit(RE::ImageSpaceEffectGetHit::VTABLE[0]);
+            g_GetHit_Render_Original = reinterpret_cast<FnImageSpaceEffect_Render>(vtable_GetHit.write_vfunc(1, &hkImageSpaceEffectGetHit_Render));
+            logger::info("  - Hooked ImageSpaceEffectGetHit::Render");
         }
 
         // ImageSpaceEffectTemporalAA::Render 已在 TAAHook.cpp 中 hook，添加调试标记

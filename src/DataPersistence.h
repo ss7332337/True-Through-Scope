@@ -45,10 +45,15 @@ namespace ThroughScope
 
 		struct ParallaxSettings
 		{
-			float relativeFogRadius = 0.5f;
-			float scopeSwayAmount = 0.5f;
-			float maxTravel = 0.5f;
-			float radius = 0.5f;
+			float parallaxStrength = 0.05f;        // 视差偏移强度
+			float parallaxSmoothing = 0.5f;        // 时域平滑
+			float exitPupilRadius = 0.45f;         // 出瞳半径
+			float exitPupilSoftness = 0.15f;       // 出瞳边缘柔和度
+			float vignetteStrength = 0.3f;         // 晕影强度
+			float vignetteRadius = 0.7f;           // 晕影起始半径
+			float vignetteSoftness = 0.3f;         // 晕影柔和度
+			float eyeReliefDistance = 0.5f;        // 眼距
+			bool  enableParallax = true;           // 启用视差
 		};
 
 		struct ScopeSettings

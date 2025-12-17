@@ -171,6 +171,7 @@ namespace ThroughScope
 		m_ModelSwitcherPanel = std::make_unique<ModelSwitcherPanel>(this);
 		m_ZoomDataPanel = std::make_unique<ZoomDataPanel>(this);
 		m_DebugPanel = std::make_unique<DebugPanel>(this);
+		m_PostProcessPanel = std::make_unique<PostProcessPanel>(this);
 		m_SettingsPanel = std::make_unique<SettingsPanel>(this);
 		m_ReticlePanel = std::make_unique<ReticlePanel>(this);
 
@@ -183,6 +184,8 @@ namespace ThroughScope
 			static_cast<BasePanelInterface*>(m_ZoomDataPanel.get())));
 		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
 			static_cast<BasePanelInterface*>(m_ReticlePanel.get())));
+		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
+			static_cast<BasePanelInterface*>(m_PostProcessPanel.get())));
 		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(
 			static_cast<BasePanelInterface*>(m_SettingsPanel.get())));
 		m_Panels.push_back(std::unique_ptr<BasePanelInterface>(

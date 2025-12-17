@@ -411,11 +411,19 @@ namespace ThroughScope
             {"camera.reset_confirm_desc", "This will restore default position, rotation, and scale values."},
             {"camera.yes_reset", "Yes, Reset"},
             
-            // 视差设置
-            {"camera.relative_fog_radius", "Relative Fog Radius"},
-            {"camera.scope_sway_amount", "Scope Sway Amount"},
-            {"camera.max_travel", "Max Travel"},
-            {"camera.parallax_radius", "Radius"},
+            // 新的视差设置
+            {"camera.enable_parallax", "Enable Parallax"},
+            {"camera.parallax_offset", "Parallax Offset Settings"},
+            {"camera.parallax_strength", "Parallax Strength"},
+            {"camera.parallax_smoothing", "Smoothing"},
+            {"camera.eye_relief", "Eye Relief"},
+            {"camera.exit_pupil", "Exit Pupil Settings"},
+            {"camera.exit_pupil_radius", "Exit Pupil Radius"},
+            {"camera.exit_pupil_softness", "Edge Softness"},
+            {"camera.vignette", "Vignette Settings"},
+            {"camera.vignette_strength", "Vignette Strength"},
+            {"camera.vignette_radius", "Vignette Radius"},
+            {"camera.vignette_softness", "Softness"},
             
             // 准星面板详细文本
             {"reticle.no_config", "No reticle configuration available"},
@@ -626,10 +634,18 @@ namespace ThroughScope
             {"status.TTSNodeReady_alt", "[OK] TTSNode Ready"},
             {"status.TTSNodeNotReady_alt", "[!] No TTSNode"},
 
-			{ "camera.relative_fog_radius", "Relative Fog Radius" },
-			{ "camera.scope_sway_amount", "Scope Sway Amount" },
-			{ "camera.max_travel", "Max Travel" },
-			{ "camera.parallax_radius", "Radius" },
+			{ "camera.enable_parallax", "Enable Parallax" },
+			{ "camera.parallax_offset", "Parallax Offset Settings" },
+			{ "camera.parallax_strength", "Parallax Strength" },
+			{ "camera.parallax_smoothing", "Smoothing" },
+			{ "camera.eye_relief", "Eye Relief" },
+			{ "camera.exit_pupil", "Exit Pupil Settings" },
+			{ "camera.exit_pupil_radius", "Exit Pupil Radius" },
+			{ "camera.exit_pupil_softness", "Edge Softness" },
+			{ "camera.vignette", "Vignette Settings" },
+			{ "camera.vignette_strength", "Vignette Strength" },
+			{ "camera.vignette_radius", "Vignette Radius" },
+			{ "camera.vignette_softness", "Softness" },
         };
 
         std::ofstream file(filePath);

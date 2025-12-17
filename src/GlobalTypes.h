@@ -55,4 +55,9 @@ namespace ThroughScope
 	extern REL::Relocation<RE::BSCullingProcess**> DrawWorldCullingProcess;
 	extern REL::Relocation<uint32_t*> FPZPrePassDrawDataCount;
 	extern REL::Relocation<uint32_t*> FPAlphaTestZPrePassDrawDataCount;
+	extern REL::Relocation<RE::NiAVObject**> ptr_DrawWorld1stPerson;
+
+	// 激光调查函数声明
+	void SetLaserInvestigationMode(bool enable);
+	bool IsLaserInvestigationEnabled();
 }

@@ -51,7 +51,6 @@ namespace ThroughScope
         m_constantBuffer.Reset();
         m_linearSampler.Reset();
         m_pointSampler.Reset();
-        m_lutSampler.Reset();
         m_defaultBloomTexture.Reset();
         m_defaultBloomSRV.Reset();
         m_defaultLuminanceTexture.Reset();
@@ -64,37 +63,7 @@ namespace ThroughScope
         m_noDepthState.Reset();
         m_rasterizerState.Reset();
 
-        // 清理 LUT 纹理引用 (不释放，因为是外部资源)
-        for (int i = 0; i < 4; ++i)
-        {
-            m_lutTextures[i] = nullptr;
-        }
-        m_lutTexturesSet = false;
-
         m_initialized = false;
-    }
-
-    void ScopeHDR::SetLUTTextures(
-        ID3D11ShaderResourceView* lut0,
-        ID3D11ShaderResourceView* lut1,
-        ID3D11ShaderResourceView* lut2,
-        ID3D11ShaderResourceView* lut3)
-    {
-        m_lutTextures[0] = lut0;
-        m_lutTextures[1] = lut1;
-        m_lutTextures[2] = lut2;
-        m_lutTextures[3] = lut3;
-
-        m_lutTexturesSet = (lut0 != nullptr) || (lut1 != nullptr) ||
-                          (lut2 != nullptr) || (lut3 != nullptr);
-    }
-
-    void ScopeHDR::SetLUTBlendWeights(float w0, float w1, float w2, float w3)
-    {
-        m_constants.LUTBlendWeight0 = w0;
-        m_constants.LUTBlendWeight1 = w1;
-        m_constants.LUTBlendWeight2 = w2;
-        m_constants.LUTBlendWeight3 = w3;
     }
 
     // 辅助函数: 从 .cso 或 .hlsl 文件加载 shader
@@ -238,25 +207,6 @@ namespace ThroughScope
         if (FAILED(hr))
         {
             logger::error("ScopeHDR: Failed to create point sampler");
-            return false;
-        }
-
-        // ========== LUT 采样器 (3D 纹理用) ==========
-        D3D11_SAMPLER_DESC lutSamplerDesc = {};
-        lutSamplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-        lutSamplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-        lutSamplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-        lutSamplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-        lutSamplerDesc.MipLODBias = 0.0f;
-        lutSamplerDesc.MaxAnisotropy = 1;
-        lutSamplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
-        lutSamplerDesc.MinLOD = 0;
-        lutSamplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-
-        hr = m_device->CreateSamplerState(&lutSamplerDesc, m_lutSampler.GetAddressOf());
-        if (FAILED(hr))
-        {
-            logger::error("ScopeHDR: Failed to create LUT sampler");
             return false;
         }
 
@@ -470,24 +420,14 @@ namespace ThroughScope
         };
         m_context->PSSetShaderResources(0, 4, srvs);
 
-        // 设置 LUT 纹理 (t4-t7)
-        ID3D11ShaderResourceView* lutSRVs[4] = {
-            m_lutTextures[0],
-            m_lutTextures[1],
-            m_lutTextures[2],
-            m_lutTextures[3]
-        };
-        m_context->PSSetShaderResources(4, 4, lutSRVs);
-
-        // 设置采样器
-        ID3D11SamplerState* samplers[5] = {
+        // 设置采样器 (t0: Bloom linear, t1: Scene linear, t2: Luminance point, t3: Mask point)
+        ID3D11SamplerState* samplers[4] = {
             m_linearSampler.Get(),
             m_linearSampler.Get(),
             m_pointSampler.Get(),
-            m_pointSampler.Get(),
-            m_lutSampler.Get()
+            m_pointSampler.Get()
         };
-        m_context->PSSetSamplers(0, 5, samplers);
+        m_context->PSSetSamplers(0, 4, samplers);
 
         // 设置输入装配 (无需顶点缓冲区，使用 SV_VertexID)
         m_context->IASetInputLayout(nullptr);
@@ -528,8 +468,8 @@ namespace ThroughScope
         if (savedRSState) savedRSState->Release();
 
         // 清理绑定
-        ID3D11ShaderResourceView* nullSRVsClear[8] = { nullptr };
-        m_context->PSSetShaderResources(0, 8, nullSRVsClear);
+        ID3D11ShaderResourceView* nullSRVsClear[4] = { nullptr };
+        m_context->PSSetShaderResources(0, 4, nullSRVsClear);
 
         D3DPERF_EndEvent();
     }

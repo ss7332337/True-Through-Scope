@@ -134,12 +134,21 @@ namespace ThroughScope
 	{
 		if (!config) return;
 
-		// 应用视差设置
+		// 应用视差设置 - 基本参数
 		D3DHooks::UpdateScopeParallaxSettings(
-			config->parallaxSettings.relativeFogRadius,
-			config->parallaxSettings.scopeSwayAmount,
-			config->parallaxSettings.maxTravel,
-			config->parallaxSettings.radius
+			config->parallaxSettings.parallaxStrength,
+			config->parallaxSettings.exitPupilRadius,
+			config->parallaxSettings.vignetteStrength,
+			config->parallaxSettings.vignetteRadius
+		);
+
+		// 应用视差设置 - 高级参数
+		D3DHooks::UpdateParallaxAdvancedSettings(
+			config->parallaxSettings.parallaxSmoothing,
+			config->parallaxSettings.exitPupilSoftness,
+			config->parallaxSettings.vignetteSoftness,
+			config->parallaxSettings.eyeReliefDistance,
+			config->parallaxSettings.enableParallax ? 1 : 0
 		);
 
 		// 应用夜视效果设置
@@ -171,10 +180,10 @@ namespace ThroughScope
 		// 设置摄像头FOV
 		ScopeCamera::SetFOVMinMax(config->scopeSettings.minFOV, config->scopeSettings.maxFOV);
 
-		logger::info("Applied scope settings - FOV: {}-{}, Parallax: relativeFogRadius={:.3f}, scopeSwayAmount={:.3f}, maxTravel={:.3f}, radius={:.3f}",
+		logger::info("Applied scope settings - FOV: {}-{}, Parallax: strength={:.3f}, exitPupil={:.3f}, vignette={:.3f}",
 			config->scopeSettings.minFOV, config->scopeSettings.maxFOV,
-			config->parallaxSettings.relativeFogRadius, config->parallaxSettings.scopeSwayAmount,
-			config->parallaxSettings.maxTravel, config->parallaxSettings.radius);
+			config->parallaxSettings.parallaxStrength, config->parallaxSettings.exitPupilRadius,
+			config->parallaxSettings.vignetteStrength);
 	}
 
 	void ScopeCamera::ApplyScopeTransform(RE::NiNode* scopeNode, const DataPersistence::CameraAdjustments& adjustments)

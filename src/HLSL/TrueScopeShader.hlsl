@@ -30,15 +30,21 @@ cbuffer ScopeConstants : register(b0)
     float3 lastScopePosition;
     float padding5; // 16-byte alignment
 
-    float parallax_relativeFogRadius;
-    float parallax_scopeSwayAmount;
-    float parallax_maxTravel;
-    float parallax_Radius;
-    
+    // 新的视差参数 - 基于真实瞄镜光学原理
+    float parallaxStrength;         // 视差偏移强度 (建议 0.02-0.08)
+    float parallaxSmoothing;        // 视差时域平滑系数 (0.0-1.0, 越大越平滑)
+    float exitPupilRadius;          // 出瞳半径 - 眼睛可视范围 (0.3-0.6)
+    float exitPupilSoftness;        // 出瞳边缘柔和度 (0.1-0.3)
+
+    float vignetteStrength;         // 边缘晕影强度 (0.0-1.0)
+    float vignetteRadius;           // 晕影起始半径 (0.5-0.9)
+    float vignetteSoftness;         // 晕影过渡柔和度 (0.1-0.5)
+    float eyeReliefDistance;        // 眼距模拟 - 影响视差灵敏度
+
     float reticleScale;
     float reticleOffsetX;
     float reticleOffsetY;
-    float padding6;
+    int enableParallax;             // 是否启用视差效果
 
     float4x4 CameraRotation;
 
@@ -77,24 +83,153 @@ struct PS_INPUT
     //float4 fogColor : COLOR1;
 };
 
-float2 clampMagnitude(float2 v, float l)
+// ============================================================================
+// 新的科学视差系统 - 基于真实瞄镜光学原理
+// ============================================================================
+
+// 安全的向量归一化（避免除零）
+float2 safeNormalize(float2 v)
 {
-    return normalize(v) * min(length(v), l);
+    float len = length(v);
+    return len > 0.0001 ? v / len : float2(0, 0);
 }
 
-float getparallax(float d, float2 ds, float dfov)
+// 限制向量长度
+float2 clampLength(float2 v, float maxLen)
 {
-    // 改进的视差计算：更稳定的角度依赖性
-    float radiusFactor = max(parallax_Radius * ds.y, 0.001); // 避免除零
-    float distanceFactor = parallax_relativeFogRadius * d * ds.y;
-
-    // 使用更稳定的指数函数，减少极端值
-    float exponent = clamp(parallax_scopeSwayAmount, 0.1, 2.0); // 限制指数范围
-    float parallaxValue = 1.0 - pow(abs(distanceFactor / radiusFactor), exponent);
-
-    // 确保输出在合理范围内，避免完全黑暗
-    return clamp(parallaxValue, 0.1, max(parallax_maxTravel, 0.3));
+    float len = length(v);
+    return len > maxLen ? v * (maxLen / len) : v;
 }
+
+// 计算眼睛相对于瞄镜光轴的偏移
+// 返回归一化的2D偏移量，表示眼睛在垂直于瞄镜光轴平面上的位置
+float2 calculateEyeOffset(float3 camPos, float3 scopePos, float3 lastCamPos, float3 lastScopePos, float4x4 camRot)
+{
+    // 计算当前和上一帧的瞄镜方向
+    float3 currentDir = scopePos - camPos;
+    float3 lastDir = lastScopePos - lastCamPos;
+
+    // 安全归一化
+    float currentLen = length(currentDir);
+    float lastLen = length(lastDir);
+
+    if (currentLen < 0.001 || lastLen < 0.001) {
+        return float2(0, 0);
+    }
+
+    currentDir /= currentLen;
+    lastDir /= lastLen;
+
+    // 计算方向变化（表示眼睛相对移动）
+    float3 deltaDir = currentDir - lastDir;
+
+    // 转换到相机局部坐标系
+    float4 localDelta = mul(float4(deltaDir, 0), camRot);
+
+    return localDelta.xy;
+}
+
+// 视差纹理偏移计算
+// 当眼睛偏移时，瞄镜内看到的画面应该向相反方向移动
+float2 calculateParallaxOffset(float2 eyeOffset, float strength, float eyeRelief)
+{
+    // 眼距影响：距离越远，视差效果越明显
+    float reliefFactor = 1.0 + eyeRelief * 0.5;
+
+    // 视差偏移方向与眼睛移动方向相反
+    return -eyeOffset * strength * reliefFactor;
+}
+
+// 出瞳效应计算
+// 真实瞄镜有一个"出瞳"区域，眼睛必须在此区域内才能看到完整画面
+// 当眼睛偏离出瞳中心时，边缘会逐渐变黑
+float calculateExitPupilMask(float2 uv, float2 parallaxOffset, float radius, float softness)
+{
+    // 出瞳中心会随着眼睛偏移而移动
+    float2 pupilCenter = float2(0.5, 0.5) - parallaxOffset * 0.5;
+
+    // 计算到出瞳中心的距离（应用宽高比校正，确保是圆形而非椭圆形）
+    float2 centered = uv - pupilCenter;
+    centered.x *= screenWidth / screenHeight;  // 宽高比校正
+    float dist = length(centered);
+
+    // 创建平滑的出瞳遮罩
+    // 在 radius 范围内完全可见，超出后逐渐变暗
+    float innerEdge = radius - softness;
+    float outerEdge = radius + softness;
+
+    return 1.0 - smoothstep(innerEdge, outerEdge, dist);
+}
+
+// 边缘晕影效果
+// 模拟真实光学系统的自然暗角
+float calculateVignette(float2 uv, float strength, float radius, float softness)
+{
+    // 计算到中心的距离（应用宽高比校正，确保是圆形而非椭圆形）
+    float2 centered = uv - float2(0.5, 0.5);
+    centered.x *= screenWidth / screenHeight;  // 宽高比校正
+    float dist = length(centered);
+
+    // 平滑的晕影过渡
+    float vignette = smoothstep(radius - softness, radius + softness, dist);
+
+    // 返回亮度系数（1.0 = 完全明亮，越小越暗）
+    return 1.0 - vignette * strength;
+}
+
+// 组合所有视差效果
+struct ParallaxResult
+{
+    float2 textureOffset;   // 纹理采样偏移
+    float  brightnessMask;  // 亮度遮罩 (出瞳 + 晕影)
+    float2 reticleOffset;   // 准星偏移
+};
+
+ParallaxResult computeParallax(
+    float2 uv,
+    float2 eyeOffset,
+    float strength,
+    float eyeRelief,
+    float exitPupilRadius,
+    float exitPupilSoftness,
+    float vignetteStrength,
+    float vignetteRadius,
+    float vignetteSoftness,
+    int enabled)
+{
+    ParallaxResult result;
+    result.textureOffset = float2(0, 0);
+    result.brightnessMask = 1.0;
+    result.reticleOffset = float2(0, 0);
+
+    if (enabled == 0) {
+        // 仅应用晕影（即使视差禁用）
+        result.brightnessMask = calculateVignette(uv, vignetteStrength, vignetteRadius, vignetteSoftness);
+        return result;
+    }
+
+    // 限制眼睛偏移量，防止极端值
+    float2 clampedEyeOffset = clampLength(eyeOffset, 0.5);
+
+    // 计算视差纹理偏移
+    result.textureOffset = calculateParallaxOffset(clampedEyeOffset, strength, eyeRelief);
+
+    // 计算出瞳遮罩
+    float exitPupilMask = calculateExitPupilMask(uv, result.textureOffset, exitPupilRadius, exitPupilSoftness);
+
+    // 计算边缘晕影
+    float vignetteMask = calculateVignette(uv, vignetteStrength, vignetteRadius, vignetteSoftness);
+
+    // 组合亮度遮罩（乘法混合）
+    result.brightnessMask = exitPupilMask * vignetteMask;
+
+    // 准星偏移应该与纹理偏移方向相同但幅度更小（模拟准星在不同焦平面）
+    result.reticleOffset = result.textureOffset * 0.3;
+
+    return result;
+}
+
+// ============================================================================
 
 float2 aspect_ratio_correction(float2 tc)
 {
@@ -319,71 +454,97 @@ float4 sampleWithSphericalDistortionAndChromatic(Texture2D tex, SamplerState sam
 float4 main(PS_INPUT input) : SV_TARGET
 {
     float2 texCoord = input.position.xy / float2(screenWidth, screenHeight);
-
     float2 aspectCorrectTex = aspect_ratio_correction(texCoord);
 
-    // 改进的视角计算：使用标准化的方向向量
-    float3 virDir = normalize(scopePosition - cameraPosition);
-    float3 lastVirDir = normalize(lastScopePosition - lastCameraPosition);
-    float3 eyeDirectionLerp = virDir - lastVirDir;
+    // ========================================================================
+    // 新的视差系统
+    // ========================================================================
 
-    // 应用相机旋转变换
-    float4 abseyeDirectionLerp = mul(float4(eyeDirectionLerp, 0), CameraRotation); // 使用0作为w分量，因为这是方向向量
+    // 计算眼睛相对于瞄镜的偏移
+    float2 eyeOffset = calculateEyeOffset(
+        cameraPosition, scopePosition,
+        lastCameraPosition, lastScopePosition,
+        CameraRotation
+    );
 
-    // 更平滑的边界处理，避免突变
-    float epsilon = 0.001;
-    abseyeDirectionLerp.y = sign(abseyeDirectionLerp.y) * max(abs(abseyeDirectionLerp.y), epsilon);
+    // 计算完整的视差效果
+    ParallaxResult parallax = computeParallax(
+        texCoord,
+        eyeOffset,
+        parallaxStrength,
+        eyeReliefDistance,
+        exitPupilRadius,
+        exitPupilSoftness,
+        vignetteStrength,
+        vignetteRadius,
+        vignetteSoftness,
+        enableParallax
+    );
 
-    // 无分支球形畸变效果应用
-    // 使用step函数创建选择掩码
+    // 应用视差偏移到纹理坐标
+    float2 parallaxedTexCoord = texCoord + parallax.textureOffset;
+
+    // 确保采样坐标在有效范围内
+    parallaxedTexCoord = saturate(parallaxedTexCoord);
+
+    // ========================================================================
+    // 球形畸变效果
+    // ========================================================================
+
     float useDistortion = step(0.5, float(enableSphericalDistortion));
     float useChromatic = step(0.5, float(enableChromaticAberration));
-    
-    // 预先计算基础畸变坐标
-    float2 distortedTexCoord = lerp(texCoord, applySphericalDistortion(texCoord), useDistortion);
-    
-    // 根据设置选择采样方法
+
+    // 在视差偏移后的坐标上应用畸变
+    float2 distortedTexCoord = lerp(parallaxedTexCoord, applySphericalDistortion(parallaxedTexCoord), useDistortion);
+
     float useChromaticSampling = useDistortion * useChromatic;
-    
-    // 基础采样（原始或基础畸变）
+
+    // 采样场景纹理
     float4 basicColor = scopeTexture.Sample(scopeSampler, distortedTexCoord);
-    
-    // 色散采样（仅当需要时）
-    float4 chromaticColor = lerp(basicColor, 
-                                sampleWithSphericalDistortionAndChromatic(scopeTexture, scopeSampler, texCoord), 
+
+    float4 chromaticColor = lerp(basicColor,
+                                sampleWithSphericalDistortionAndChromatic(scopeTexture, scopeSampler, parallaxedTexCoord),
                                 useChromaticSampling);
-    
+
     float4 color = chromaticColor;
-    //color *= 100;
 
-    float2 eye_velocity = clampMagnitude(abseyeDirectionLerp.xy, 1.5f);
+    // ========================================================================
+    // 准星处理 - 考虑视差偏移
+    // ========================================================================
 
-    float2 parallax_offset = float2(0.5 + eye_velocity.x, 0.5 - eye_velocity.y);
-    float distToParallax = distance(aspectCorrectTex, parallax_offset);
-    float2 scope_center = float2(0.5, 0.5);
-    float distToCenter = distance(aspectCorrectTex, scope_center);
-
-    float parallaxValue = (step(distToCenter, 2) * getparallax(distToParallax, float2(1, 1), 1));
-    
-    float2 reticleTexCoord = transform_reticle_coords(aspectCorrectTex);
+    // 准星坐标也应用视差偏移（但幅度较小）
+    float2 reticleAspectTex = aspect_ratio_correction(texCoord + parallax.reticleOffset);
+    float2 reticleTexCoord = transform_reticle_coords(reticleAspectTex);
     reticleTexCoord = float2(1.0 - reticleTexCoord.x, reticleTexCoord.y);
     float4 reticleColor = reticleTexture.Sample(scopeSampler, reticleTexCoord);
-    
-    // 计算夜视和热成像效果（无分支）
+
+    // ========================================================================
+    // 特殊视觉效果
+    // ========================================================================
+
+    // 计算夜视和热成像效果
     float4 nightVisionColor = applyNightVision(color, texCoord);
     float4 thermalColor = applyThermal(color, texCoord);
-    
-    // 使用lerp进行无分支混合，enableXXX作为混合因子
+
     color = lerp(color, nightVisionColor, float(enableNightVision));
     color = lerp(color, thermalColor, float(enableThermalVision));
-    
+
+    // ========================================================================
+    // 最终合成
+    // ========================================================================
+
+    // 叠加准星（准星不受亮度遮罩影响）
+    float3 finalColor = color.rgb;
+
+    // 应用视差亮度遮罩（出瞳效应 + 晕影）
+    // 只影响场景，不影响准星
+    finalColor *= parallax.brightnessMask;
+
     // 叠加准星
-    color = reticleColor * reticleColor.a + color * (1 - reticleColor.a);
+    finalColor = lerp(finalColor, reticleColor.rgb, reticleColor.a);
 
-    // 改进的视差效果：避免完全消除光照
-    // 使用更柔和的混合，确保光照反射在所有角度下都可见
-    float softParallax = lerp(0.3, 1.0, parallaxValue); // 最小保持30%的光照
-    color.rgb *= softParallax;
+    // 亮度增强（可选，用于补偿整体变暗）
+    finalColor *= max(brightnessBoost, 1.0);
 
-    return color;
+    return float4(finalColor, color.a);
 }

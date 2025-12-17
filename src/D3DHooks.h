@@ -130,15 +130,21 @@ namespace ThroughScope {
 			float lastScopePosition[3];
 			float padding5;  // 16字节对齐
 
-			float parallax_relativeFogRadius;
-			float parallax_scopeSwayAmount;
-			float parallax_maxTravel;
-			float parallax_Radius;
+			// 新的视差参数 - 基于真实瞄镜光学原理
+			float parallaxStrength;         // 视差偏移强度 (建议 0.02-0.08)
+			float parallaxSmoothing;        // 视差时域平滑系数 (0.0-1.0)
+			float exitPupilRadius;          // 出瞳半径 (0.3-0.6)
+			float exitPupilSoftness;        // 出瞳边缘柔和度 (0.1-0.3)
 
-			float reticleScale;    // 瞄准镜缩放
-			float reticleOffsetX;  // X轴偏移
-			float reticleOffsetY;  // Y轴偏移
-			float reticlePadding;  // 16字节对齐
+			float vignetteStrength;         // 边缘晕影强度 (0.0-1.0)
+			float vignetteRadius;           // 晕影起始半径 (0.5-0.9)
+			float vignetteSoftness;         // 晕影过渡柔和度 (0.1-0.5)
+			float eyeReliefDistance;        // 眼距模拟
+
+			float reticleScale;             // 瞄准镜缩放
+			float reticleOffsetX;           // X轴偏移
+			float reticleOffsetY;           // Y轴偏移
+			int   enableParallax;           // 是否启用视差效果
 
 			XMFLOAT4X4 CameraRotation = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
@@ -250,7 +256,8 @@ namespace ThroughScope {
 		static bool IsEnableRender() { return s_EnableRender; }
 		static void SetEnableRender(bool value) { s_EnableRender = value; }
 
-		static void UpdateScopeParallaxSettings(float relativeFogRadius, float scopeSwayAmount, float maxTravel, float radius);
+		static void UpdateScopeParallaxSettings(float parallaxStrength, float exitPupilRadius, float vignetteStrength, float vignetteRadius);
+		static void UpdateParallaxAdvancedSettings(float smoothing, float exitPupilSoftness, float vignetteSoftness, float eyeRelief, int enableParallax);
 		static void UpdateNightVisionSettings(float intensity, float noiseScale, float noiseAmount, float greenTint);
 		static void UpdateThermalVisionSettings(float intensity, float threshold, float contrast, float noiseAmount);
 		static void UpdateSphericalDistortionSettings(float strength, float radius, float centerX, float centerY);
@@ -298,6 +305,31 @@ namespace ThroughScope {
 		static float GetSphericalDistortionCenterY() { return s_SphericalDistortionCenterY; }
 		static bool GetEnableSphericalDistortion() { return s_EnableSphericalDistortion != 0; }
 		static bool GetEnableChromaticAberration() { return s_EnableChromaticAberration != 0; }
+
+		// 视差参数的Getter和Setter函数
+		static float GetParallaxStrength() { return s_ParallaxStrength; }
+		static float GetParallaxSmoothing() { return s_ParallaxSmoothing; }
+		static float GetExitPupilRadius() { return s_ExitPupilRadius; }
+		static float GetExitPupilSoftness() { return s_ExitPupilSoftness; }
+		static float GetVignetteStrength() { return s_VignetteStrength; }
+		static float GetVignetteRadius() { return s_VignetteRadius; }
+		static float GetVignetteSoftness() { return s_VignetteSoftness; }
+		static float GetEyeReliefDistance() { return s_EyeReliefDistance; }
+		static bool  GetEnableParallax() { return s_EnableParallax != 0; }
+
+		static void SetParallaxStrength(float v) { s_ParallaxStrength = std::clamp(v, 0.0f, 0.2f); }
+		static void SetParallaxSmoothing(float v) { s_ParallaxSmoothing = std::clamp(v, 0.0f, 1.0f); }
+		static void SetExitPupilRadius(float v) { s_ExitPupilRadius = std::clamp(v, 0.2f, 0.8f); }
+		static void SetExitPupilSoftness(float v) { s_ExitPupilSoftness = std::clamp(v, 0.05f, 0.5f); }
+		static void SetVignetteStrength(float v) { s_VignetteStrength = std::clamp(v, 0.0f, 1.0f); }
+		static void SetVignetteRadius(float v) { s_VignetteRadius = std::clamp(v, 0.3f, 1.0f); }
+		static void SetVignetteSoftness(float v) { s_VignetteSoftness = std::clamp(v, 0.05f, 0.5f); }
+		static void SetEyeReliefDistance(float v) { s_EyeReliefDistance = std::clamp(v, 0.0f, 2.0f); }
+		static void SetEnableParallax(bool enable) {
+			s_EnableParallax = enable ? 1 : 0;
+			s_CachedConstantBufferData.screenWidth = -1.0f; // 强制更新
+		}
+
 		static bool isSelfDrawCall;
 
 		// LUT纹理捕获相关
@@ -305,13 +337,9 @@ namespace ThroughScope {
 		static ID3D11ShaderResourceView* GetCapturedLUT(int index) { 
 			return (index >= 0 && index < 4) ? s_CapturedLUTs[index].Get() : nullptr; 
 		}
-		static float GetLUTWeight(int index) { 
-			return (index >= 0 && index < 4) ? s_LUTWeights[index] : 0.0f; 
+		static float GetLUTWeight(int index) {
+			return (index >= 0 && index < 4) ? s_LUTWeights[index] : 0.0f;
 		}
-
-		// 全屏三角形渲染相关
-		static void RenderImageSpaceEffect(ID3D11DeviceContext* context);
-		static bool InitializeImageSpaceEffectResources(ID3D11Device* device);
 
 	private:
 		struct BufferInfo
@@ -337,10 +365,16 @@ namespace ThroughScope {
 		static bool s_HasCachedState;
 		static CachedScopeConstantBuffer s_CachedConstantBufferData; // 缓存的常量缓冲区数据
 	private:
-		static float s_CurrentRelativeFogRadius;
-		static float s_CurrentScopeSwayAmount;
-		static float s_CurrentMaxTravel;
-		static float s_CurrentRadius;
+		// 新的视差参数
+		static float s_ParallaxStrength;
+		static float s_ParallaxSmoothing;
+		static float s_ExitPupilRadius;
+		static float s_ExitPupilSoftness;
+		static float s_VignetteStrength;
+		static float s_VignetteRadius;
+		static float s_VignetteSoftness;
+		static float s_EyeReliefDistance;
+		static int   s_EnableParallax;
 		static float s_ReticleScale;
 		static float s_ReticleOffsetX;
 		static float s_ReticleOffsetY;
@@ -393,21 +427,6 @@ namespace ThroughScope {
 		// LUT纹理捕获相关
 		static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> s_CapturedLUTs[4];  // 存储4个LUT纹理
 		static float s_LUTWeights[4];  // 存储4个LUT的权重
-
-		// 全屏三角形渲染资源
-		static Microsoft::WRL::ComPtr<ID3D11VertexShader> s_ImageSpaceEffectVS;
-		static Microsoft::WRL::ComPtr<ID3D11PixelShader> s_ImageSpaceEffectPS;
-		static Microsoft::WRL::ComPtr<ID3D11RasterizerState> s_ImageSpaceEffectRS;
-		static Microsoft::WRL::ComPtr<ID3D11DepthStencilState> s_ImageSpaceEffectDSS;
-		static Microsoft::WRL::ComPtr<ID3D11SamplerState> s_ImageSpaceEffectSamplers[4];
-		
-		// 全屏三角形输出的RenderTarget
-		static Microsoft::WRL::ComPtr<ID3D11Texture2D> s_ImageSpaceEffectOutputTexture;
-		static Microsoft::WRL::ComPtr<ID3D11RenderTargetView> s_ImageSpaceEffectOutputRTV;
-		static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> s_ImageSpaceEffectOutputSRV;
-		
-		// 全屏三角形常量缓冲区
-		static Microsoft::WRL::ComPtr<ID3D11Buffer> s_ImageSpaceEffectConstantBuffer;
 
 	public:
 		static void SetForwardStage(bool isForward) { s_isForwardStage = isForward; }

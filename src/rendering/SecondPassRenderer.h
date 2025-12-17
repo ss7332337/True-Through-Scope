@@ -7,6 +7,8 @@
 #include "LightBackupSystem.h"
 #include "RenderStateManager.h"
 #include "ScopeHDR.h"
+#include "ScopePostProcess.h"
+#include "LuminancePass.h"
 
 namespace ThroughScope
 {
@@ -95,7 +97,9 @@ namespace ThroughScope
         ID3D11ShaderResourceView* m_thermalSRV = nullptr;
         
         // ========== HDR 资源 ==========
-        ScopeHDR* m_scopeHDR = nullptr;                   // 自定义 HDR 效果
+        ScopeHDR* m_scopeHDR = nullptr;                   // 自定义 HDR 效果（旧版）
+        ScopePostProcess* m_postProcess = nullptr;        // 新版后处理管线
+        LuminancePass* m_luminancePass = nullptr;         // 独立亮度计算
         ID3D11Texture2D* m_hdrTempTexture = nullptr;      // t1 替换：Scope 场景纹理
         ID3D11ShaderResourceView* m_hdrTempSRV = nullptr;
         

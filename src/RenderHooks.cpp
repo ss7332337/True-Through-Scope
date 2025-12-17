@@ -6,6 +6,7 @@
 #include "ScopeCamera.h"
 #include "Utilities.h"
 #include "rendering/LightBackupSystem.h"
+#include <d3d9.h>  // for D3DPERF_BeginEvent / D3DPERF_EndEvent
 #include <DirectXMath.h>
 #include <chrono>
 #include <cmath>
@@ -20,6 +21,100 @@ namespace ThroughScope
 
 	static HookManager* g_hookMgr = HookManager::GetSingleton();
 	static LightBackupSystem* g_lightBackup = LightBackupSystem::GetSingleton();
+
+	// ========== 调试模式配置 ==========
+	static bool g_DebugLaserInvestigation = false;
+	static bool g_HasLoggedLaserInfo = false;
+	static int g_LaserLogFrameCount = 0;
+	constexpr int LASER_LOG_FRAMES = 3;
+
+	// ========== 激光节点识别 ==========
+
+	/**
+	 * @brief 检查节点名称是否为激光相关节点
+	 * @param name 节点名称
+	 * @return 如果是激光节点返回 true
+	 *
+	 * 识别规则：名称包含 Laser/laser/Beam/beam/Dot
+	 */
+	inline bool IsLaserNodeName(const char* name)
+	{
+		if (!name || name[0] == '\0') return false;
+		return (strstr(name, "Laser") != nullptr) ||
+		       (strstr(name, "laser") != nullptr) ||
+		       (strstr(name, "Beam") != nullptr) ||
+		       (strstr(name, "beam") != nullptr) ||
+		       (strstr(name, "Dot") != nullptr);
+	}
+
+	/**
+	 * @brief 用于临时分离的节点信息
+	 */
+	struct DetachedNodeInfo {
+		NiAVObject* node;
+		NiNode* parent;
+	};
+
+	/**
+	 * @brief 递归收集需要分离的非激光几何体
+	 * @param node 当前节点
+	 * @param parentNode 父节点
+	 * @param depth 当前深度
+	 * @param outDetached 输出：需要分离的节点列表
+	 * @param outLaserCount 输出：找到的激光节点数量
+	 */
+	void CollectNonLaserGeometries(
+		NiAVObject* node,
+		NiNode* parentNode,
+		int depth,
+		std::vector<DetachedNodeInfo>& outDetached,
+		int& outLaserCount)
+	{
+		if (!node || depth > 20) return;
+
+		const char* name = node->name.c_str();
+		bool isLaser = IsLaserNodeName(name);
+
+		if (isLaser) {
+			outLaserCount++;
+			if (g_DebugLaserInvestigation && g_LaserLogFrameCount < LASER_LOG_FRAMES) {
+				logger::info("[Laser] Found: {} (depth: {})", name, depth);
+			}
+		} else {
+			// 非激光几何体需要分离
+			auto geom = node->IsGeometry();
+			if (geom && parentNode) {
+				outDetached.push_back({ node, parentNode });
+			}
+		}
+
+		// 递归处理子节点
+		auto niNode = node->IsNode();
+		if (niNode) {
+			for (auto& child : niNode->children) {
+				if (child.get()) {
+					CollectNonLaserGeometries(child.get(), niNode, depth + 1, outDetached, outLaserCount);
+				}
+			}
+		}
+	}
+
+	// ========== 调试日志函数 ==========
+
+	void SetLaserInvestigationMode(bool enable)
+	{
+		g_DebugLaserInvestigation = enable;
+		g_HasLoggedLaserInfo = false;
+		g_LaserLogFrameCount = 0;
+		if (enable) {
+			logger::info("[Laser] Investigation mode ENABLED");
+		}
+	}
+
+	bool IsLaserInvestigationEnabled()
+	{
+		return g_DebugLaserInvestigation;
+	}
 
 	// 前向声明，实际定义在main.cpp中
 	namespace FirstSpawnDelay
@@ -73,15 +168,18 @@ namespace ThroughScope
 		const NiBound* aBound,
 		const unsigned int aFlags)
 	{
+		D3DPERF_BeginEvent(0xffffffff, L"BSCullingGroup_Add");
 		// 验证thisPtr
 		if (!thisPtr) {
 			logger::error("BSCullingGroup thisPtr is null");
+			D3DPERF_EndEvent();
 			return;
 		}
 
 		// 验证apObj
 		if (!IsValidObject(apObj)) {
 			logger::error("Invalid object: 0x{:X}", (uintptr_t)apObj);
+			D3DPERF_EndEvent();
 			return;
 		}
 
@@ -89,40 +187,50 @@ namespace ThroughScope
 		if (!IsValidPointer(aBound)) {
 			const char* objName = (apObj && apObj->name.c_str()) ? apObj->name.c_str() : "unknown";
 			logger::error("NiBound is invalid for object: {} (ptr: 0x{:X})", objName, reinterpret_cast<uintptr_t>(aBound));
+			D3DPERF_EndEvent();
 			return;
 		}
 
-		// 在第二次渲染期间，对某些特殊对象进行过滤
+		// 在瞄具渲染期间，跳过天气对象
 		if (ScopeCamera::IsRenderingForScope()) {
-			// 跳过天气相关对象，避免在瞄准镜场景中渲染
-			if (apObj->name.c_str() && strstr(apObj->name.c_str(), "Weather")) {
+			const char* objName = apObj->name.c_str();
+			if (objName && strstr(objName, "Weather")) {
+				D3DPERF_EndEvent();
 				return;
+			}
+
+			// 激光调查日志
+			if (g_DebugLaserInvestigation && g_LaserLogFrameCount < LASER_LOG_FRAMES) {
+				if (objName && (strstr(objName, "Laser") || strstr(objName, "Beam"))) {
+					logger::info("[LaserInvestigate] BSCullingGroup::Add laser: {}", objName);
+				}
 			}
 		}
 
-		// 使用异常保护调用原始函数，防止内部崩溃
-		__try {
-			g_hookMgr->g_BSCullingGroupAdd(thisPtr, apObj, aBound, aFlags);
-		} __except (EXCEPTION_EXECUTE_HANDLER) {
-			const char* objName = (apObj && apObj->name.c_str()) ? apObj->name.c_str() : "unknown";
-			logger::error("Exception in BSCullingGroupAdd for object: {} (flags: 0x{:X})", objName, aFlags);
-		}
+		g_hookMgr->g_BSCullingGroupAdd(thisPtr, apObj, aBound, aFlags);
+		D3DPERF_EndEvent();
 	}
 
 	void hkDrawTriShape(BSGraphics::Renderer* thisPtr, BSGraphics::TriShape* apTriShape, unsigned int auiStartIndex, unsigned int auiNumTriangles)
 	{
+		D3DPERF_BeginEvent(0xffffffff, L"DrawTriShape");
 		auto trishape = reinterpret_cast<BSTriShape*>(apTriShape);
 
-		if (trishape->numTriangles == 32 && trishape->numVertices == 33)
+		if (trishape->numTriangles == 32 && trishape->numVertices == 33) {
+			D3DPERF_EndEvent();
 			return;
+		}
 
 		g_hookMgr->g_DrawTriShape(thisPtr, apTriShape, auiStartIndex, auiNumTriangles);
+		D3DPERF_EndEvent();
 	}
 
 	void hkBSStreamLoad(BSStream* stream, const char* apFileName, NiBinaryStream* apStream)
 	{
+		D3DPERF_BeginEvent(0xffffffff, L"BSStream_Load");
 		logger::info("apFileName: {}", apFileName);
 		g_hookMgr->g_BSStreamLoad(stream, apFileName, apStream);
+		D3DPERF_EndEvent();
 	}
 
 	void __fastcall hkRender_PreUI(uint64_t ptr_drawWorld)
@@ -135,14 +243,20 @@ namespace ThroughScope
 			if (playerCamera) {
 				g_MainCameraFOV = playerCamera->firstPersonFOV;
 			}
+			// 第一次渲染（主相机）
+			D3DPERF_BeginEvent(0xFF00FF00, L"TrueThroughScope_FirstPass");
+			g_hookMgr->g_RenderPreUIOriginal(ptr_drawWorld);
+			D3DPERF_EndEvent();
+		} else {
+			// 第二次渲染（瞄具相机）- 在 SecondPassRenderer 中已有标记
+			g_hookMgr->g_RenderPreUIOriginal(ptr_drawWorld);
 		}
-
-		D3DEventNode(g_hookMgr->g_RenderPreUIOriginal(ptr_drawWorld), L"Render_PreUI");
 	}
 
 	void __fastcall hkRenderZPrePass(BSGraphics::RendererShadowState* rshadowState, BSGraphics::ZPrePassDrawData* aZPreData,
 		unsigned __int64* aVertexDesc, unsigned __int16* aCullmode, unsigned __int16* aDepthBiasMode)
 	{
+		D3DPERF_BeginEvent(0xffffffff, L"Render_ZPrePass");
 		if (ScopeCamera::IsRenderingForScope()) {
 			__try {
 				g_hookMgr->g_RenderZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode);
@@ -152,6 +266,7 @@ namespace ThroughScope
 		} else {
 			g_hookMgr->g_RenderZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode);
 		}
+		D3DPERF_EndEvent();
 	}
 
 	void __fastcall hkRenderAlphaTestZPrePass(BSGraphics::RendererShadowState* rshadowState,
@@ -161,6 +276,7 @@ namespace ThroughScope
 		unsigned __int16* aDepthBiasMode,
 		ID3D11SamplerState** aCurSamplerState)
 	{
+		D3DPERF_BeginEvent(0xffffffff, L"Render_AlphaTestZPrePass");
 		// 仅在瞄具渲染期间验证 pTriShape 有效性
 		if (ScopeCamera::IsRenderingForScope()) {
 			__try {
@@ -171,6 +287,7 @@ namespace ThroughScope
 		} else {
 			g_hookMgr->g_RenderZPrePassOriginal(rshadowState, aZPreData, aVertexDesc, aCullmode, aDepthBiasMode);
 		}
+		D3DPERF_EndEvent();
 	}
 
 	void __fastcall hkRenderer_DoZPrePass(uint64_t thisPtr, NiCamera* apFirstPersonCamera, NiCamera* apWorldCamera, float afFPNear, float afFPFar, float afNear, float afFar)
@@ -182,17 +299,83 @@ namespace ThroughScope
 		D3DEventNode(g_hookMgr->g_pDoZPrePassOriginal(thisPtr, apFirstPersonCamera, apWorldCamera, afFPNear, afFPFar, afNear, afFar), L"hkRenderer_DoZPrePass");
 	}
 
+	/**
+	 * @brief Add1stPersonGeomToCuller 钩子
+	 *
+	 * 在瞄具渲染时，只允许激光几何体被添加到渲染队列。
+	 * 实现方式：临时从场景图中分离非激光几何体，调用原函数后再重新附加。
+	 *
+	 * 为什么不用 AppCulled：
+	 * 测试发现引擎在 Forward 渲染阶段不检查 AppCulled 标志，
+	 * 几何体在设置 AppCulled 之前已被添加到渲染队列。
+	 */
 	void __fastcall hkAdd1stPersonGeomToCuller(uint64_t thisPtr)
 	{
-		if (ScopeCamera::IsRenderingForScope())
+		D3DPERF_BeginEvent(0xffffffff, L"Add1stPersonGeomToCuller");
+		// 非瞄具渲染：直接调用原函数
+		if (!ScopeCamera::IsRenderingForScope()) {
+			g_hookMgr->g_Add1stPersonGeomToCullerOriginal(thisPtr);
+			D3DPERF_EndEvent();
 			return;
+		}
+
+		// === 瞄具渲染：只添加激光几何体 ===
+
+		auto p1stPerson = *ThroughScope::ptr_DrawWorld1stPerson;
+		if (!p1stPerson) {
+			g_hookMgr->g_Add1stPersonGeomToCullerOriginal(thisPtr);
+			D3DPERF_EndEvent();
+			return;
+		}
+
+		// 收集需要分离的非激光几何体
+		std::vector<DetachedNodeInfo> detachedNodes;
+		int laserCount = 0;
+
+		// 处理第一人称节点树
+		CollectNonLaserGeometries(p1stPerson, nullptr, 0, detachedNodes, laserCount);
+
+		// 处理武器节点（激光可能挂载在此）
+		NiAVObject* weaponNode = p1stPerson->GetObjectByName("Weapon");
+		if (!weaponNode) {
+			auto playerChar = RE::PlayerCharacter::GetSingleton();
+			if (playerChar && playerChar->Get3D(false)) {
+				weaponNode = playerChar->Get3D(false)->GetObjectByName("Weapon");
+			}
+		}
+		if (weaponNode) {
+			CollectNonLaserGeometries(weaponNode, nullptr, 0, detachedNodes, laserCount);
+		}
+
+		// 调试日志
+		if (g_DebugLaserInvestigation && g_LaserLogFrameCount < LASER_LOG_FRAMES) {
+			logger::info("[Laser] Scope render: {} laser nodes, detaching {} geometries",
+				laserCount, detachedNodes.size());
+		}
+
+		// 步骤1：从场景图分离非激光几何体
+		for (auto& info : detachedNodes) {
+			if (info.parent && info.node) {
+				info.parent->DetachChild(info.node);
+			}
+		}
+
+		// 步骤2：调用原函数（此时只能看到激光几何体）
 		g_hookMgr->g_Add1stPersonGeomToCullerOriginal(thisPtr);
+
+		// 步骤3：重新附加所有分离的几何体
+		for (auto& info : detachedNodes) {
+			if (info.parent && info.node) {
+				info.parent->AttachChild(info.node, true);
+			}
+		}
+		D3DPERF_EndEvent();
 	}
 
 	void __fastcall hkBSShaderAccumulator_RenderBatches(
 		BSShaderAccumulator* thisPtr, int aiShader, bool abAlphaPass, int aeGroup)
 	{
-		g_hookMgr->g_BSShaderAccumulatorRenderBatches(thisPtr, aiShader, abAlphaPass, aeGroup);
+		D3DEventNode(g_hookMgr->g_BSShaderAccumulatorRenderBatches(thisPtr, aiShader, abAlphaPass, aeGroup), L"BSShaderAccumulator_RenderBatches");
 	}
 
 	void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
@@ -206,11 +389,30 @@ namespace ThroughScope
 		D3DEventNode(g_hookMgr->g_DeferredLightsImplOriginal(ptr_drawWorld), L"hkDeferredLightsImpl");
 	}
 
+	/**
+	 * @brief DrawWorld Forward 阶段钩子
+	 *
+	 * Forward 阶段渲染前向渲染的物体（如激光等半透明/发光效果）
+	 */
 	void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
 	{
+		// 调试日志
+		if (g_DebugLaserInvestigation && g_LaserLogFrameCount < LASER_LOG_FRAMES) {
+			bool isScope = ScopeCamera::IsRenderingForScope();
+			logger::info("[Laser] Forward {} - Frame {}",
+				isScope ? "Scope" : "Main", g_LaserLogFrameCount);
+		}
+
 		D3DHooks::SetForwardStage(true);
 		D3DEventNode(g_hookMgr->g_ForwardOriginal(ptr_drawWorld), L"hkDrawWorld_Forward");
 		D3DHooks::SetForwardStage(false);
+
+		// 更新调试帧计数
+		if (g_DebugLaserInvestigation && g_LaserLogFrameCount < LASER_LOG_FRAMES) {
+			if (ScopeCamera::IsRenderingForScope()) {
+				g_LaserLogFrameCount++;
+			}
+		}
 	}
 
 	void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
@@ -349,9 +551,11 @@ namespace ThroughScope
 
 	void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* apCurrentPass)
 	{
+		D3DPERF_BeginEvent(0xffffffff, L"BSSkyShader_SetupGeometry");
 		// 如果不在瞄具渲染模式，直接调用原始函数
 		if (!ScopeCamera::IsRenderingForScope()) {
 			g_hookMgr->g_BSSkyShader_SetupGeometry(thisPtr, apCurrentPass);
+			D3DPERF_EndEvent();
 			return;
 		}
 
@@ -359,6 +563,7 @@ namespace ThroughScope
 		if (!g_ScopeViewProjMatValid) {
 			// 没有保存的矩阵，直接调用原始函数
 			g_hookMgr->g_BSSkyShader_SetupGeometry(thisPtr, apCurrentPass);
+			D3DPERF_EndEvent();
 			return;
 		}
 
@@ -372,6 +577,7 @@ namespace ThroughScope
 
 		if (!contextPtr) {
 			g_hookMgr->g_BSSkyShader_SetupGeometry(thisPtr, apCurrentPass);
+			D3DPERF_EndEvent();
 			return;
 		}
 
@@ -415,5 +621,6 @@ namespace ThroughScope
 		cameraData.viewProjMat[1] = backupViewProjMat[1];
 		cameraData.viewProjMat[2] = backupViewProjMat[2];
 		cameraData.viewProjMat[3] = backupViewProjMat[3];
+		D3DPERF_EndEvent();
 	}
 }

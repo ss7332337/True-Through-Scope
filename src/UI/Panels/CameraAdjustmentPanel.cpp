@@ -453,11 +453,27 @@ namespace ThroughScope
 
 	void CameraAdjustmentPanel::RenderParallaxSettings()
 	{
-		if (ImGui::CollapsingHeader(LOC("camera.parallax"))) {
-			ImGui::SliderFloat(LOC("camera.relative_fog_radius"), &m_CurrentValues.relativeFogRadius, 0.0f, 1.0f);
-			ImGui::SliderFloat(LOC("camera.scope_sway_amount"), &m_CurrentValues.scopeSwayAmount, 0.0f, 1.0f);
-			ImGui::SliderFloat(LOC("camera.max_travel"), &m_CurrentValues.maxTravel, 0.0f, 1.0f);
-			ImGui::SliderFloat(LOC("camera.parallax_radius"), &m_CurrentValues.parallaxRadius, 0.0f, 1.0f);
+		if (ImGui::CollapsingHeader(LOC("camera.parallax"), ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::Checkbox(LOC("camera.enable_parallax"), &m_CurrentValues.enableParallax);
+
+			if (m_CurrentValues.enableParallax) {
+				ImGui::Separator();
+				ImGui::Text("%s", LOC("camera.parallax_offset"));
+				ImGui::SliderFloat(LOC("camera.parallax_strength"), &m_CurrentValues.parallaxStrength, 0.0f, 0.2f, "%.3f");
+				ImGui::SliderFloat(LOC("camera.parallax_smoothing"), &m_CurrentValues.parallaxSmoothing, 0.0f, 1.0f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.eye_relief"), &m_CurrentValues.eyeReliefDistance, 0.0f, 2.0f, "%.2f");
+
+				ImGui::Separator();
+				ImGui::Text("%s", LOC("camera.exit_pupil"));
+				ImGui::SliderFloat(LOC("camera.exit_pupil_radius"), &m_CurrentValues.exitPupilRadius, 0.2f, 0.8f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.exit_pupil_softness"), &m_CurrentValues.exitPupilSoftness, 0.05f, 0.5f, "%.2f");
+
+				ImGui::Separator();
+				ImGui::Text("%s", LOC("camera.vignette"));
+				ImGui::SliderFloat(LOC("camera.vignette_strength"), &m_CurrentValues.vignetteStrength, 0.0f, 1.0f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.vignette_radius"), &m_CurrentValues.vignetteRadius, 0.3f, 1.0f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.vignette_softness"), &m_CurrentValues.vignetteSoftness, 0.05f, 0.5f, "%.2f");
+			}
 		}
 	}
 
@@ -642,10 +658,15 @@ namespace ThroughScope
 		config.cameraAdjustments.deltaRot[2] = m_CurrentValues.deltaRot[2];
 		config.cameraAdjustments.deltaScale = m_CurrentValues.deltaScale;
 
-		config.parallaxSettings.relativeFogRadius = m_CurrentValues.relativeFogRadius;
-		config.parallaxSettings.scopeSwayAmount = m_CurrentValues.scopeSwayAmount;
-		config.parallaxSettings.maxTravel = m_CurrentValues.maxTravel;
-		config.parallaxSettings.radius = m_CurrentValues.parallaxRadius;
+		config.parallaxSettings.parallaxStrength = m_CurrentValues.parallaxStrength;
+		config.parallaxSettings.parallaxSmoothing = m_CurrentValues.parallaxSmoothing;
+		config.parallaxSettings.exitPupilRadius = m_CurrentValues.exitPupilRadius;
+		config.parallaxSettings.exitPupilSoftness = m_CurrentValues.exitPupilSoftness;
+		config.parallaxSettings.vignetteStrength = m_CurrentValues.vignetteStrength;
+		config.parallaxSettings.vignetteRadius = m_CurrentValues.vignetteRadius;
+		config.parallaxSettings.vignetteSoftness = m_CurrentValues.vignetteSoftness;
+		config.parallaxSettings.eyeReliefDistance = m_CurrentValues.eyeReliefDistance;
+		config.parallaxSettings.enableParallax = m_CurrentValues.enableParallax;
 
 		// 保存夜视设置
 		config.scopeSettings.nightVision = m_EnableNightVision;
@@ -686,10 +707,15 @@ namespace ThroughScope
 		m_CurrentValues.deltaRot[2] = config->cameraAdjustments.deltaRot[2];
 		m_CurrentValues.deltaScale = config->cameraAdjustments.deltaScale;
 
-		m_CurrentValues.relativeFogRadius = config->parallaxSettings.relativeFogRadius;
-		m_CurrentValues.scopeSwayAmount = config->parallaxSettings.scopeSwayAmount;
-		m_CurrentValues.maxTravel = config->parallaxSettings.maxTravel;
-		m_CurrentValues.parallaxRadius = config->parallaxSettings.radius;
+		m_CurrentValues.parallaxStrength = config->parallaxSettings.parallaxStrength;
+		m_CurrentValues.parallaxSmoothing = config->parallaxSettings.parallaxSmoothing;
+		m_CurrentValues.exitPupilRadius = config->parallaxSettings.exitPupilRadius;
+		m_CurrentValues.exitPupilSoftness = config->parallaxSettings.exitPupilSoftness;
+		m_CurrentValues.vignetteStrength = config->parallaxSettings.vignetteStrength;
+		m_CurrentValues.vignetteRadius = config->parallaxSettings.vignetteRadius;
+		m_CurrentValues.vignetteSoftness = config->parallaxSettings.vignetteSoftness;
+		m_CurrentValues.eyeReliefDistance = config->parallaxSettings.eyeReliefDistance;
+		m_CurrentValues.enableParallax = config->parallaxSettings.enableParallax;
 
 		// 加载夜视设置
 		m_EnableNightVision = config->scopeSettings.nightVision;
@@ -779,10 +805,15 @@ namespace ThroughScope
 		       std::abs(m_CurrentValues.deltaRot[1] - m_PreviousValues.deltaRot[1]) > 0.1f ||
 		       std::abs(m_CurrentValues.deltaRot[2] - m_PreviousValues.deltaRot[2]) > 0.1f ||
 		       std::abs(m_CurrentValues.deltaScale - m_PreviousValues.deltaScale) > epsilon ||
-		       std::abs(m_CurrentValues.relativeFogRadius - m_PreviousValues.relativeFogRadius) > epsilon ||
-		       std::abs(m_CurrentValues.scopeSwayAmount - m_PreviousValues.scopeSwayAmount) > epsilon ||
-		       std::abs(m_CurrentValues.maxTravel - m_PreviousValues.maxTravel) > epsilon ||
-		       std::abs(m_CurrentValues.parallaxRadius - m_PreviousValues.parallaxRadius) > epsilon ||
+		       std::abs(m_CurrentValues.parallaxStrength - m_PreviousValues.parallaxStrength) > epsilon ||
+		       std::abs(m_CurrentValues.parallaxSmoothing - m_PreviousValues.parallaxSmoothing) > epsilon ||
+		       std::abs(m_CurrentValues.exitPupilRadius - m_PreviousValues.exitPupilRadius) > epsilon ||
+		       std::abs(m_CurrentValues.exitPupilSoftness - m_PreviousValues.exitPupilSoftness) > epsilon ||
+		       std::abs(m_CurrentValues.vignetteStrength - m_PreviousValues.vignetteStrength) > epsilon ||
+		       std::abs(m_CurrentValues.vignetteRadius - m_PreviousValues.vignetteRadius) > epsilon ||
+		       std::abs(m_CurrentValues.vignetteSoftness - m_PreviousValues.vignetteSoftness) > epsilon ||
+		       std::abs(m_CurrentValues.eyeReliefDistance - m_PreviousValues.eyeReliefDistance) > epsilon ||
+		       m_CurrentValues.enableParallax != m_PreviousValues.enableParallax ||
 
 		       std::abs(m_CurrentValues.nightVisionIntensity - m_PreviousValues.nightVisionIntensity) > epsilon ||
 		       std::abs(m_CurrentValues.nightVisionNoiseScale - m_PreviousValues.nightVisionNoiseScale) > epsilon ||
@@ -868,12 +899,20 @@ namespace ThroughScope
 		ApplyScaleAdjustment();
 
 		ScopeCamera::SetFOVMinMax(m_CurrentValues.minFov, m_CurrentValues.maxFov);
-		// 应用视差设置
+
+		// 应用新的视差设置
 		D3DHooks::UpdateScopeParallaxSettings(
-			m_CurrentValues.relativeFogRadius,
-			m_CurrentValues.scopeSwayAmount,
-			m_CurrentValues.maxTravel,
-			m_CurrentValues.parallaxRadius);
+			m_CurrentValues.parallaxStrength,
+			m_CurrentValues.exitPupilRadius,
+			m_CurrentValues.vignetteStrength,
+			m_CurrentValues.vignetteRadius);
+
+		D3DHooks::UpdateParallaxAdvancedSettings(
+			m_CurrentValues.parallaxSmoothing,
+			m_CurrentValues.exitPupilSoftness,
+			m_CurrentValues.vignetteSoftness,
+			m_CurrentValues.eyeReliefDistance,
+			m_CurrentValues.enableParallax ? 1 : 0);
 	}
 
 	void CameraAdjustmentPanel::ScanForNIFFiles()
@@ -1010,12 +1049,20 @@ namespace ThroughScope
 
 	void CameraAdjustmentPanel::ApplySettings()
 	{
-		// 应用视差设置
+		// 应用新的视差设置
 		D3DHooks::UpdateScopeParallaxSettings(
-			m_CurrentValues.relativeFogRadius,
-			m_CurrentValues.scopeSwayAmount,
-			m_CurrentValues.maxTravel,
-			m_CurrentValues.parallaxRadius
+			m_CurrentValues.parallaxStrength,
+			m_CurrentValues.exitPupilRadius,
+			m_CurrentValues.vignetteStrength,
+			m_CurrentValues.vignetteRadius
+		);
+
+		D3DHooks::UpdateParallaxAdvancedSettings(
+			m_CurrentValues.parallaxSmoothing,
+			m_CurrentValues.exitPupilSoftness,
+			m_CurrentValues.vignetteSoftness,
+			m_CurrentValues.eyeReliefDistance,
+			m_CurrentValues.enableParallax ? 1 : 0
 		);
 
 		// 应用夜视设置
