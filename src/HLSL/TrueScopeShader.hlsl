@@ -17,6 +17,10 @@ cbuffer ScopeConstants : register(b0)
     int enableNightVision;
     int enableThermalVision;
 
+    // Viewport dimensions for DLSS/FSR3 upscaling
+    float viewportWidth;
+    float viewportHeight;
+    float2 padding_viewport;
 
     float3 cameraPosition;
     float padding2; // 16-byte alignment
@@ -385,75 +389,67 @@ float2 applySphericalDistortion(float2 texcoord)
     return uv + center;
 }
 
-// 带有色散效果的球形畸变函数（无分支版本）
-float4 sampleWithSphericalDistortionAndChromatic(Texture2D tex, SamplerState samp, float2 texcoord)
+// Spherical distortion with chromatic aberration (branchless)
+float4 sampleWithSphericalDistortionAndChromatic(Texture2D tex, SamplerState samp, float2 texcoord, float2 textureScale)
 {
-    // 基础畸变
     float2 center = float2(0.5, 0.5) + sphericalDistortionCenter;
     float2 uv = texcoord - center;
     
-    // 应用宽高比校正
     uv.x *= screenWidth / screenHeight;
     
     float distance = length(uv);
-    
-    // 柔化边界处理，避免硬边界
     float edgeFade = smoothstep(sphericalDistortionRadius, sphericalDistortionRadius * 0.9, distance);
     
-    // 不同颜色通道使用不同的畸变强度来模拟色散
-    float distortionR = 1.0 + sphericalDistortionStrength * 1.02 * distance * distance;  // 红色通道稍强
-    float distortionG = 1.0 + sphericalDistortionStrength * distance * distance;         // 绿色通道标准
-    float distortionB = 1.0 + sphericalDistortionStrength * 0.98 * distance * distance;  // 蓝色通道稍弱
+    // Chromatic aberration: different distortion per channel
+    float distortionR = 1.0 + sphericalDistortionStrength * 1.02 * distance * distance;
+    float distortionG = 1.0 + sphericalDistortionStrength * distance * distance;
+    float distortionB = 1.0 + sphericalDistortionStrength * 0.98 * distance * distance;
     
-    // 在边界区域减少畸变强度
     distortionR = lerp(1.0, distortionR, edgeFade);
     distortionG = lerp(1.0, distortionG, edgeFade);
     distortionB = lerp(1.0, distortionB, edgeFade);
     
-    // 应用畸变到不同颜色通道
     float2 uvR = uv * distortionR;
     float2 uvG = uv * distortionG;
     float2 uvB = uv * distortionB;
     
-    // 恢复宽高比校正
     uvR.x /= screenWidth / screenHeight;
     uvG.x /= screenWidth / screenHeight;
     uvB.x /= screenWidth / screenHeight;
     
-    // 转换回纹理坐标
     uvR += center;
     uvG += center;
     uvB += center;
     
-    // 计算边界掩码（无分支方式）
-    // 检查原始畸变坐标是否在有效范围内
     float2 validR = step(0.0, uvR) * step(uvR, 1.0);
     float2 validG = step(0.0, uvG) * step(uvG, 1.0);
     float2 validB = step(0.0, uvB) * step(uvB, 1.0);
     float borderMask = validR.x * validR.y * validG.x * validG.y * validB.x * validB.y;
     
-    // 使用saturate来安全地限制坐标范围
     uvR = saturate(uvR);
     uvG = saturate(uvG);
     uvB = saturate(uvB);
     
-    // 分别采样各颜色通道
+    // Apply texture scale for DLSS/FSR3
+    uvR *= textureScale;
+    uvG *= textureScale;
+    uvB *= textureScale;
+    float2 scaledTexcoord = texcoord * textureScale;
+    
     float4 distortedSample;
     distortedSample.r = tex.Sample(samp, uvR).r;
     distortedSample.g = tex.Sample(samp, uvG).g;
     distortedSample.b = tex.Sample(samp, uvB).b;
     distortedSample.a = tex.Sample(samp, uvG).a;
     
-    // 原始采样作为备用
-    float4 originalSample = tex.Sample(samp, texcoord);
+    float4 originalSample = tex.Sample(samp, scaledTexcoord);
     
-    // 无分支混合：根据边界掩码选择使用哪个采样结果
     return lerp(originalSample, distortedSample, borderMask);
 }
 
 float4 main(PS_INPUT input) : SV_TARGET
 {
-    float2 texCoord = input.position.xy / float2(screenWidth, screenHeight);
+    float2 texCoord = input.position.xy / float2(viewportWidth, viewportHeight);
     float2 aspectCorrectTex = aspect_ratio_correction(texCoord);
 
     // ========================================================================
@@ -499,11 +495,13 @@ float4 main(PS_INPUT input) : SV_TARGET
 
     float useChromaticSampling = useDistortion * useChromatic;
 
-    // 采样场景纹理
-    float4 basicColor = scopeTexture.Sample(scopeSampler, distortedTexCoord);
+    // DLSS/FSR3 upscaling: scale UV to valid texture region
+    float2 textureScale = float2(viewportWidth / screenWidth, viewportHeight / screenHeight);
+    float2 scaledTexCoord = distortedTexCoord * textureScale;
 
+    float4 basicColor = scopeTexture.Sample(scopeSampler, scaledTexCoord);
     float4 chromaticColor = lerp(basicColor,
-                                sampleWithSphericalDistortionAndChromatic(scopeTexture, scopeSampler, parallaxedTexCoord),
+                                sampleWithSphericalDistortionAndChromatic(scopeTexture, scopeSampler, parallaxedTexCoord, textureScale),
                                 useChromaticSampling);
 
     float4 color = chromaticColor;

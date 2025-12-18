@@ -6,6 +6,9 @@
 #include "ScopeCamera.h"
 #include "Utilities.h"
 #include "rendering/LightBackupSystem.h"
+#include "rendering/ScopeRenderingManager.h"
+#include "rendering/SecondPassRenderer.h"
+#include "rendering/RenderStateManager.h"
 #include <d3d9.h>  // for D3DPERF_BeginEvent / D3DPERF_EndEvent
 #include <DirectXMath.h>
 #include <chrono>
@@ -21,6 +24,7 @@ namespace ThroughScope
 
 	static HookManager* g_hookMgr = HookManager::GetSingleton();
 	static LightBackupSystem* g_lightBackup = LightBackupSystem::GetSingleton();
+	static ScopeRenderingManager* g_scopeRenderMgr = ScopeRenderingManager::GetSingleton();
 
 	// ========== 调试模式配置 ==========
 	static bool g_DebugLaserInvestigation = false;
@@ -243,10 +247,41 @@ namespace ThroughScope
 			if (playerCamera) {
 				g_MainCameraFOV = playerCamera->firstPersonFOV;
 			}
-			// 第一次渲染（主相机）
+
 			D3DPERF_BeginEvent(0xFF00FF00, L"TrueThroughScope_FirstPass");
 			g_hookMgr->g_RenderPreUIOriginal(ptr_drawWorld);
 			D3DPERF_EndEvent();
+
+			// Capture FirstPass viewport for DLSS/FSR3 upscaling
+			if (g_scopeRenderMgr->IsFO4TestCompatibilityEnabled()) {
+				auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+				if (rendererData && rendererData->context) {
+					D3D11_VIEWPORT currentViewport = {};
+					UINT numViewports = 1;
+					((ID3D11DeviceContext*)rendererData->context)->RSGetViewports(&numViewports, &currentViewport);
+					if (numViewports > 0 && currentViewport.Width > 0 && currentViewport.Height > 0) {
+						RenderUtilities::SetFirstPassViewport(currentViewport);
+					}
+				}
+			}
+			
+			// FO4Test compatibility: render scope here when DLSS/FSR3 replaces TAA
+			if (g_scopeRenderMgr->IsFO4TestCompatibilityEnabled() && D3DHooks::IsEnableRender()) {
+				auto renderStateMgr = RenderStateManager::GetSingleton();
+				if (renderStateMgr->IsScopeReady() && renderStateMgr->IsRenderReady()) {
+					ID3D11Device* device = d3dHooks->GetDevice();
+					ID3D11DeviceContext* context = d3dHooks->GetContext();
+					
+					if (device && context) {
+						D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_SecondPass_FO4TestCompat");
+						SecondPassRenderer renderer(context, device, d3dHooks);
+						if (!renderer.ExecuteSecondPass()) {
+							logger::warn("[FO4Test-Compat] SecondPassRenderer failed in PreUI");
+						}
+						D3DPERF_EndEvent();
+					}
+				}
+			}
 		} else {
 			// 第二次渲染（瞄具相机）- 在 SecondPassRenderer 中已有标记
 			g_hookMgr->g_RenderPreUIOriginal(ptr_drawWorld);
@@ -393,6 +428,9 @@ namespace ThroughScope
 	 * @brief DrawWorld Forward 阶段钩子
 	 *
 	 * Forward 阶段渲染前向渲染的物体（如激光等半透明/发光效果）
+	 * 
+	 * 注意: fo4test 兼容已移至 hkRender_PreUI 实现
+	 * 在 Forward 阶段调用完整渲染管线会导致卡死
 	 */
 	void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
 	{

@@ -9,6 +9,7 @@
 #include <wrl/client.h>
 #include <d3dcompiler.h>
 #include "HDRStateCache.h"
+#include "RenderUtilities.h"
 
 #include <DDSTextureLoader11.h>
 #include "ImGuiManager.h"
@@ -634,7 +635,7 @@ namespace ThroughScope {
 		}
 
 		if (tempPath)
-			free((void*)tempPath);
+			::free((void*)tempPath);
 
 		return true;
 	}
@@ -660,7 +661,7 @@ namespace ThroughScope {
 		}
 
 		if (tempPath)
-			free((void*)tempPath);
+			::free((void*)tempPath);
 
 		return s_ReticleSRV.Get();
 	}
@@ -888,8 +889,19 @@ namespace ThroughScope {
 
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
 		auto rendererState = RE::BSGraphics::State::GetSingleton();
+		
 		UINT screenWidth = rendererState.backBufferWidth;
 		UINT screenHeight = rendererState.backBufferHeight;
+		
+		// DLSS/FSR3: Use FirstPass viewport for UV calculation
+		float viewportWidth = static_cast<float>(screenWidth);
+		float viewportHeight = static_cast<float>(screenHeight);
+		D3D11_VIEWPORT firstPassViewport = {};
+		if (RenderUtilities::GetFirstPassViewport(firstPassViewport) && 
+			firstPassViewport.Width > 0 && firstPassViewport.Height > 0) {
+			viewportWidth = firstPassViewport.Width;
+			viewportHeight = firstPassViewport.Height;
+		}
 
 		// 获取玩家摄像头位置
 		auto playerCamera = RE::PlayerCharacter::GetSingleton()->Get3D(true)->GetObjectByName("Camera");
@@ -1101,6 +1113,8 @@ namespace ThroughScope {
 		ScopeConstantBuffer newCBData = {};
 		newCBData.screenWidth = static_cast<float>(screenWidth);
 		newCBData.screenHeight = static_cast<float>(screenHeight);
+		newCBData.viewportWidth = viewportWidth;
+		newCBData.viewportHeight = viewportHeight;
 		newCBData.cameraPosition[0] = cameraPos.x;
 		newCBData.cameraPosition[1] = cameraPos.y;
 		newCBData.cameraPosition[2] = cameraPos.z;

@@ -7,6 +7,7 @@
 #include "rendering/RenderStateManager.h"
 #include "rendering/LightBackupSystem.h"
 #include "rendering/SecondPassRenderer.h"
+#include "rendering/ScopeRenderingManager.h"
 #include <cmath>
 #include <algorithm>
 
@@ -17,6 +18,7 @@ namespace ThroughScope
 	static HookManager* g_hookMgr = HookManager::GetSingleton();
 	static RenderStateManager* g_renderStateMgr = RenderStateManager::GetSingleton();
 	static LightBackupSystem* g_lightBackup = LightBackupSystem::GetSingleton();
+	static ScopeRenderingManager* g_scopeRenderMgr = ScopeRenderingManager::GetSingleton();
 
 	void __fastcall hkTAA(ImageSpaceEffectTemporalAA* thisPtr, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param)
 	{
@@ -38,9 +40,6 @@ namespace ThroughScope
 		g_hookMgr->g_TAA(thisPtr, a_geometry, a_param);
 		D3DPERF_EndEvent();
 
-		//if (ScopeCamera::IsRenderingForScope())
-		//	return;
-
 		// 检查是否可以执行第二次渲染
 		if (!g_renderStateMgr->IsScopeReady() || !g_renderStateMgr->IsRenderReady() || !D3DHooks::IsEnableRender()) {
 			return;
@@ -53,7 +52,23 @@ namespace ThroughScope
 			return;
 		}
 
-		// 创建第二次渲染器并执行渲染 (添加调试标记)
+		// ========== fo4test 兼容模式 ==========
+		// 如果启用了 fo4test 兼容，场景渲染已在 Forward 阶段完成
+		// 这里只需执行后处理（HDR、热成像等）
+		if (g_scopeRenderMgr->IsFO4TestCompatibilityEnabled()) {
+			if (g_scopeRenderMgr->IsSceneRenderingCompleteThisFrame()) {
+				D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_PostProcessing_FO4TestCompat");
+				g_scopeRenderMgr->ExecutePostProcessingPhase();
+				D3DPERF_EndEvent();
+			}
+			// 不管成功与否，重置帧状态
+			g_scopeRenderMgr->OnFrameEnd();
+			return;
+		}
+
+		// ========== 标准模式 ==========
+		// 没有 fo4test，使用原来的完整渲染流程
+		logger::info("[TAAHook] Using STANDARD rendering mode");
 		D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_SecondPass");
 		SecondPassRenderer renderer(context, device, d3dHooks);
 		if (!renderer.ExecuteSecondPass()){

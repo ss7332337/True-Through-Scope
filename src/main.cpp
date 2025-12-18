@@ -21,6 +21,7 @@
 #include "DataPersistence.h"
 #include "ImGuiManager.h"
 #include "rendering/RenderStateManager.h"
+#include "rendering/ScopeRenderingManager.h"
 
 using namespace RE;
 using namespace RE::BSGraphics;
@@ -204,6 +205,9 @@ void InitializePlugin()
 
 	// Initialize RenderStateManager with default values
 	g_renderStateMgr->Initialize();
+	
+	// Initialize ScopeRenderingManager for fo4test compatibility detection
+	ThroughScope::ScopeRenderingManager::GetSingleton()->Initialize();
 }
 
 // F4SE Query plugin

@@ -78,5 +78,25 @@ namespace ThroughScope
 		static bool s_Render_PreUIComplete;
 		static int s_ScreenWidth;
 		static int s_ScreenHeight;
+		
+		// FirstPass viewport for DLSS/FSR3 upscaling
+		static D3D11_VIEWPORT s_FirstPassViewport;
+		static bool s_HasFirstPassViewport;
+		
+	public:
+		static void SetFirstPassViewport(const D3D11_VIEWPORT& viewport) {
+			s_FirstPassViewport = viewport;
+			s_HasFirstPassViewport = true;
+		}
+		static bool GetFirstPassViewport(D3D11_VIEWPORT& outViewport) {
+			if (s_HasFirstPassViewport) {
+				outViewport = s_FirstPassViewport;
+				return true;
+			}
+			return false;
+		}
+		static void ClearFirstPassViewport() {
+			s_HasFirstPassViewport = false;
+		}
     };
 }

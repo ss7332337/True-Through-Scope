@@ -20,6 +20,10 @@ namespace ThroughScope
 	bool RenderUtilities::s_Render_PreUIComplete = false;
 	int RenderUtilities::s_ScreenWidth = 1920;
 	int RenderUtilities::s_ScreenHeight = 1080;
+	
+	// DLSS/FSR3 upscaling support
+	D3D11_VIEWPORT RenderUtilities::s_FirstPassViewport = {};
+	bool RenderUtilities::s_HasFirstPassViewport = false;
 
 
     bool RenderUtilities::Initialize()

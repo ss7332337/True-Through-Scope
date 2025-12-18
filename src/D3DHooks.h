@@ -118,6 +118,11 @@ namespace ThroughScope {
 			int enableNightVision;
 			int enableThermalVision;
 
+			// Viewport dimensions for DLSS/FSR3 upscaling
+			float viewportWidth;
+			float viewportHeight;
+			float padding_viewport[2];
+
 			float cameraPosition[3];
 			float padding2;  // 16字节对齐
 

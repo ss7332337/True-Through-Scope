@@ -87,7 +87,11 @@ namespace ThroughScope
 			m_renderExecuted = true;
 
 			// 5.6 应用自定义 HDR 后处理
-			ApplyCustomHDREffect(); 
+			if (!ScopeRenderingManager::GetSingleton()->IsFO4TestCompatibilityEnabled())
+			{
+				ApplyCustomHDREffect(); 
+			}
+			
 
 			// 5.6 如果启用热成像，应用热成像效果
 			if (m_thermalVisionEnabled) {
@@ -138,6 +142,149 @@ namespace ThroughScope
 		return true;
 	}
 
+	// ========== fo4test 兼容：分阶段渲染 ==========
+	
+	bool SecondPassRenderer::ExecuteSceneRendering()
+	{
+		if (!CanExecuteSecondPass()) {
+			return false;
+		}
+		
+		// 初始化相机指针
+		m_scopeCamera = ScopeCamera::GetScopeCamera();
+		m_playerCamera = *ptr_DrawWorldCamera;
+
+		// 重置状态标志
+		m_texturesBackedUp = false;
+		m_cameraUpdated = false;
+		m_lightingSynced = false;
+		m_renderExecuted = false;
+		m_sceneRenderingComplete = false;
+
+		// 重置每帧的渲染标志
+		RenderUtilities::SetFirstPassComplete(false);
+		RenderUtilities::SetSecondPassComplete(false);
+
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		if (!rendererData || !rendererData->context) {
+			logger::error("[FO4Test-Compat] ExecuteSceneRendering: Renderer data is null");
+			return false;
+		}
+
+		try {
+			// 1. 简化的备份 - 在 Forward 阶段不需要获取后缓冲
+			// 直接从 rendererData 获取主渲染目标
+			m_mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
+			m_mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
+			m_mainRTTexture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
+			m_mainDSTexture = (ID3D11Texture2D*)rendererData->depthStencilTargets[2].texture;
+
+			if (!m_mainRTTexture || !m_mainDSTexture) {
+				logger::error("[FO4Test-Compat] ExecuteSceneRendering: Main render targets not available");
+				return false;
+			}
+
+			// 复制主渲染目标到我们的备份纹理
+			if (m_mainRTTexture) {
+				D3D11_TEXTURE2D_DESC firstPassColorDesc, mainRTDesc;
+				RenderUtilities::GetFirstPassColorTexture()->GetDesc(&firstPassColorDesc);
+				m_mainRTTexture->GetDesc(&mainRTDesc);
+
+				if (firstPassColorDesc.Width == mainRTDesc.Width && firstPassColorDesc.Height == mainRTDesc.Height) {
+					m_context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), m_mainRTTexture);
+				} else {
+					logger::warn("[FO4Test-Compat] Skipping first pass color copy: size mismatch");
+				}
+			}
+
+			if (m_mainDSTexture) {
+				D3D11_TEXTURE2D_DESC firstPassDepthDesc, mainDSDesc;
+				RenderUtilities::GetFirstPassDepthTexture()->GetDesc(&firstPassDepthDesc);
+				m_mainDSTexture->GetDesc(&mainDSDesc);
+
+				if (firstPassDepthDesc.Width == mainDSDesc.Width && firstPassDepthDesc.Height == mainDSDesc.Height) {
+					m_context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), m_mainDSTexture);
+				} else {
+					logger::warn("[FO4Test-Compat] Skipping first pass depth copy: size mismatch");
+				}
+			}
+
+			RenderUtilities::SetFirstPassComplete(true);
+			m_texturesBackedUp = true;  // 标记为已备份，但不需要完整的 BackBuffer 恢复
+
+			// 2. 更新瞄具相机配置
+			if (!UpdateScopeCamera()) {
+				logger::error("[FO4Test-Compat] ExecuteSceneRendering: Failed to update scope camera");
+				return false;
+			}
+
+			// 3. 清理渲染目标
+			ClearRenderTargets();
+
+			// 4. 同步光照状态
+			if (!SyncLighting()) {
+				logger::error("[FO4Test-Compat] ExecuteSceneRendering: Failed to sync lighting");
+				return false;
+			}
+
+			// 5. 执行瞄具场景渲染
+			D3DPERF_BeginEvent(0xFF00FF00, L"TrueThroughScope_SceneRendering");
+			DrawScopeContent();
+			D3DPERF_EndEvent();
+			
+			m_renderExecuted = true;
+			m_sceneRenderingComplete = true;
+			
+			logger::debug("[FO4Test-Compat] Scene rendering completed successfully");
+			return true;
+
+		} catch (const std::exception& e) {
+			logger::error("[FO4Test-Compat] Exception during scene rendering: {}", e.what());
+			return false;
+		} catch (...) {
+			logger::error("[FO4Test-Compat] Unknown exception during scene rendering");
+			return false;
+		}
+	}
+	
+	bool SecondPassRenderer::ExecutePostProcessing()
+	{
+		// 检查场景渲染是否完成
+		if (!m_sceneRenderingComplete) {
+			logger::warn("[FO4Test-Compat] ExecutePostProcessing called but scene rendering not complete");
+			return false;
+		}
+
+		try {
+			D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_PostProcessing");
+			
+			// 应用自定义 HDR 后处理
+			ApplyCustomHDREffect(); 
+
+			// 如果启用热成像，应用热成像效果
+			if (m_thermalVisionEnabled) {
+				ApplyThermalVisionEffect();
+			}
+
+			// 恢复第一次渲染状态
+			RestoreFirstPass();
+			
+			D3DPERF_EndEvent();
+			
+			logger::debug("[FO4Test-Compat] Post processing completed successfully");
+			return true;
+
+		} catch (const std::exception& e) {
+			logger::error("[FO4Test-Compat] Exception during post processing: {}", e.what());
+			RestoreFirstPass();
+			return false;
+		} catch (...) {
+			logger::error("[FO4Test-Compat] Unknown exception during post processing");
+			RestoreFirstPass();
+			return false;
+		}
+	}
+
 	bool SecondPassRenderer::BackupFirstPassTextures()
 	{
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
@@ -156,17 +303,41 @@ namespace ThroughScope
 		m_context->OMGetRenderTargets(2, m_savedRTVs, nullptr);
 
 		// 获取后缓冲纹理
+		// 优先从当前绑定的 RT 获取，如果不可用则使用 renderTargets[0] (SwapChain)
 		ID3D11Resource* rtResource = nullptr;
+		
 		if (m_savedRTVs[1]) {
+			// TAA 阶段: RT slot 1 有绑定
 			m_savedRTVs[1]->GetResource(&rtResource);
 			if (rtResource != nullptr) {
 				rtResource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&m_rtTexture2D);
 				rtResource->Release();
 			}
 		}
+		
+		// 如果从绑定的 RT 获取失败，尝试使用 SwapChain 纹理
+		if (!m_rtTexture2D) {
+			// PreUI 阶段或其他情况: 直接使用 SwapChain 纹理
+			auto swapChainRT = rendererData->renderTargets[0].rtView;
+			if (swapChainRT) {
+				reinterpret_cast<ID3D11RenderTargetView*>(swapChainRT)->GetResource(&rtResource);
+				if (rtResource != nullptr) {
+					rtResource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&m_rtTexture2D);
+					rtResource->Release();
+				}
+			}
+		}
+		
+		// 如果还是失败，使用主渲染目标纹理
+		if (!m_rtTexture2D) {
+			m_rtTexture2D = m_mainRTTexture;
+			if (m_rtTexture2D) {
+				m_rtTexture2D->AddRef();  // 增加引用计数以匹配后续的 Release
+			}
+		}
 
 		if (!m_rtTexture2D) {
-			m_lastError = "Failed to get render target texture";
+			m_lastError = "Failed to get render target texture from any source";
 			return false;
 		}
 
@@ -1125,14 +1296,64 @@ namespace ThroughScope
 			}
 
 			// 恢复渲染目标
+			ID3D11RenderTargetView* targetRTV = nullptr;
+			ID3D11Texture2D* targetTexture = nullptr;
+			UINT targetWidth = 0, targetHeight = 0;
+			
 			if (m_savedRTVs[1]) {
+				targetRTV = m_savedRTVs[1];
 				m_context->OMSetRenderTargets(1, &m_savedRTVs[1], nullptr);
+				
+				// 获取渲染目标的实际尺寸
+				ID3D11Resource* rtResource = nullptr;
+				m_savedRTVs[1]->GetResource(&rtResource);
+				if (rtResource) {
+					ID3D11Texture2D* rtTexture = nullptr;
+					if (SUCCEEDED(rtResource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&rtTexture))) {
+						D3D11_TEXTURE2D_DESC rtDesc;
+						rtTexture->GetDesc(&rtDesc);
+						targetWidth = rtDesc.Width;
+						targetHeight = rtDesc.Height;
+						rtTexture->Release();
+					}
+					rtResource->Release();
+				}
+			} else {
+				// PreUI 阶段或其他情况: 使用主渲染目标
+				auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+				if (rendererData && m_mainRTV) {
+					targetRTV = m_mainRTV;
+					m_context->OMSetRenderTargets(1, &m_mainRTV, nullptr);
+					
+					if (m_mainRTTexture) {
+						D3D11_TEXTURE2D_DESC mainDesc;
+						m_mainRTTexture->GetDesc(&mainDesc);
+						targetWidth = mainDesc.Width;
+						targetHeight = mainDesc.Height;
+					}
+				}
 			}
 
 			// 渲染瞄具内容
 			int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
-			if (scopeNodeIndexCount != -1) {
+			if (scopeNodeIndexCount != -1 && targetRTV) {
 				try {
+					// Use FirstPass viewport for DLSS/FSR3 upscaling
+					D3D11_VIEWPORT viewport = {};
+					
+					if (!RenderUtilities::GetFirstPassViewport(viewport)) {
+						// Fallback: use backBuffer size
+						auto rendererState = RE::BSGraphics::State::GetSingleton();
+						viewport.TopLeftX = 0;
+						viewport.TopLeftY = 0;
+						viewport.Width = static_cast<float>(rendererState.backBufferWidth);
+						viewport.Height = static_cast<float>(rendererState.backBufferHeight);
+						viewport.MinDepth = 0.0f;
+						viewport.MaxDepth = 1.0f;
+					}
+					
+					m_context->RSSetViewports(1, &viewport);
+					
 					RenderUtilities::SetRender_PreUIComplete(true);
 					m_d3dHooks->SetScopeTexture(m_context);
 					D3DHooks::isSelfDrawCall = true;

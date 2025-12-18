@@ -35,6 +35,7 @@ set(SOURCES
 	src/rendering/ScopePostProcess.cpp
 	src/rendering/LUTPass.cpp
 	src/rendering/LuminancePass.cpp
+	src/rendering/ScopeRenderingManager.cpp
 	src/ImageSpaceDebugHook.cpp
 	src/HDRStateCache.cpp
 )
