@@ -192,6 +192,7 @@ set_hlsl_properties(src/HLSL/DOFBlend_PS.hlsl Pixel main)
 set_hlsl_properties(src/HLSL/LUT_PS.hlsl Pixel main)
 set_hlsl_properties(src/HLSL/LuminanceDownsample_CS.hlsl Compute main)
 set_hlsl_properties(src/HLSL/LuminanceFinal_CS.hlsl Compute main)
+#set_hlsl_properties(src/HLSL/ZeroScopeMotionVector_PS.hlsl Pixel main)
 
 
 target_include_directories(

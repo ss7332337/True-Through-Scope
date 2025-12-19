@@ -46,7 +46,14 @@ namespace ThroughScope
 	extern void __fastcall hkBSCullingGroup_Process(BSCullingGroup* thisPtr, bool abFirstStageOnly);
 	extern void __fastcall hkRTManager_CreateRenderTarget(RenderTargetManager rtm, int aIndex, const RenderTargetProperties* arProperties, TARGET_PERSISTENCY aPersistent);
 	extern void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar);
-	extern void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* apCurrentPass);
+extern void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* apCurrentPass);
+	extern void __fastcall hkImageSpaceManager_RenderEffectRange(void* thisPtr, int aiFirst, int aiLast, int aiSourceTarget, int aiDestTarget);
+	extern void __fastcall hkDrawWorld_Render_UI(uint64_t thisPtr);
+	extern void __fastcall hkUI_BeginRender();
+	extern void __fastcall hkSetUseDynamicResolutionViewport(void* thisPtr, bool a_useDynamicResolution);
+	extern void __fastcall hkDrawWorld_Imagespace();
+	extern void __fastcall hkDrawWorld_Render_PostUI();
+	extern void __fastcall hkUI_ScreenSpace_RenderMenus(void* thisPtr);
 
 	void HookManager::RegisterAllHooks()
 	{
@@ -123,9 +130,28 @@ namespace ThroughScope
 		CreateAndEnableHook((LPVOID)BSSkyShader_SetupGeometry_Ori.address(), &hkBSSkyShader_SetupGeometry,
 			reinterpret_cast<LPVOID*>(&g_BSSkyShader_SetupGeometry), "BSSkyShader_SetupGeometry");
 
+		CreateAndEnableHook((LPVOID)ImageSpaceManager_RenderEffectRange_Ori.address(), &hkImageSpaceManager_RenderEffectRange,
+			reinterpret_cast<LPVOID*>(&g_ImageSpaceManager_RenderEffectRange), "ImageSpaceManager_RenderEffectRange");
+
+		CreateAndEnableHook((LPVOID)DrawWorld_Render_UI_Ori.address(), &hkDrawWorld_Render_UI,
+			reinterpret_cast<LPVOID*>(&g_DrawWorld_Render_UI), "DrawWorld_Render_UI");
+
+		CreateAndEnableHook((LPVOID)UI_BeginRender_Ori.address(), &hkUI_BeginRender,
+			reinterpret_cast<LPVOID*>(&g_UI_BeginRender), "UI_BeginRender");
+
+		CreateAndEnableHook((LPVOID)SetUseDynamicResolutionViewport_Ori.address(), &hkSetUseDynamicResolutionViewport,
+			reinterpret_cast<LPVOID*>(&g_SetUseDynamicResolutionViewport), "SetUseDynamicResolutionViewport");
+
+		CreateAndEnableHook((LPVOID)DrawWorld_Imagespace_Ori.address(), &hkDrawWorld_Imagespace,
+			reinterpret_cast<LPVOID*>(&g_DrawWorld_Imagespace), "DrawWorld_Imagespace");
+
+		CreateAndEnableHook((LPVOID)DrawWorld_Render_PostUI_Ori.address(), &hkDrawWorld_Render_PostUI,
+			reinterpret_cast<LPVOID*>(&g_DrawWorld_Render_PostUI), "DrawWorld_Render_PostUI");
+
+		CreateAndEnableHook((LPVOID)UI_ScreenSpace_RenderMenus_Ori.address(), &hkUI_ScreenSpace_RenderMenus,
+			reinterpret_cast<LPVOID*>(&g_UI_ScreenSpace_RenderMenus), "UI_ScreenSpace_RenderMenus");
+
 		RegisterTAAHook();
-		
-		// 注册 ImageSpace 调试 Hook
 		RegisterImageSpaceDebugHooks();
 
 		logger::info("Hooks registered successfully");
@@ -137,22 +163,13 @@ namespace ThroughScope
 		void* targetAddr = reinterpret_cast<void*>(TAAFunc.address());
 
 		uint8_t* funcBytes = reinterpret_cast<uint8_t*>(targetAddr);
-		bool alreadyHooked = false;
-
-		if (funcBytes[0] == 0xE9 || funcBytes[0] == 0xFF || funcBytes[0] == 0x48) {
-			logger::warn("TAA function may already be hooked by another mod. First bytes: {:02X} {:02X} {:02X} {:02X} {:02X}",
-				funcBytes[0], funcBytes[1], funcBytes[2], funcBytes[3], funcBytes[4]);
-			alreadyHooked = true;
-		}
+		bool alreadyHooked = (funcBytes[0] == 0xE9 || funcBytes[0] == 0xFF || funcBytes[0] == 0x48);
 
 		if (alreadyHooked) {
-			logger::info("Attempting to remove existing hook...");
+			logger::warn("TAA function may already be hooked by another mod");
 			MH_DisableHook(targetAddr);
 			MH_RemoveHook(targetAddr);
 		}
-
-		logger::info("Target TAA function address: {:X}", reinterpret_cast<uintptr_t>(targetAddr));
-		logger::info("Hook function (hkTAA) address: {:X}", reinterpret_cast<uintptr_t>(&hkTAA));
 
 		MH_STATUS status = MH_CreateHook(targetAddr,
 			reinterpret_cast<void*>(&hkTAA),
@@ -161,17 +178,10 @@ namespace ThroughScope
 		if (status != MH_OK) {
 			logger::error("Failed to create TAA hook. Status: {}", static_cast<int>(status));
 
-			logger::info("Attempting vtable hook as fallback...");
+			// Fallback to vtable hook
 			REL::Relocation<std::uintptr_t> vtable_TAA(RE::ImageSpaceEffectTemporalAA::VTABLE[0]);
 			void** vtablePtr = reinterpret_cast<void**>(vtable_TAA.address());
 			void* originalFunc = vtablePtr[1];
-
-			if (reinterpret_cast<uintptr_t>(originalFunc) == TAAFunc.address()) {
-				logger::info("Vtable points to expected function, modifying vtable directly");
-			} else {
-				logger::warn("Vtable function differs from expected. Vtable: {:X}, Expected: {:X}",
-					reinterpret_cast<uintptr_t>(originalFunc), TAAFunc.address());
-			}
 
 			g_TAA = reinterpret_cast<FnTAA>(originalFunc);
 
@@ -184,16 +194,8 @@ namespace ThroughScope
 		} else if (MH_EnableHook(targetAddr) != MH_OK) {
 			logger::error("Failed to enable TAA hook");
 		} else {
-			logger::info("TAA hook created successfully at address: {:X} (ID: 528052)", TAAFunc.address());
-			logger::info("Original function (g_TAA) points to: {:X}", reinterpret_cast<uintptr_t>(g_TAA));
-
-			funcBytes = reinterpret_cast<uint8_t*>(targetAddr);
-			logger::info("After hook - First bytes: {:02X} {:02X} {:02X} {:02X} {:02X}",
-				funcBytes[0], funcBytes[1], funcBytes[2], funcBytes[3], funcBytes[4]);
-
-			if (g_TAA) {
-				logger::info("g_TAA is valid and points to trampoline");
-			} else {
+			logger::info("TAA hook created successfully");
+			if (!g_TAA) {
 				logger::error("g_TAA is null after successful hook!");
 			}
 		}

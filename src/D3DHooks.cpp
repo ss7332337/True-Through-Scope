@@ -10,6 +10,7 @@
 #include <d3dcompiler.h>
 #include "HDRStateCache.h"
 #include "RenderUtilities.h"
+#include "ScopeRenderingManager.h"
 
 #include <DDSTextureLoader11.h>
 #include "ImGuiManager.h"
@@ -371,26 +372,15 @@ namespace ThroughScope {
 		_COM_Outptr_opt_ ID3D11DeviceContext** ppImmediateContext)
 	{
 		auto hr = m_D3D11CreateDeviceAndSwapChain_O(
-			pAdapter,
-			DriverType,
-			Software,
-			Flags,
-			pFeatureLevels,
-			FeatureLevels,
-			SDKVersion,
-			pSwapChainDesc,
-			ppSwapChain,
-			ppDevice,
-			pFeatureLevel,
-			ppImmediateContext);
+			pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels,
+			SDKVersion, pSwapChainDesc, ppSwapChain, ppDevice, pFeatureLevel, ppImmediateContext);
 
 		m_SwapChain = *ppSwapChain;
 		m_Device = *ppDevice;
 		m_Device->GetImmediateContext(&m_Context);
 
 		GetSington()->HookAllContexts();
-
-		logger::info("Washoi!");
+		logger::info("D3D hooks initialized");
 
 		return hr;
 	}
@@ -509,7 +499,7 @@ namespace ThroughScope {
 			InitRenderDoc();
 		}
 #endif
-		logger::info("AHYEEEEERT!");
+		logger::info("D3D11 hooks loading...");
 		ThroughScope::upscalerModular = LoadLibraryA("Data/F4SE/Plugins/Fallout4Upscaler.dll");
 
 		//if (!ThroughScope::upscalerModular)
@@ -893,14 +883,18 @@ namespace ThroughScope {
 		UINT screenWidth = rendererState.backBufferWidth;
 		UINT screenHeight = rendererState.backBufferHeight;
 		
-		// DLSS/FSR3: Use FirstPass viewport for UV calculation
+		// DLSS/FSR3: Use FirstPass viewport for shader UV calculation
+		// Upscaling 动态调整 viewport 大小，必须使用 FirstPassViewport
 		float viewportWidth = static_cast<float>(screenWidth);
 		float viewportHeight = static_cast<float>(screenHeight);
+		
 		D3D11_VIEWPORT firstPassViewport = {};
 		if (RenderUtilities::GetFirstPassViewport(firstPassViewport) && 
 			firstPassViewport.Width > 0 && firstPassViewport.Height > 0) {
 			viewportWidth = firstPassViewport.Width;
 			viewportHeight = firstPassViewport.Height;
+			logger::debug("[Upscaling] SetScopeTexture using FirstPass viewport {}x{}", 
+				viewportWidth, viewportHeight);
 		}
 
 		// 获取玩家摄像头位置
@@ -1087,6 +1081,8 @@ namespace ThroughScope {
 			// 写入所有颜色通道
 			blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 
+
+
 			hr = device->CreateBlendState(&blendDesc, &blendState);
 			if (FAILED(hr)) {
 				logger::error("Failed to create blend state: 0x{:X}", hr);
@@ -1094,7 +1090,7 @@ namespace ThroughScope {
 				device->Release();
 				return;
 			}
-			logger::info("Successfully created all scope rendering resources");
+			logger::info("Scope rendering resources created");
 		}
 
 		// 复制/解析纹理内容
@@ -1595,15 +1591,12 @@ namespace ThroughScope {
 			s_CachedOMState.depthStencilView.GetAddressOf()
 		);
 
-		// 计算实际绑定的RenderTarget数量
 		s_CachedOMState.numRenderTargets = 0;
 		for (UINT i = 0; i < OMStateCache::MAX_RENDER_TARGETS; ++i) {
 			if (s_CachedOMState.renderTargetViews[i].Get()) {
 				s_CachedOMState.numRenderTargets = i + 1;
 			}
 		}
-
-		logger::info("Cached {} render targets", s_CachedOMState.numRenderTargets);
 	}
 
 	void D3DHooks::RestoreRSState(ID3D11DeviceContext* pContext)
@@ -1631,8 +1624,6 @@ namespace ThroughScope {
 			renderTargets,
 			s_CachedOMState.depthStencilView.Get()
 		);
-
-		logger::info("Restored {} render targets", s_CachedOMState.numRenderTargets);
 	}
 
 	void D3DHooks::SetSecondRenderTargetAsActive()
@@ -1644,13 +1635,10 @@ namespace ThroughScope {
 
 		ID3D11RenderTargetView* targetRTV = nullptr;
 		
-		// 如果有两个或更多RenderTarget，使用第二个；否则使用第一个
 		if (s_CachedOMState.numRenderTargets >= 2) {
 			targetRTV = s_CachedOMState.renderTargetViews[1].Get();
-			logger::info("Setting second render target as active");
 		} else if (s_CachedOMState.numRenderTargets >= 1) {
 			targetRTV = s_CachedOMState.renderTargetViews[0].Get();
-			logger::info("Only one render target available, using first one");
 		} else {
 			logger::error("No render targets available in cached state");
 			return;

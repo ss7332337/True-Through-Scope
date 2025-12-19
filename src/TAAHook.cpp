@@ -40,7 +40,15 @@ namespace ThroughScope
 		g_hookMgr->g_TAA(thisPtr, a_geometry, a_param);
 		D3DPERF_EndEvent();
 
+		// ========== 瞄具渲染已移至 ImageSpaceManager::RenderEffectRange(15-21) ==========
+		// 原因: ImageSpaceManager::RenderEffectRange(15-21) 在所有 3D 渲染（包括 HDR, TAA, DOF）完成后、
+		//       UI 渲染开始前调用，这是一劳永逸的渲染时机
+		// 参见: RenderHooks.cpp 中的 hkUI_BeginRender 函数
+		
+		// [DISABLED] 以下代码已禁用，保留作为参考
 		// 检查是否可以执行第二次渲染
+		// 现在由 hkUI_BeginRender 处理
+		/*
 		if (!g_renderStateMgr->IsScopeReady() || !g_renderStateMgr->IsRenderReady() || !D3DHooks::IsEnableRender()) {
 			return;
 		}
@@ -52,28 +60,13 @@ namespace ThroughScope
 			return;
 		}
 
-		// ========== fo4test 兼容模式 ==========
-		// 如果启用了 fo4test 兼容，场景渲染已在 Forward 阶段完成
-		// 这里只需执行后处理（HDR、热成像等）
-		if (g_scopeRenderMgr->IsFO4TestCompatibilityEnabled()) {
-			if (g_scopeRenderMgr->IsSceneRenderingCompleteThisFrame()) {
-				D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_PostProcessing_FO4TestCompat");
-				g_scopeRenderMgr->ExecutePostProcessingPhase();
-				D3DPERF_EndEvent();
-			}
-			// 不管成功与否，重置帧状态
-			g_scopeRenderMgr->OnFrameEnd();
-			return;
-		}
-
-		// ========== 标准模式 ==========
-		// 没有 fo4test，使用原来的完整渲染流程
-		logger::info("[TAAHook] Using STANDARD rendering mode");
+		// fo4test 兼容模式 / 标准模式渲染已移至 UI::BeginRender
 		D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_SecondPass");
 		SecondPassRenderer renderer(context, device, d3dHooks);
 		if (!renderer.ExecuteSecondPass()){
 			logger::warn("[HDR-DEBUG] hkTAA: ExecuteSecondPass returned FALSE");
 		}
 		D3DPERF_EndEvent();
+		*/
 	}
 }

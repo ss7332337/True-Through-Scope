@@ -67,6 +67,8 @@ namespace ThroughScope
 		static ID3D11Texture2D* s_BackBufferTexture;
 		static ID3D11ShaderResourceView* s_BackBufferSRV;
 
+		// Motion vector backup for fo4test compatibility
+		static ID3D11Texture2D* s_MotionVectorBackup;
 
         // Scope textures
         static RE::BSGraphics::Texture* s_ScopeBSTexture;

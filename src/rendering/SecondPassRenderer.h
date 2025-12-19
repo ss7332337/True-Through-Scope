@@ -135,5 +135,28 @@ namespace ThroughScope
 
         // ========== 错误处理 ==========
         mutable std::string m_lastError;
+
+		// ========== Motion Vector Mask (fo4test 兼容) ==========
+		bool InitializeMotionVectorMask();
+		void ShutdownMotionVectorMask();
+		void ApplyMotionVectorMask();  // 在scope区域清零motion vector
+
+		Microsoft::WRL::ComPtr<ID3D11VertexShader> m_mvMaskVS;
+		Microsoft::WRL::ComPtr<ID3D11PixelShader> m_mvMaskPS;
+		Microsoft::WRL::ComPtr<ID3D11Buffer> m_mvMaskConstantBuffer;
+		Microsoft::WRL::ComPtr<ID3D11SamplerState> m_mvMaskSampler;
+		Microsoft::WRL::ComPtr<ID3D11BlendState> m_mvMaskBlendState;
+		Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_mvMaskDepthState;
+		Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_mvMaskRasterizerState;
+		bool m_mvMaskInitialized = false;
+
+		// Motion vector mask常量缓冲区结构
+		struct MVMaskConstants
+		{
+			float scopeCenterX;     // 屏幕中心X (0.5)
+			float scopeCenterY;     // 屏幕中心Y (0.5)
+			float scopeRadius;      // scope半径 (normalized)
+			float aspectRatio;      // 宽高比
+		};
     };
 }

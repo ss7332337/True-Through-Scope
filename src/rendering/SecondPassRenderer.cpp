@@ -7,6 +7,8 @@
 #include "RE/Bethesda/ImageSpaceManager.hpp"
 #include <winternl.h>
 
+#include "ScopeRenderingManager.h"
+
 namespace ThroughScope
 {
 	SecondPassRenderer::SecondPassRenderer(ID3D11DeviceContext* context, ID3D11Device* device, D3DHooks* d3dHooks) 
@@ -87,11 +89,12 @@ namespace ThroughScope
 			m_renderExecuted = true;
 
 			// 5.6 应用自定义 HDR 后处理
-			if (!ScopeRenderingManager::GetSingleton()->IsFO4TestCompatibilityEnabled())
+			/*if (!ScopeRenderingManager::GetSingleton()->IsFO4TestCompatibilityEnabled())
 			{
 				ApplyCustomHDREffect(); 
-			}
+			}*/
 			
+			ApplyCustomHDREffect(); 
 
 			// 5.6 如果启用热成像，应用热成像效果
 			if (m_thermalVisionEnabled) {
@@ -1090,21 +1093,27 @@ namespace ThroughScope
 			}
 
 			// 回退到主画面捕获的亮度
-			if (!luminanceSRV && g_HDRStateCache.IsValid()) {
-				luminanceSRV = g_HDRStateCache.luminanceSRVCopy.Get();
-				if (!luminanceSRV) {
-					luminanceSRV = g_HDRStateCache.psSRVs[2].Get();
-				}
-				logger::debug("ApplyCustomHDREffect: Fallback to captured main scene luminance");
-			}
+			// [FIXED] 禁用主场景缓存的 luminance - 可能与瞄具 FOV 不匹配
+			// if (!luminanceSRV && g_HDRStateCache.IsValid()) {
+			// 	luminanceSRV = g_HDRStateCache.luminanceSRVCopy.Get();
+			// 	if (!luminanceSRV) {
+			// 		luminanceSRV = g_HDRStateCache.psSRVs[2].Get();
+			// 	}
+			// 	logger::debug("ApplyCustomHDREffect: Fallback to captured main scene luminance");
+			// }
+			// 使用 nullptr，让 HDR shader 使用默认值
 
 			// 获取 Bloom 纹理
-			if (g_HDRStateCache.IsValid()) {
-				bloomSRV = g_HDRStateCache.bloomSRVCopy.Get();
-				if (!bloomSRV) {
-					bloomSRV = g_HDRStateCache.psSRVs[0].Get();
-				}
-			}
+			// [FIXED] 禁用主场景缓存的 bloom - 可能与瞄具 FOV 不匹配
+			// if (g_HDRStateCache.IsValid()) {
+			// 	bloomSRV = g_HDRStateCache.bloomSRVCopy.Get();
+			// 	if (!bloomSRV) {
+			// 		bloomSRV = g_HDRStateCache.psSRVs[0].Get();
+			// 	}
+			// }
+			// 使用 nullptr，让 HDR shader 使用默认值
+			bloomSRV = nullptr;
+
 
 			// 获取深度纹理 (用于 DOF)
 			// 使用 srViewDepth (offset 0x88) 而不是 dsView
@@ -1113,10 +1122,15 @@ namespace ThroughScope
 				depthSRV = (ID3D11ShaderResourceView*)rendererData->depthStencilTargets[2].srViewDepth;
 			}
 
-			// 获取 Mask 纹理 (GameRT_24 = TAA Jitter Mask)
-			if (rendererData->renderTargets[24].srView) {
-				maskSRV = (ID3D11ShaderResourceView*)rendererData->renderTargets[24].srView;
-			}
+			// [FIXED] 不使用 Mask 纹理 (GameRT_24 = TAA Jitter Mask)
+			// 原因: TAA Jitter Mask 是从主场景捕获的，包含主场景物体的轮廓信息。
+			// 当瞄具 FOV 与主相机 FOV 不同时（特别是用户调整 FOV 时），
+			// Mask 中的轮廓数据与当前帧不匹配，导致物体轮廓伪影随 FOV 变化。
+			// 解决方案: 瞄具场景的 HDR 处理不使用 Mask 纹理，改为传入 nullptr。
+			// HDR shader 应该有处理 nullptr mask 的逻辑（使用默认值或跳过 mask 相关处理）。
+			maskSRV = nullptr;
+
+
 
 			// ========== 新版后处理管线 ==========
 			if (useNewPostProcessPipeline) {
@@ -1222,8 +1236,32 @@ namespace ThroughScope
 			logger::error("ApplyCustomHDREffect: Exception during HDR effect rendering");
 		}
 
+		// 清理渲染状态以防止纹理泄漏到后续渲染
+		// 这解决了放大 FOV 时半透明物体错误显示的问题
+		{
+			// 清除所有 PS SRV 绑定 (slot 0-15)
+			ID3D11ShaderResourceView* nullSRVs[16] = {};
+			m_context->PSSetShaderResources(0, 16, nullSRVs);
+
+			// 清除 CS SRV 绑定 (slot 0-7)
+			m_context->CSSetShaderResources(0, 8, nullSRVs);
+
+			// 清除 CS UAV 绑定
+			ID3D11UnorderedAccessView* nullUAVs[4] = {};
+			m_context->CSSetUnorderedAccessViews(0, 4, nullUAVs, nullptr);
+
+			// 清除 RTV 绑定
+			ID3D11RenderTargetView* nullRTV = nullptr;
+			m_context->OMSetRenderTargets(1, &nullRTV, nullptr);
+
+			// 清除采样器
+			ID3D11SamplerState* nullSamplers[4] = {};
+			m_context->PSSetSamplers(0, 4, nullSamplers);
+		}
+
 		D3DPERF_EndEvent();
 	}
+
 
 	void SecondPassRenderer::RestoreFirstPass()
 	{
@@ -1300,7 +1338,37 @@ namespace ThroughScope
 			ID3D11Texture2D* targetTexture = nullptr;
 			UINT targetWidth = 0, targetHeight = 0;
 			
-			if (m_savedRTVs[1]) {
+			// [FIX] Upscaling 兼容：当 Upscaling 激活时，渲染到 kFrameBuffer (索引0)
+			// 因为 Upscaling::PostDisplay() 从 kFrameBuffer 复制
+			auto scopeRenderMgr = ScopeRenderingManager::GetSingleton();
+			auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+			
+			if (scopeRenderMgr->IsUpscalingActive() && rendererData) {
+				// Upscaling 模式：必须渲染到 kFrameBuffer (索引0)
+				auto& frameBuffer = rendererData->renderTargets[0];  // kFrameBuffer = 0
+				ID3D11RenderTargetView* frameBufferRTV = reinterpret_cast<ID3D11RenderTargetView*>(frameBuffer.rtView);
+				
+				if (frameBufferRTV) {
+					targetRTV = frameBufferRTV;
+					m_context->OMSetRenderTargets(1, &frameBufferRTV, nullptr);
+					
+					// 获取 FrameBuffer 尺寸
+					ID3D11Resource* rtResource = nullptr;
+					frameBufferRTV->GetResource(&rtResource);
+					if (rtResource) {
+						ID3D11Texture2D* rtTexture = nullptr;
+						if (SUCCEEDED(rtResource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&rtTexture))) {
+							D3D11_TEXTURE2D_DESC rtDesc;
+							rtTexture->GetDesc(&rtDesc);
+							targetWidth = rtDesc.Width;
+							targetHeight = rtDesc.Height;
+							logger::debug("[Upscaling] Rendering scope to kFrameBuffer {}x{}", targetWidth, targetHeight);
+							rtTexture->Release();
+						}
+						rtResource->Release();
+					}
+				}
+			} else if (m_savedRTVs[1]) {
 				targetRTV = m_savedRTVs[1];
 				m_context->OMSetRenderTargets(1, &m_savedRTVs[1], nullptr);
 				
@@ -1320,7 +1388,6 @@ namespace ThroughScope
 				}
 			} else {
 				// PreUI 阶段或其他情况: 使用主渲染目标
-				auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
 				if (rendererData && m_mainRTV) {
 					targetRTV = m_mainRTV;
 					m_context->OMSetRenderTargets(1, &m_mainRTV, nullptr);
@@ -1334,20 +1401,37 @@ namespace ThroughScope
 				}
 			}
 
+
 			// 渲染瞄具内容
 			int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
 			if (scopeNodeIndexCount != -1 && targetRTV) {
 				try {
-					// Use FirstPass viewport for DLSS/FSR3 upscaling
+					// 设置 viewport
 					D3D11_VIEWPORT viewport = {};
 					
-					if (!RenderUtilities::GetFirstPassViewport(viewport)) {
-						// Fallback: use backBuffer size
-						auto rendererState = RE::BSGraphics::State::GetSingleton();
+					auto scopeRenderMgr = ScopeRenderingManager::GetSingleton();
+					if (scopeRenderMgr->IsUpscalingActive()) {
+						// Upscaling 模式：必须使用 FirstPassViewport（动态分辨率）
+						// Upscaling 动态调整 viewport 大小，如 1129.4 x 635.3
+						if (RenderUtilities::GetFirstPassViewport(viewport)) {
+							logger::debug("[Upscaling] RestoreFirstPass using FirstPass viewport {}x{}", 
+								viewport.Width, viewport.Height);
+						} else {
+							// Fallback: 使用 backBuffer
+							auto rendererState = RE::BSGraphics::State::GetSingleton();
+							viewport.TopLeftX = 0;
+							viewport.TopLeftY = 0;
+							viewport.Width = static_cast<float>(rendererState.backBufferWidth);
+							viewport.Height = static_cast<float>(rendererState.backBufferHeight);
+							viewport.MinDepth = 0.0f;
+							viewport.MaxDepth = 1.0f;
+						}
+					} else {
+						// 非 Upscaling 模式：使用 targetWidth/Height
 						viewport.TopLeftX = 0;
 						viewport.TopLeftY = 0;
-						viewport.Width = static_cast<float>(rendererState.backBufferWidth);
-						viewport.Height = static_cast<float>(rendererState.backBufferHeight);
+						viewport.Width = static_cast<float>(targetWidth);
+						viewport.Height = static_cast<float>(targetHeight);
 						viewport.MinDepth = 0.0f;
 						viewport.MaxDepth = 1.0f;
 					}

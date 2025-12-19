@@ -26,21 +26,8 @@ namespace ThroughScope
 	static LightBackupSystem* g_lightBackup = LightBackupSystem::GetSingleton();
 	static ScopeRenderingManager* g_scopeRenderMgr = ScopeRenderingManager::GetSingleton();
 
-	// ========== 调试模式配置 ==========
-	static bool g_DebugLaserInvestigation = false;
-	static bool g_HasLoggedLaserInfo = false;
-	static int g_LaserLogFrameCount = 0;
-	constexpr int LASER_LOG_FRAMES = 3;
-
 	// ========== 激光节点识别 ==========
 
-	/**
-	 * @brief 检查节点名称是否为激光相关节点
-	 * @param name 节点名称
-	 * @return 如果是激光节点返回 true
-	 *
-	 * 识别规则：名称包含 Laser/laser/Beam/beam/Dot
-	 */
 	inline bool IsLaserNodeName(const char* name)
 	{
 		if (!name || name[0] == '\0') return false;
@@ -51,22 +38,11 @@ namespace ThroughScope
 		       (strstr(name, "Dot") != nullptr);
 	}
 
-	/**
-	 * @brief 用于临时分离的节点信息
-	 */
 	struct DetachedNodeInfo {
 		NiAVObject* node;
 		NiNode* parent;
 	};
 
-	/**
-	 * @brief 递归收集需要分离的非激光几何体
-	 * @param node 当前节点
-	 * @param parentNode 父节点
-	 * @param depth 当前深度
-	 * @param outDetached 输出：需要分离的节点列表
-	 * @param outLaserCount 输出：找到的激光节点数量
-	 */
 	void CollectNonLaserGeometries(
 		NiAVObject* node,
 		NiNode* parentNode,
@@ -81,18 +57,13 @@ namespace ThroughScope
 
 		if (isLaser) {
 			outLaserCount++;
-			if (g_DebugLaserInvestigation && g_LaserLogFrameCount < LASER_LOG_FRAMES) {
-				logger::info("[Laser] Found: {} (depth: {})", name, depth);
-			}
 		} else {
-			// 非激光几何体需要分离
 			auto geom = node->IsGeometry();
 			if (geom && parentNode) {
 				outDetached.push_back({ node, parentNode });
 			}
 		}
 
-		// 递归处理子节点
 		auto niNode = node->IsNode();
 		if (niNode) {
 			for (auto& child : niNode->children) {
@@ -103,22 +74,7 @@ namespace ThroughScope
 		}
 	}
 
-	// ========== 调试日志函数 ==========
 
-	void SetLaserInvestigationMode(bool enable)
-	{
-		g_DebugLaserInvestigation = enable;
-		g_HasLoggedLaserInfo = false;
-		g_LaserLogFrameCount = 0;
-		if (enable) {
-			logger::info("[Laser] Investigation mode ENABLED");
-		}
-	}
-
-	bool IsLaserInvestigationEnabled()
-	{
-		return g_DebugLaserInvestigation;
-	}
 
 	// 前向声明，实际定义在main.cpp中
 	namespace FirstSpawnDelay
@@ -173,41 +129,16 @@ namespace ThroughScope
 		const unsigned int aFlags)
 	{
 		D3DPERF_BeginEvent(0xffffffff, L"BSCullingGroup_Add");
-		// 验证thisPtr
-		if (!thisPtr) {
-			logger::error("BSCullingGroup thisPtr is null");
+		if (!thisPtr || !IsValidObject(apObj) || !IsValidPointer(aBound)) {
 			D3DPERF_EndEvent();
 			return;
 		}
 
-		// 验证apObj
-		if (!IsValidObject(apObj)) {
-			logger::error("Invalid object: 0x{:X}", (uintptr_t)apObj);
-			D3DPERF_EndEvent();
-			return;
-		}
-
-		// 验证aBound指针
-		if (!IsValidPointer(aBound)) {
-			const char* objName = (apObj && apObj->name.c_str()) ? apObj->name.c_str() : "unknown";
-			logger::error("NiBound is invalid for object: {} (ptr: 0x{:X})", objName, reinterpret_cast<uintptr_t>(aBound));
-			D3DPERF_EndEvent();
-			return;
-		}
-
-		// 在瞄具渲染期间，跳过天气对象
 		if (ScopeCamera::IsRenderingForScope()) {
 			const char* objName = apObj->name.c_str();
 			if (objName && strstr(objName, "Weather")) {
 				D3DPERF_EndEvent();
 				return;
-			}
-
-			// 激光调查日志
-			if (g_DebugLaserInvestigation && g_LaserLogFrameCount < LASER_LOG_FRAMES) {
-				if (objName && (strstr(objName, "Laser") || strstr(objName, "Beam"))) {
-					logger::info("[LaserInvestigate] BSCullingGroup::Add laser: {}", objName);
-				}
 			}
 		}
 
@@ -232,7 +163,6 @@ namespace ThroughScope
 	void hkBSStreamLoad(BSStream* stream, const char* apFileName, NiBinaryStream* apStream)
 	{
 		D3DPERF_BeginEvent(0xffffffff, L"BSStream_Load");
-		logger::info("apFileName: {}", apFileName);
 		g_hookMgr->g_BSStreamLoad(stream, apFileName, apStream);
 		D3DPERF_EndEvent();
 	}
@@ -252,41 +182,11 @@ namespace ThroughScope
 			g_hookMgr->g_RenderPreUIOriginal(ptr_drawWorld);
 			D3DPERF_EndEvent();
 
-			// Capture FirstPass viewport for DLSS/FSR3 upscaling
-			if (g_scopeRenderMgr->IsFO4TestCompatibilityEnabled()) {
-				auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-				if (rendererData && rendererData->context) {
-					D3D11_VIEWPORT currentViewport = {};
-					UINT numViewports = 1;
-					((ID3D11DeviceContext*)rendererData->context)->RSGetViewports(&numViewports, &currentViewport);
-					if (numViewports > 0 && currentViewport.Width > 0 && currentViewport.Height > 0) {
-						RenderUtilities::SetFirstPassViewport(currentViewport);
-					}
-				}
-			}
-			
-			// FO4Test compatibility: render scope here when DLSS/FSR3 replaces TAA
-			if (g_scopeRenderMgr->IsFO4TestCompatibilityEnabled() && D3DHooks::IsEnableRender()) {
-				auto renderStateMgr = RenderStateManager::GetSingleton();
-				if (renderStateMgr->IsScopeReady() && renderStateMgr->IsRenderReady()) {
-					ID3D11Device* device = d3dHooks->GetDevice();
-					ID3D11DeviceContext* context = d3dHooks->GetContext();
-					
-					if (device && context) {
-						D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_SecondPass_FO4TestCompat");
-						SecondPassRenderer renderer(context, device, d3dHooks);
-						if (!renderer.ExecuteSecondPass()) {
-							logger::warn("[FO4Test-Compat] SecondPassRenderer failed in PreUI");
-						}
-						D3DPERF_EndEvent();
-					}
-				}
-			}
 		} else {
-			// 第二次渲染（瞄具相机）- 在 SecondPassRenderer 中已有标记
 			g_hookMgr->g_RenderPreUIOriginal(ptr_drawWorld);
 		}
 	}
+
 
 	void __fastcall hkRenderZPrePass(BSGraphics::RendererShadowState* rshadowState, BSGraphics::ZPrePassDrawData* aZPreData,
 		unsigned __int64* aVertexDesc, unsigned __int16* aCullmode, unsigned __int16* aDepthBiasMode)
@@ -354,8 +254,6 @@ namespace ThroughScope
 			return;
 		}
 
-		// === 瞄具渲染：只添加激光几何体 ===
-
 		auto p1stPerson = *ThroughScope::ptr_DrawWorld1stPerson;
 		if (!p1stPerson) {
 			g_hookMgr->g_Add1stPersonGeomToCullerOriginal(thisPtr);
@@ -363,14 +261,11 @@ namespace ThroughScope
 			return;
 		}
 
-		// 收集需要分离的非激光几何体
 		std::vector<DetachedNodeInfo> detachedNodes;
 		int laserCount = 0;
 
-		// 处理第一人称节点树
 		CollectNonLaserGeometries(p1stPerson, nullptr, 0, detachedNodes, laserCount);
 
-		// 处理武器节点（激光可能挂载在此）
 		NiAVObject* weaponNode = p1stPerson->GetObjectByName("Weapon");
 		if (!weaponNode) {
 			auto playerChar = RE::PlayerCharacter::GetSingleton();
@@ -382,23 +277,14 @@ namespace ThroughScope
 			CollectNonLaserGeometries(weaponNode, nullptr, 0, detachedNodes, laserCount);
 		}
 
-		// 调试日志
-		if (g_DebugLaserInvestigation && g_LaserLogFrameCount < LASER_LOG_FRAMES) {
-			logger::info("[Laser] Scope render: {} laser nodes, detaching {} geometries",
-				laserCount, detachedNodes.size());
-		}
-
-		// 步骤1：从场景图分离非激光几何体
 		for (auto& info : detachedNodes) {
 			if (info.parent && info.node) {
 				info.parent->DetachChild(info.node);
 			}
 		}
 
-		// 步骤2：调用原函数（此时只能看到激光几何体）
 		g_hookMgr->g_Add1stPersonGeomToCullerOriginal(thisPtr);
 
-		// 步骤3：重新附加所有分离的几何体
 		for (auto& info : detachedNodes) {
 			if (info.parent && info.node) {
 				info.parent->AttachChild(info.node, true);
@@ -416,92 +302,26 @@ namespace ThroughScope
 	void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
 	{
 		if (ScopeCamera::IsRenderingForScope()) {
-			// 在瞄具渲染过程中重新应用光源状态
-			// 启用光源数量限制优化：最多使用16个最重要的光源
 			g_lightBackup->ApplyLightStatesForScope(false, 16);
 		}
-
 		D3DEventNode(g_hookMgr->g_DeferredLightsImplOriginal(ptr_drawWorld), L"hkDeferredLightsImpl");
 	}
 
-	/**
-	 * @brief DrawWorld Forward 阶段钩子
-	 *
-	 * Forward 阶段渲染前向渲染的物体（如激光等半透明/发光效果）
-	 * 
-	 * 注意: fo4test 兼容已移至 hkRender_PreUI 实现
-	 * 在 Forward 阶段调用完整渲染管线会导致卡死
-	 */
 	void __fastcall hkDrawWorld_Forward(uint64_t ptr_drawWorld)
 	{
-		// 调试日志
-		if (g_DebugLaserInvestigation && g_LaserLogFrameCount < LASER_LOG_FRAMES) {
-			bool isScope = ScopeCamera::IsRenderingForScope();
-			logger::info("[Laser] Forward {} - Frame {}",
-				isScope ? "Scope" : "Main", g_LaserLogFrameCount);
-		}
-
 		D3DHooks::SetForwardStage(true);
 		D3DEventNode(g_hookMgr->g_ForwardOriginal(ptr_drawWorld), L"hkDrawWorld_Forward");
 		D3DHooks::SetForwardStage(false);
 
-		// 更新调试帧计数
-		if (g_DebugLaserInvestigation && g_LaserLogFrameCount < LASER_LOG_FRAMES) {
-			if (ScopeCamera::IsRenderingForScope()) {
-				g_LaserLogFrameCount++;
-			}
+		auto scopeRenderMgr = ScopeRenderingManager::GetSingleton();
+		if (scopeRenderMgr->IsUpscalingActive()) {
+			D3DPERF_BeginEvent(0xFF00AAFF, L"[FO4TEST_TIMING] After_Forward_CopyBuffersToShared");
+			D3DPERF_EndEvent();
 		}
 	}
 
 	void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 	{
-		SHORT keyPgDown = GetAsyncKeyState(VK_NEXT);
-		SHORT keyPgUp = GetAsyncKeyState(VK_PRIOR);
-
-		if (keyPgUp & 0x1) {
-			BSScrapArray<NiPointer<Actor>> aRetArray;
-			std::vector<Actor*> actorList{};
-			ProcessLists::GetSingleton()->GetActorsWithinRangeOfReference(g_pchar, 20000, &aRetArray);
-			auto imadThermal = Utilities::GetFormFromMod("WestTekTacticalOptics.esp", 0x811)->As<TESImageSpaceModifier>();
-			for (size_t i = 0; i < aRetArray.size(); i++) {
-				Actor* actor = aRetArray[i].get();
-				if (actor->formID != 0x7 && actor->formID != 0x14) {
-					std::string actorName = actor->GetDisplayFullName();
-					logger::info("Found Actor: {}", actorName.c_str());
-				}
-				actorList.push_back(actor);
-			}
-
-			logger::info("actorList size: {}", actorList.size());
-
-			for (auto actor : actorList) {
-				auto actorNode = actor->Get3D()->IsNode();
-				if (!actorNode)
-					continue;
-
-				auto actorBase = actor->GetActorBase();
-				if (!actorBase)
-					continue;
-
-				LogNodeHierarchy(actorNode);
-				auto actorNodeChildren = actorNode->children.data();
-				for (size_t j = 0; j < actorNode->children.size(); j++) {
-					auto child = actorNodeChildren[j].get();
-					if (!child)
-						continue;
-
-					auto childGeo = child->IsTriShape();
-					if (childGeo) {
-						auto lightShader = childGeo->QShaderProperty();
-						auto lightShader2 = (BSLightingShaderProperty*)lightShader;
-						auto lightMat = (BSLightingShaderMaterial*)lightShader2->material;
-					}
-				}
-			}
-		}
-		if (keyPgDown & 0x1) {
-			Utilities::LogPlayerWeaponNodes();
-		}
 
 		auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
 
@@ -523,16 +343,13 @@ namespace ThroughScope
 				auto currentTime = std::chrono::steady_clock::now();
 				auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - FirstSpawnDelay::delayStartTime);
 
-				if (elapsed.count() >= 500) {
-					// 延迟时间到，执行逻辑
-					ScopeCamera::CleanupScopeResources();
-					ScopeCamera::SetupScopeForWeapon(weaponInfo);
-					d3dHooks->SetScopeTexture((ID3D11DeviceContext*)RE::BSGraphics::RendererData::GetSingleton()->context);
-					ScopeCamera::hasFirstSpawnNode = true;
-					logger::warn("FirstSpawn Finish");
-					// 确保ZoomData被正确设置
-					ScopeCamera::RestoreZoomDataForCurrentWeapon();
-				}
+			if (elapsed.count() >= 500) {
+				ScopeCamera::CleanupScopeResources();
+				ScopeCamera::SetupScopeForWeapon(weaponInfo);
+				d3dHooks->SetScopeTexture((ID3D11DeviceContext*)RE::BSGraphics::RendererData::GetSingleton()->context);
+				ScopeCamera::hasFirstSpawnNode = true;
+				ScopeCamera::RestoreZoomDataForCurrentWeapon();
+			}
 			}
 			return g_hookMgr->g_PCUpdateMainThread(pChar);
 		}
@@ -659,6 +476,112 @@ namespace ThroughScope
 		cameraData.viewProjMat[1] = backupViewProjMat[1];
 		cameraData.viewProjMat[2] = backupViewProjMat[2];
 		cameraData.viewProjMat[3] = backupViewProjMat[3];
+		D3DPERF_EndEvent();
+	}
+
+	// ========== ImageSpaceManager::RenderEffectRange Hook ==========
+	// 此函数在 Render_UI 中被调用多次：
+	// - 效果 0-13: HDR 等
+	// - 效果 15-21: TAA, DOF 等
+	// 当 aiLast=21 时表示所有效果完成，是渲染瞄具的理想时机
+	void __fastcall hkImageSpaceManager_RenderEffectRange(void* thisPtr, int aiFirst, int aiLast, int aiSourceTarget, int aiDestTarget)
+	{
+		// 用 D3DPERF 标记显示调用参数
+		wchar_t markerName[128];
+		swprintf_s(markerName, L"RenderEffectRange(%d-%d, src=%d, dst=%d)", aiFirst, aiLast, aiSourceTarget, aiDestTarget);
+		D3DPERF_BeginEvent(0xFFFF00FF, markerName);
+		
+		// 调用原始函数
+		g_hookMgr->g_ImageSpaceManager_RenderEffectRange(thisPtr, aiFirst, aiLast, aiSourceTarget, aiDestTarget);
+		
+		D3DPERF_EndEvent();
+		
+		// 当效果范围 15-21 完成后渲染瞄具
+		// 这是在 HDR/TAA/DOF 之后的时机
+		if (aiLast == 21) {
+			auto renderStateMgr = RenderStateManager::GetSingleton();
+			
+			if (renderStateMgr->IsScopeReady() && 
+				renderStateMgr->IsRenderReady() && 
+				D3DHooks::IsEnableRender() &&
+				!ScopeCamera::IsRenderingForScope()) {
+				
+				ID3D11DeviceContext* context = d3dHooks->GetContext();
+				ID3D11Device* device = d3dHooks->GetDevice();
+				
+				if (context && device) {
+					D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_SecondPass_PostEffects");
+					SecondPassRenderer renderer(context, device, d3dHooks);
+					if (!renderer.ExecuteSecondPass()) {
+						logger::warn("[RenderEffectRange Hook] SecondPassRenderer failed");
+					}
+					D3DPERF_EndEvent();
+					g_scopeRenderMgr->OnFrameEnd();
+				}
+			}
+		}
+	}
+
+	// ========== DrawWorld::Render_UI Debug Hook ==========
+	// 仅用于 RenderDoc 调试，显示 Render_UI 的开始和结束位置
+	void __fastcall hkDrawWorld_Render_UI(uint64_t thisPtr)
+	{
+		D3DPERF_BeginEvent(0xFF00FF00, L"DrawWorld_Render_UI");
+		g_hookMgr->g_DrawWorld_Render_UI(thisPtr);
+		D3DPERF_EndEvent();
+	}
+
+	// ========== UI::BeginRender Debug Hook ==========
+	// 仅用于 RenderDoc 调试，显示 UI::BeginRender 的位置
+	// 此处使用D3DPERF会崩溃
+	void __fastcall hkUI_BeginRender()
+	{
+		//D3DPERF_BeginEvent(0xFFFF00FF, L"UI_BeginRender");
+		g_hookMgr->g_UI_BeginRender();
+		//D3DPERF_EndEvent();
+	}
+
+	// ========== SetUseDynamicResolutionViewport Debug Hook ==========
+	// fo4test 在此函数参数为 false 时调用 PostDisplay()
+	// PostDisplay 将 kFrameBuffer 复制到 HUDLessBufferShared 供 FSR3 处理
+	void __fastcall hkSetUseDynamicResolutionViewport(void* thisPtr, bool a_useDynamicResolution)
+	{
+		if (a_useDynamicResolution) {
+			D3DPERF_BeginEvent(0xFF0088FF, L"SetUseDynamicResolutionViewport(TRUE)");
+		} else {
+			// 这是 fo4test 调用 PostDisplay 的时机点！
+			D3DPERF_BeginEvent(0xFFFF0000, L"SetUseDynamicResolutionViewport(FALSE)_PostDisplay_Timing");
+		}
+		
+		g_hookMgr->g_SetUseDynamicResolutionViewport(thisPtr, a_useDynamicResolution);
+		
+		D3DPERF_EndEvent();
+	}
+
+	// ========== DrawWorld::Imagespace Debug Hook ==========
+	// Upscaling/TAA 发生处 - 这是 FSR3/DLSS 处理的核心位置
+	void __fastcall hkDrawWorld_Imagespace()
+	{
+		D3DPERF_BeginEvent(0xFFFF8800, L"DrawWorld_Imagespace (Upscaling/TAA)");
+		g_hookMgr->g_DrawWorld_Imagespace();
+		D3DPERF_EndEvent();
+	}
+
+	// ========== DrawWorld::Render_PostUI Debug Hook ==========
+	// 在 Upscaling 后，UI 前 - 这是瞄具渲染的理想位置！
+	void __fastcall hkDrawWorld_Render_PostUI()
+	{
+		D3DPERF_BeginEvent(0xFF00FF00, L"DrawWorld_Render_PostUI (IDEAL_SCOPE_RENDER_POINT)");
+		g_hookMgr->g_DrawWorld_Render_PostUI();
+		D3DPERF_EndEvent();
+	}
+
+	// ========== UI::ScreenSpace_RenderMenus Debug Hook ==========
+	// 实际 UI 覆盖层渲染
+	void __fastcall hkUI_ScreenSpace_RenderMenus(void* thisPtr)
+	{
+		D3DPERF_BeginEvent(0xFFFF00FF, L"UI_ScreenSpace_RenderMenus");
+		g_hookMgr->g_UI_ScreenSpace_RenderMenus(thisPtr);
 		D3DPERF_EndEvent();
 	}
 }

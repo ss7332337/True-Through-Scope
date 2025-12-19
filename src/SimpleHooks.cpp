@@ -17,7 +17,7 @@ namespace ThroughScope
 
 	void hkBSBatchRenderer_Draw(BSRenderPass* apRenderPass)
 	{
-		D3DEventNode(g_hookMgr->g_originalBSBatchRendererDraw(apRenderPass), L"BSBatchRenderer_Draw");
+		g_hookMgr->g_originalBSBatchRendererDraw(apRenderPass);
 	}
 
 	void hkBSCullingGroup_SetCompoundFrustum(BSCullingGroup* thisPtr, BSCompoundFrustum* apCompoundFrustum)

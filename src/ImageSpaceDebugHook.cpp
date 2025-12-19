@@ -6,6 +6,10 @@
 #include "D3DHooks.h"
 #include "RE/Bethesda/ImageSpaceEffect.hpp"
 #include "RE/Bethesda/ImageSpaceManager.hpp"
+#include "rendering/SecondPassRenderer.h"
+#include "rendering/ScopeRenderingManager.h"
+#include "rendering/RenderStateManager.h"
+
 
 namespace ThroughScope
 {
@@ -26,6 +30,14 @@ namespace ThroughScope
         D3DPERF_BeginEvent(0xFF00FF00, L"ImageSpaceEffect_HDR");
 
         bool shouldCapture = !ScopeCamera::IsRenderingForScope();
+        
+        // [DEBUG] Log HDR hook execution
+        static int hdrLogCounter = 0;
+        if (hdrLogCounter++ % 300 == 0) {
+            auto scopeRenderMgr = ScopeRenderingManager::GetSingleton();
+            logger::info("[HDR Hook] Called - Upscaling={}, shouldCapture={}",
+                scopeRenderMgr->IsUpscalingActive(), shouldCapture);
+        }
 
         // 调用原始函数
         g_HDR_Render_Original(thisPtr, a_geometry, a_param);
@@ -48,6 +60,7 @@ namespace ThroughScope
 
         D3DPERF_EndEvent();
     }
+
 
     // Hook 函数 - TAA (已在 TAAHook.cpp 中实现，这里只是备用)
     void __fastcall hkImageSpaceEffectTAA_Render_Debug(RE::ImageSpaceEffect* thisPtr, RE::BSTriShape* a_geometry, RE::ImageSpaceEffectParam* a_param)

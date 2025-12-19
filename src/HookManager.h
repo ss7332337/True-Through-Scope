@@ -40,6 +40,7 @@ namespace RE
 	class BSRenderPass;
 	class BSStream;
 	class NiBinaryStream;
+	class UI;
 }
 
 namespace ThroughScope
@@ -86,6 +87,13 @@ namespace ThroughScope
 	RenderTarget* __fastcall hkRenderer_CreateRenderTarget(Renderer* renderer, int aId, const wchar_t* apName, const RenderTargetProperties* aProperties);
 	void __fastcall hkDoUmbraQuery(uint64_t ptr_drawWorld);
 	void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* apCurrentPass);
+	void __fastcall hkImageSpaceManager_RenderEffectRange(void* thisPtr, int aiFirst, int aiLast, int aiSourceTarget, int aiDestTarget);
+	void __fastcall hkDrawWorld_Render_UI(uint64_t thisPtr);  // Debug hook
+	void __fastcall hkUI_BeginRender();  // Upscaling mode: render scope after Upscaling, before UI
+	void __fastcall hkSetUseDynamicResolutionViewport(void* thisPtr, bool a_useDynamicResolution);  // Debug: fo4test PostDisplay timing
+	void __fastcall hkDrawWorld_Imagespace();  // Debug: Upscaling/TAA occurs here
+	void __fastcall hkDrawWorld_Render_PostUI();  // Debug: After Upscaling, before UI - potential scope render point
+	void __fastcall hkUI_ScreenSpace_RenderMenus(void* thisPtr);  // Debug: Actual UI overlay rendering
 
 	class HookManager
 	{
@@ -126,7 +134,6 @@ namespace ThroughScope
 		typedef void (*BSStreamLoad)(BSStream* stream, const char* apFileName, NiBinaryStream* apStream);
 		typedef void (*PCUpdateMainThread)(PlayerCharacter*);
 		typedef void (*FnDrawTriShape)(BSGraphics::Renderer* thisPtr, BSGraphics::TriShape* apTriShape, unsigned int auiStartIndex, unsigned int auiNumTriangles);
-		typedef void(__fastcall* FnDrawIndexed)(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
 		typedef void(__fastcall* FnMainPreRender)(Main* thisptr, int auiDestination);
 		typedef void(__fastcall* FnTAA)(ImageSpaceEffectTemporalAA*, BSTriShape* a_geometry, ImageSpaceEffectParam* a_param);
 		typedef void (*FnBSCullingGroupAdd)(BSCullingGroup*, NiAVObject* apObj, const NiBound* aBound, const unsigned int aFlags);
@@ -139,6 +146,13 @@ namespace ThroughScope
 		typedef void (*FnOcclusionMapRender)();
 		typedef void (*FnDoUmbraQuery)(uint64_t);
 		typedef void (*FnBSSkyShader_SetupGeometry)(void*, BSRenderPass*);
+		typedef void (__fastcall *FnImageSpaceManager_RenderEffectRange)(void*, int, int, int, int);
+		typedef void (*FnDrawWorld_Render_UI)(uint64_t);  // Debug
+		typedef void (*FnUI_BeginRender)();  // Upscaling mode
+		typedef void (__fastcall *FnSetUseDynamicResolutionViewport)(void*, bool);  // Debug: fo4test timing
+		typedef void (*FnDrawWorld_Imagespace)();  // Debug
+		typedef void (*FnDrawWorld_Render_PostUI)();  // Debug
+		typedef void (__fastcall *FnUI_ScreenSpace_RenderMenus)(void*);  // Debug
 #pragma endregion
 
 #pragma region Original Function Pointers
@@ -177,7 +191,6 @@ namespace ThroughScope
 		BSStreamLoad g_BSStreamLoad = nullptr;
 		PCUpdateMainThread g_PCUpdateMainThread = nullptr;
 		FnDrawTriShape g_DrawTriShape = nullptr;
-		FnDrawIndexed g_DrawIndexed = nullptr;
 		FnTAA g_TAA = nullptr;
 		FnBSCullingGroupAdd g_BSCullingGroupAdd = nullptr;
 		FnBSShaderAccumulator_RenderBatches g_BSShaderAccumulatorRenderBatches = nullptr;
@@ -189,6 +202,13 @@ namespace ThroughScope
 		FnOcclusionMapRender g_OcclusionMapRender = nullptr;
 		FnDoUmbraQuery g_DoUmbraQuery = nullptr;
 		FnBSSkyShader_SetupGeometry g_BSSkyShader_SetupGeometry = nullptr;
+		FnImageSpaceManager_RenderEffectRange g_ImageSpaceManager_RenderEffectRange = nullptr;
+		FnDrawWorld_Render_UI g_DrawWorld_Render_UI = nullptr;  // Debug
+		FnUI_BeginRender g_UI_BeginRender = nullptr;  // Upscaling mode
+		FnSetUseDynamicResolutionViewport g_SetUseDynamicResolutionViewport = nullptr;  // Debug
+		FnDrawWorld_Imagespace g_DrawWorld_Imagespace = nullptr;  // Debug
+		FnDrawWorld_Render_PostUI g_DrawWorld_Render_PostUI = nullptr;  // Debug
+		FnUI_ScreenSpace_RenderMenus g_UI_ScreenSpace_RenderMenus = nullptr;  // Debug
 #pragma endregion
 
 	private:
@@ -252,6 +272,30 @@ namespace ThroughScope
 		// SetupGeometry 通常在虚表偏移 0x48 或 0x50 处
 		// 临时使用占位符 ID，你需要替换为正确的 ID
 		REL::Relocation<uintptr_t> BSSkyShader_SetupGeometry_Ori{ REL::ID(751762) };  // TODO: 填入正确的 REL::ID
+
+		// ImageSpaceManager::RenderEffectRange
+		// 在 Render_UI 中被调用两次: 效果 0-13 和 15-21
+		// 当 aiLast=21 时表示所有 ImageSpace 效果 (HDR/TAA/DOF) 完成
+		REL::Relocation<uintptr_t> ImageSpaceManager_RenderEffectRange_Ori{ REL::ID(459505) };
+
+		// DrawWorld::Render_UI - Debug hook
+		REL::Relocation<uintptr_t> DrawWorld_Render_UI_Ori{ REL::ID(1130087) };
+
+		// UI::BeginRender - Upscaling 模式: 在 Upscaling 完成后但 UI 开始前渲染瞄具
+		REL::Relocation<uintptr_t> UI_BeginRender_Ori{ REL::ID(1056045) };
+
+		// SetUseDynamicResolutionViewportAsDefaultViewport - Debug: fo4test PostDisplay 时机
+		// fo4test 在此函数参数为 false 时调用 PostDisplay()，复制 kFrameBuffer 到共享缓冲区
+		REL::Relocation<uintptr_t> SetUseDynamicResolutionViewport_Ori{ REL::ID(587723) };
+
+		// DrawWorld::Imagespace - Upscaling/TAA 发生处
+		REL::Relocation<uintptr_t> DrawWorld_Imagespace_Ori{ REL::ID(587723) };
+
+		// DrawWorld::Render_PostUI - 在 Upscaling 后，UI 前 - 瞄具渲染的理想位置
+		REL::Relocation<uintptr_t> DrawWorld_Render_PostUI_Ori{ REL::ID(1569210) };
+
+		// UI::ScreenSpace_RenderMenus - 实际 UI 覆盖层渲染
+		REL::Relocation<uintptr_t> UI_ScreenSpace_RenderMenus_Ori{ REL::ID(230711) };
 #pragma endregion
 
 		void RegisterTAAHook();
