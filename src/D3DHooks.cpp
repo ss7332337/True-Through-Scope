@@ -893,8 +893,6 @@ namespace ThroughScope {
 			firstPassViewport.Width > 0 && firstPassViewport.Height > 0) {
 			viewportWidth = firstPassViewport.Width;
 			viewportHeight = firstPassViewport.Height;
-			logger::debug("[Upscaling] SetScopeTexture using FirstPass viewport {}x{}", 
-				viewportWidth, viewportHeight);
 		}
 
 		// 获取玩家摄像头位置

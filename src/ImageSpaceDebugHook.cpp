@@ -30,14 +30,6 @@ namespace ThroughScope
         D3DPERF_BeginEvent(0xFF00FF00, L"ImageSpaceEffect_HDR");
 
         bool shouldCapture = !ScopeCamera::IsRenderingForScope();
-        
-        // [DEBUG] Log HDR hook execution
-        static int hdrLogCounter = 0;
-        if (hdrLogCounter++ % 300 == 0) {
-            auto scopeRenderMgr = ScopeRenderingManager::GetSingleton();
-            logger::info("[HDR Hook] Called - Upscaling={}, shouldCapture={}",
-                scopeRenderMgr->IsUpscalingActive(), shouldCapture);
-        }
 
         // 调用原始函数
         g_HDR_Render_Original(thisPtr, a_geometry, a_param);
