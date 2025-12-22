@@ -689,15 +689,6 @@ namespace ThroughScope {
 		bool bufferSizeMatch = (indexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE && vertexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE);
 		bool strideMatch = (vertexInfo.stride == TARGET_STRIDE || vertexInfo.stride == 24);
 
-		// 调试日志：当 buffer size 和 stride 匹配时，输出 indexCount 对比信息
-		if (bufferSizeMatch && strideMatch) {
-			static int debugLogCount = 0;
-			if (debugLogCount++ % 60 == 0) {  // 每60次输出一次
-				logger::info("[IsTargetDrawCall] Potential match - indexCount: {}, scopeNodeIndexCount: {}, stride: {}",
-					indexCount, scopeNodeIndexCount, vertexInfo.stride);
-			}
-		}
-
 		return strideMatch && indexCount == scopeNodeIndexCount && bufferSizeMatch;
 	}
 
