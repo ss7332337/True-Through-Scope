@@ -76,8 +76,8 @@ extern void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* 
 		CreateAndEnableHook((LPVOID)Main_DrawWorldAndUI_Ori.address(), &hkMain_DrawWorldAndUI,
 			reinterpret_cast<LPVOID*>(&g_DrawWorldAndUIOriginal), "Main_DrawWorldAndUI");
 
-		CreateAndEnableHook((LPVOID)DrawWorld_MainAccum_Ori.address(), &hkMainAccum,
-			reinterpret_cast<LPVOID*>(&g_MainAccumOriginal), "MainAccum");
+		/*CreateAndEnableHook((LPVOID)DrawWorld_MainAccum_Ori.address(), &hkMainAccum,
+			reinterpret_cast<LPVOID*>(&g_MainAccumOriginal), "MainAccum");*/
 
 		CreateAndEnableHook((LPVOID)DrawWorld_MainRenderSetup_Ori.address(), &hkMainRenderSetup,
 			reinterpret_cast<LPVOID*>(&g_MainRenderSetupOriginal), "MainRenderSetup");
@@ -150,6 +150,10 @@ extern void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* 
 
 		CreateAndEnableHook((LPVOID)UI_ScreenSpace_RenderMenus_Ori.address(), &hkUI_ScreenSpace_RenderMenus,
 			reinterpret_cast<LPVOID*>(&g_UI_ScreenSpace_RenderMenus), "UI_ScreenSpace_RenderMenus");
+
+		// 几何体验证 hook - 防止 BSMTAManager 因悬空指针崩溃
+		CreateAndEnableHook((LPVOID)BSShaderAccumulator_RegisterObject_Ori.address(), &hkBSShaderAccumulator_RegisterObject,
+			reinterpret_cast<LPVOID*>(&g_RegisterObjectOriginal), "BSShaderAccumulator_RegisterObject");
 
 		RegisterTAAHook();
 		RegisterImageSpaceDebugHooks();

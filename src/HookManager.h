@@ -94,6 +94,7 @@ namespace ThroughScope
 	void __fastcall hkDrawWorld_Imagespace();  // Debug: Upscaling/TAA occurs here
 	void __fastcall hkDrawWorld_Render_PostUI();  // Debug: After Upscaling, before UI - potential scope render point
 	void __fastcall hkUI_ScreenSpace_RenderMenus(void* thisPtr);  // Debug: Actual UI overlay rendering
+	bool __fastcall hkBSShaderAccumulator_RegisterObject(BSShaderAccumulator* thisPtr, BSGeometry* apGeometry);  // Validate geometry before registration
 
 	class HookManager
 	{
@@ -153,6 +154,7 @@ namespace ThroughScope
 		typedef void (*FnDrawWorld_Imagespace)();  // Debug
 		typedef void (*FnDrawWorld_Render_PostUI)();  // Debug
 		typedef void (__fastcall *FnUI_ScreenSpace_RenderMenus)(void*);  // Debug
+		typedef bool (__fastcall *FnBSShaderAccumulator_RegisterObject)(BSShaderAccumulator*, BSGeometry*);  // Geometry validation
 #pragma endregion
 
 #pragma region Original Function Pointers
@@ -209,6 +211,7 @@ namespace ThroughScope
 		FnDrawWorld_Imagespace g_DrawWorld_Imagespace = nullptr;  // Debug
 		FnDrawWorld_Render_PostUI g_DrawWorld_Render_PostUI = nullptr;  // Debug
 		FnUI_ScreenSpace_RenderMenus g_UI_ScreenSpace_RenderMenus = nullptr;  // Debug
+		FnBSShaderAccumulator_RegisterObject g_RegisterObjectOriginal = nullptr;  // Geometry validation
 #pragma endregion
 
 	private:
@@ -296,6 +299,9 @@ namespace ThroughScope
 
 		// UI::ScreenSpace_RenderMenus - 实际 UI 覆盖层渲染
 		REL::Relocation<uintptr_t> UI_ScreenSpace_RenderMenus_Ori{ REL::ID(230711) };
+
+		// BSShaderAccumulator::RegisterObject - 几何体注册验证，防止 BSMTAManager 崩溃
+		REL::Relocation<uintptr_t> BSShaderAccumulator_RegisterObject_Ori{ REL::ID(1447420) };
 #pragma endregion
 
 		void RegisterTAAHook();

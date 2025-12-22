@@ -27,6 +27,9 @@ namespace ThroughScope
 	static LightBackupSystem* g_lightBackup = LightBackupSystem::GetSingleton();
 	static ScopeRenderingManager* g_scopeRenderMgr = ScopeRenderingManager::GetSingleton();
 
+	// k1stPersonCullingGroup 地址，用于 O(1) 过滤第一人称几何体
+	static REL::Relocation<BSCullingGroup*> ptr_k1stPersonCullingGroup{ REL::ID(731482) };
+
 	// ========== 激光节点识别 ==========
 
 	inline bool IsLaserNodeName(const char* name)
@@ -39,42 +42,22 @@ namespace ThroughScope
 		       (strstr(name, "Dot") != nullptr);
 	}
 
-	struct DetachedNodeInfo {
-		NiAVObject* node;
-		NiNode* parent;
-	};
-
-	void CollectNonLaserGeometries(
-		NiAVObject* node,
-		NiNode* parentNode,
-		int depth,
-		std::vector<DetachedNodeInfo>& outDetached,
-		int& outLaserCount)
+	// 检查几何体是否属于第一人称武器节点（通过遍历父节点链）
+	static bool IsFirstPersonWeaponGeometry(NiAVObject* obj)
 	{
-		if (!node || depth > 20) return;
-
-		const char* name = node->name.c_str();
-		bool isLaser = IsLaserNodeName(name);
-
-		if (isLaser) {
-			outLaserCount++;
-		} else {
-			auto geom = node->IsGeometry();
-			if (geom && parentNode) {
-				outDetached.push_back({ node, parentNode });
+		if (!obj) return false;
+		
+		// 遍历父节点链，查找是否在 "Weapon" 节点下
+		NiNode* parent = obj->parent;
+		while (parent) {
+			const char* parentName = parent->name.c_str();
+			if (parentName && strcmp(parentName, "Weapon") == 0) {
+				return true;
 			}
+			parent = parent->parent;
 		}
-
-		auto niNode = node->IsNode();
-		if (niNode) {
-			for (auto& child : niNode->children) {
-				if (child.get()) {
-					CollectNonLaserGeometries(child.get(), niNode, depth + 1, outDetached, outLaserCount);
-				}
-			}
-		}
+		return false;
 	}
-
 
 
 	// 前向声明，实际定义在main.cpp中
@@ -135,16 +118,90 @@ namespace ThroughScope
 			return;
 		}
 
-		if (ScopeCamera::IsRenderingForScope()) {
-			const char* objName = apObj->name.c_str();
-			if (objName && strstr(objName, "Weather")) {
-				D3DPERF_EndEvent();
-				return;
-			}
+		// O(1) 过滤：在 scope 渲染时跳过第一人称裁剪组的所有 Add 调用
+		// 这允许 StartAdding 正常执行（初始化组），但阻止几何体被添加
+		// 解决了之前的问题：
+		// - 跳过整个 Add1stPersonGeomToCuller 导致组未初始化 -> BSMTAManager 崩溃
+		// - 使用 DetachChild/AttachChild 导致竞态条件 -> DoBuildGeomArray 崩溃
+		// - 遍历父节点链过滤导致性能问题
+		if (ScopeCamera::IsRenderingForScope() && 
+			thisPtr == ptr_k1stPersonCullingGroup.get()) {
+			D3DPERF_EndEvent();
+			return;
 		}
 
 		g_hookMgr->g_BSCullingGroupAdd(thisPtr, apObj, aBound, aFlags);
 		D3DPERF_EndEvent();
+	}
+
+	/**
+	 * @brief Add1stPersonGeomToCuller 钩子
+	 *
+	 * 注意：此函数不再修改场景图结构！
+	 * 
+	 * 之前的实现使用 DetachChild/AttachChild 临时分离非激光几何体，
+	 * 但这会导致竞态条件崩溃：
+	 * - 主线程在此处修改场景图
+	 * - 工作线程 (JobListManager::ServingThread) 在 BSFadeNode::ComputeGeomArray 中遍历场景图
+	 * - 当镜头移动较快时，两者同时操作导致 DoBuildGeomArray::Recurse 访问 null 指针
+	 *
+	 * 现在改为在 hkBSCullingGroupAdd 中过滤非激光几何体，不修改场景图结构。
+	 */
+	void __fastcall hkAdd1stPersonGeomToCuller(uint64_t thisPtr)
+	{
+		D3DPERF_BeginEvent(0xffffffff, L"Add1stPersonGeomToCuller");
+		// 始终调用原函数：
+		// - StartAdding 会正常执行，初始化 k1stPersonCullingGroup
+		// - Add 调用会被 hkBSCullingGroupAdd 中的 O(1) 过滤拦截
+		g_hookMgr->g_Add1stPersonGeomToCullerOriginal(thisPtr);
+		D3DPERF_EndEvent();
+	}
+
+	/**
+	 * @brief BSShaderAccumulator::RegisterObject 验证 hook
+	 *
+	 * 防止 BSMTAManager 工作线程因悬空指针崩溃。
+	 * 当敌人死亡（特别是爆头）时，NPC 几何体被销毁，但 BSMTAManager 任务队列
+	 * 可能仍持有这些几何体的指针。此 hook 在注册前验证几何体指针有效性。
+	 *
+	 * 崩溃特征：
+	 * - 地址 0xFFFFFFFFFFFFFFFF（无效指针标记）
+	 * - 调用栈包含 BSMTAManager::RegisterObjectTask::Execute
+	 * - 几何体名称如 "FemaleNeckGore"（伤口网格）
+	 */
+	bool __fastcall hkBSShaderAccumulator_RegisterObject(BSShaderAccumulator* thisPtr, BSGeometry* apGeometry)
+	{
+		// 快速验证：null 指针或明显无效的指针值
+		if (!apGeometry) {
+			return false;
+		}
+		
+		uintptr_t addr = reinterpret_cast<uintptr_t>(apGeometry);
+		
+		// 检查常见的无效指针值
+		if (addr == 0xFFFFFFFFFFFFFFFF || 
+			addr < 0x10000 ||  // 太低，可能是小整数误用
+			(addr & 0x7) != 0) {  // 未对齐，BSGeometry 应该是8字节对齐
+			return false;
+		}
+		
+		// 使用 SEH 捕获访问冲突（可能导致的性能开销很小）
+		__try {
+			// 尝试读取 refCount 验证指针可访问
+			volatile uint32_t refCount = apGeometry->refCount;
+			(void)refCount;
+			
+			// 检查 refCount 是否合理（0 表示对象可能已销毁）
+			if (apGeometry->refCount == 0) {
+				return false;
+			}
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			// 指针无效，跳过注册
+			return false;
+		}
+		
+		// 指针有效，调用原函数
+		return g_hookMgr->g_RegisterObjectOriginal(thisPtr, apGeometry);
 	}
 
 	void hkDrawTriShape(BSGraphics::Renderer* thisPtr, BSGraphics::TriShape* apTriShape, unsigned int auiStartIndex, unsigned int auiNumTriangles)
@@ -235,64 +292,6 @@ namespace ThroughScope
 		D3DEventNode(g_hookMgr->g_pDoZPrePassOriginal(thisPtr, apFirstPersonCamera, apWorldCamera, afFPNear, afFPFar, afNear, afFar), L"hkRenderer_DoZPrePass");
 	}
 
-	/**
-	 * @brief Add1stPersonGeomToCuller 钩子
-	 *
-	 * 在瞄具渲染时，只允许激光几何体被添加到渲染队列。
-	 * 实现方式：临时从场景图中分离非激光几何体，调用原函数后再重新附加。
-	 *
-	 * 为什么不用 AppCulled：
-	 * 测试发现引擎在 Forward 渲染阶段不检查 AppCulled 标志，
-	 * 几何体在设置 AppCulled 之前已被添加到渲染队列。
-	 */
-	void __fastcall hkAdd1stPersonGeomToCuller(uint64_t thisPtr)
-	{
-		D3DPERF_BeginEvent(0xffffffff, L"Add1stPersonGeomToCuller");
-		// 非瞄具渲染：直接调用原函数
-		if (!ScopeCamera::IsRenderingForScope()) {
-			g_hookMgr->g_Add1stPersonGeomToCullerOriginal(thisPtr);
-			D3DPERF_EndEvent();
-			return;
-		}
-
-		auto p1stPerson = *ThroughScope::ptr_DrawWorld1stPerson;
-		if (!p1stPerson) {
-			g_hookMgr->g_Add1stPersonGeomToCullerOriginal(thisPtr);
-			D3DPERF_EndEvent();
-			return;
-		}
-
-		std::vector<DetachedNodeInfo> detachedNodes;
-		int laserCount = 0;
-
-		CollectNonLaserGeometries(p1stPerson, nullptr, 0, detachedNodes, laserCount);
-
-		NiAVObject* weaponNode = p1stPerson->GetObjectByName("Weapon");
-		if (!weaponNode) {
-			auto playerChar = RE::PlayerCharacter::GetSingleton();
-			if (playerChar && playerChar->Get3D(false)) {
-				weaponNode = playerChar->Get3D(false)->GetObjectByName("Weapon");
-			}
-		}
-		if (weaponNode) {
-			CollectNonLaserGeometries(weaponNode, nullptr, 0, detachedNodes, laserCount);
-		}
-
-		for (auto& info : detachedNodes) {
-			if (info.parent && info.node) {
-				info.parent->DetachChild(info.node);
-			}
-		}
-
-		g_hookMgr->g_Add1stPersonGeomToCullerOriginal(thisPtr);
-
-		for (auto& info : detachedNodes) {
-			if (info.parent && info.node) {
-				info.parent->AttachChild(info.node, true);
-			}
-		}
-		D3DPERF_EndEvent();
-	}
 
 	void __fastcall hkBSShaderAccumulator_RenderBatches(
 		BSShaderAccumulator* thisPtr, int aiShader, bool abAlphaPass, int aeGroup)

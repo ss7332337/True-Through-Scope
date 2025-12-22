@@ -626,6 +626,10 @@ namespace ThroughScope
 
 			// 执行第二次渲染
 			auto hookMgr = HookManager::GetSingleton();
+			
+			// TODO: BSMTAManager 竞态条件问题待解决
+			// 禁用 BSMTAManager 会导致阴影渲染崩溃，需要找其他方案
+			
 			hookMgr->g_RenderPreUIOriginal(savedDrawWorld);
 
 			// 恢复 PosAdjust
