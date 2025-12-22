@@ -9,6 +9,7 @@
 #include "rendering/ScopeRenderingManager.h"
 #include "rendering/SecondPassRenderer.h"
 #include "rendering/RenderStateManager.h"
+#include "ENBIntegration.h"
 #include <d3d9.h>  // for D3DPERF_BeginEvent / D3DPERF_EndEvent
 #include <DirectXMath.h>
 #include <chrono>
@@ -324,9 +325,11 @@ namespace ThroughScope
 	{
 
 		auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+		auto enbIntegration = ENBIntegration::GetSingleton();
 
 		if (!weaponInfo.currentConfig) {
 			D3DHooks::SetEnableRender(false);
+			enbIntegration->SetAiming(false);  // 通知 ENB 不在开镜
 			return g_hookMgr->g_PCUpdateMainThread(pChar);
 		}
 
@@ -359,15 +362,18 @@ namespace ThroughScope
 
 		if (ScopeCamera::IsSideAim() || UI::GetSingleton()->GetMenuOpen("PauseMenu") || UI::GetSingleton()->GetMenuOpen("WorkshopMenu") || UI::GetSingleton()->GetMenuOpen("CursorMenu") || UI::GetSingleton()->GetMenuOpen("ScopeMenu") || UI::GetSingleton()->GetMenuOpen("LooksMenu")) {
 			D3DHooks::SetEnableRender(false);
+			enbIntegration->SetAiming(false);  // 通知 ENB 不在开镜
 		} else {
 			if (IsInADS(g_pchar)) {
 				D3DHooks::HandleFOVInput();
 				D3DHooks::SetEnableRender(true);
+				enbIntegration->SetAiming(true);  // 通知 ENB 正在开镜，禁用鬼影效果
 			}
 		}
 
 		if (!IsInADS(g_pchar)) {
 			D3DHooks::SetEnableRender(false);
+			enbIntegration->SetAiming(false);  // 通知 ENB 不在开镜
 		}
 
 		g_hookMgr->g_PCUpdateMainThread(pChar);
@@ -380,7 +386,7 @@ namespace ThroughScope
 	// 星星世界缩放因子（硬编码）
 	// 这个值用于补偿瞄具场景中 viewProjMat 与主相机的缩放差异
 	// 经测试，101 倍可以使星星大小和位置移动与主场景一致
-	static constexpr float STAR_WORLD_SCALE_FACTOR = 120.0f;
+	static constexpr float STAR_WORLD_SCALE_FACTOR = 150.0f;
 
 	// 检查几何体是否是星星
 	static bool IsStarGeometry(BSRenderPass* apCurrentPass)
@@ -483,43 +489,58 @@ namespace ThroughScope
 	// 此函数在 Render_UI 中被调用多次：
 	// - 效果 0-13: HDR 等
 	// - 效果 15-21: TAA, DOF 等
-	// 当 aiLast=21 时表示所有效果完成，是渲染瞄具的理想时机
+	// 当 aiLast=13 时（原始函数调用前）是渲染瞄具的理想时机，可以获得 ENB 效果
 	void __fastcall hkImageSpaceManager_RenderEffectRange(void* thisPtr, int aiFirst, int aiLast, int aiSourceTarget, int aiDestTarget)
 	{
+
 		// 用 D3DPERF 标记显示调用参数
 		wchar_t markerName[128];
 		swprintf_s(markerName, L"RenderEffectRange(%d-%d, src=%d, dst=%d)", aiFirst, aiLast, aiSourceTarget, aiDestTarget);
 		D3DPERF_BeginEvent(0xFFFF00FF, markerName);
-		
-		// 调用原始函数
-		g_hookMgr->g_ImageSpaceManager_RenderEffectRange(thisPtr, aiFirst, aiLast, aiSourceTarget, aiDestTarget);
-		
-		D3DPERF_EndEvent();
-		
-		// 当效果范围 15-21 完成后渲染瞄具
-		// 这是在 HDR/TAA/DOF 之后的时机
-		if (aiLast == 21) {
+
+		// 在效果 13 之前（线性空间/HDR阶段结束）渲染瞄具
+		// 这样瞄具内容会被后续的 Post-Processing (ENB, TAA, ToneMapping) 处理
+		if (aiLast == 13) {
 			auto renderStateMgr = RenderStateManager::GetSingleton();
+			auto enbIntegration = ENBIntegration::GetSingleton();
 			
 			if (renderStateMgr->IsScopeReady() && 
 				renderStateMgr->IsRenderReady() && 
 				D3DHooks::IsEnableRender() &&
 				!ScopeCamera::IsRenderingForScope()) {
 				
+				// 此时必须使用直接渲染，因为我们需要修改 G-Buffer/HDR Buffer 供 ENB 使用
+				// 不需要 ENB 回调，因为我们是在 ENB 处理之前渲染
 				ID3D11DeviceContext* context = d3dHooks->GetContext();
 				ID3D11Device* device = d3dHooks->GetDevice();
 				
 				if (context && device) {
-					D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_SecondPass_PostEffects");
+					D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_SecondPass_PreEffects");
 					SecondPassRenderer renderer(context, device, d3dHooks);
 					if (!renderer.ExecuteSecondPass()) {
 						logger::warn("[RenderEffectRange Hook] SecondPassRenderer failed");
 					}
+					// 渲染后立即清除瞄具区域的 Motion Vectors，防止 TAA 鬼影
+					renderer.ApplyMotionVectorMask(); 
 					D3DPERF_EndEvent();
 					g_scopeRenderMgr->OnFrameEnd();
 				}
 			}
 		}
+
+		// 调用原始函数
+		g_hookMgr->g_ImageSpaceManager_RenderEffectRange(thisPtr, aiFirst, aiLast, aiSourceTarget, aiDestTarget);
+
+		D3DPERF_EndEvent();
+		// 用 D3DPERF 标记显示调用参数
+		//wchar_t markerName[128];
+		//swprintf_s(markerName, L"RenderEffectRange(%d-%d, src=%d, dst=%d)", aiFirst, aiLast, aiSourceTarget, aiDestTarget);
+		//D3DPERF_BeginEvent(0xFFFF00FF, markerName);
+
+		//// 调用原始函数
+		//g_hookMgr->g_ImageSpaceManager_RenderEffectRange(thisPtr, aiFirst, aiLast, aiSourceTarget, aiDestTarget);
+
+		//D3DPERF_EndEvent();
 	}
 
 	// ========== DrawWorld::Render_UI Debug Hook ==========

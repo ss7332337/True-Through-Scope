@@ -11,9 +11,12 @@ namespace ThroughScope
     ID3D11Texture2D* RenderUtilities::s_SecondPassDepthTexture = nullptr;
 
 	ID3D11Texture2D* RenderUtilities::s_BackBufferTexture = nullptr;
-	ID3D11ShaderResourceView* RenderUtilities::s_BackBufferSRV = nullptr;
+    ID3D11ShaderResourceView* RenderUtilities::s_BackBufferSRV = nullptr;
 
 	ID3D11Texture2D* RenderUtilities::s_MotionVectorBackup = nullptr;
+
+	ID3D11PixelShader* RenderUtilities::s_ClearVelocityPS = nullptr;
+	ID3D11VertexShader* RenderUtilities::s_ClearVelocityVS = nullptr;
 
     RE::BSGraphics::Texture* RenderUtilities::s_ScopeBSTexture = nullptr;
     RE::NiTexture* RenderUtilities::s_ScopeNiTexture = nullptr;
@@ -27,6 +30,87 @@ namespace ThroughScope
 	D3D11_VIEWPORT RenderUtilities::s_FirstPassViewport = {};
 	bool RenderUtilities::s_HasFirstPassViewport = false;
 
+	// Simple Pixel Shader to clear motion vectors (output 0,0,0,0)
+	const char* g_ClearVelocityPSCode = 
+		"struct PS_OUTPUT { float4 Color : SV_Target; };"
+		"PS_OUTPUT main() {"
+		"   PS_OUTPUT output;"
+		"   output.Color = float4(0.0f, 0.0f, 0.0f, 0.0f);"
+		"   return output;"
+		"}";
+
+	// Simple Vertex Shader for Fullscreen Triangle (no VB needed)
+	const char* g_ClearVelocityVSCode = 
+		"struct VS_OUTPUT { float4 Pos : SV_POSITION; };"
+		"VS_OUTPUT main(uint id : SV_VertexID) {"
+		"   VS_OUTPUT output;"
+		"   output.Pos.x = (float)(id / 2) * 4.0 - 1.0;"
+		"   output.Pos.y = (float)(id % 2) * 4.0 - 1.0;"
+		"   output.Pos.z = 0.0;"
+		"   output.Pos.w = 1.0;"
+		"   return output;"
+		"}";
+
+	static bool CreateClearVelocityShader()
+	{
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		ID3D11Device* device = (ID3D11Device*)rendererData->device;
+
+		ID3DBlob* blob = nullptr;
+		ID3DBlob* errorBlob = nullptr;
+
+		// --- Compile PS ---
+		HRESULT hr = D3DCompile(
+			g_ClearVelocityPSCode,
+			strlen(g_ClearVelocityPSCode),
+			nullptr, nullptr, nullptr,
+			"main", "ps_5_0",
+			0, 0, &blob, &errorBlob
+		);
+
+		if (FAILED(hr)) {
+			if (errorBlob) {
+				logger::error("Failed to compile ClearVelocityPS: {}", (char*)errorBlob->GetBufferPointer());
+				errorBlob->Release();
+			}
+			return false;
+		}
+		if (errorBlob) errorBlob->Release();
+
+		hr = device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_ClearVelocityPS);
+		blob->Release();
+		if (FAILED(hr)) {
+			logger::error("Failed to create ClearVelocity pixel shader");
+			return false;
+		}
+
+		// --- Compile VS ---
+		hr = D3DCompile(
+			g_ClearVelocityVSCode,
+			strlen(g_ClearVelocityVSCode),
+			nullptr, nullptr, nullptr,
+			"main", "vs_5_0",
+			0, 0, &blob, &errorBlob
+		);
+
+		if (FAILED(hr)) {
+			if (errorBlob) {
+				logger::error("Failed to compile ClearVelocityVS: {}", (char*)errorBlob->GetBufferPointer());
+				errorBlob->Release();
+			}
+			return false;
+		}
+		if (errorBlob) errorBlob->Release();
+
+		hr = device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_ClearVelocityVS);
+		blob->Release();
+		if (FAILED(hr)) {
+			logger::error("Failed to create ClearVelocity vertex shader");
+			return false;
+		}
+
+		return true;
+	}
 
     bool RenderUtilities::Initialize()
     {
@@ -36,6 +120,11 @@ namespace ThroughScope
             logger::error("Failed to create temporary textures");
             return false;
         }
+
+		if (!CreateClearVelocityShader()) {
+			logger::warn("Failed to create ClearVelocity shader - motion vector clearing disabled");
+		}
+
         return true;
     }
 
@@ -144,5 +233,13 @@ namespace ThroughScope
             s_SecondPassDepthTexture->Release();
             s_SecondPassDepthTexture = nullptr;
         }
+		if (s_ClearVelocityPS) {
+			s_ClearVelocityPS->Release();
+			s_ClearVelocityPS = nullptr;
+		}
+		if (s_ClearVelocityVS) {
+			s_ClearVelocityVS->Release();
+			s_ClearVelocityVS = nullptr;
+		}
     }
 }

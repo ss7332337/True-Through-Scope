@@ -178,18 +178,16 @@ namespace ThroughScope
 				isQuerySpawnNode = true;
 				s_IsScopeActive = true;
 
-				if (!ScopeCamera::hasFirstSpawnNode)
-				{
-					ScopeCamera::hasFirstSpawnNode = true;
-					logger::warn("FirstSpawn Finish: EquipWatcher");
-				}
-				
+				// 注意：不要在这里设置 hasFirstSpawnNode = true
+				// 必须等到 DelayedSetupScopeForWeapon() 完成后才能设置
+				// 否则会导致竞态条件：渲染代码看到 hasFirstSpawnNode=true 但 s_CurrentScopeNode=nullptr
+
 				ScopeCamera::s_EquippedWeaponFormID = weapon->formID;
 
 				// 启动延迟执行
 				m_PendingSetup = true;
 				m_CancelPending = false;
-				
+
 				// 创建新线程执行延迟任务
 				if (m_SetupThread.joinable()) {
 					m_SetupThread.join();

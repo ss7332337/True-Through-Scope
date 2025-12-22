@@ -93,7 +93,7 @@ namespace ThroughScope
                 s_ScopeCamera->viewFrustum = ((RE::NiCamera*)playerCamera->cameraRoot.get())->viewFrustum;
                 s_ScopeCamera->port = ((RE::NiCamera*)playerCamera->cameraRoot.get())->port;
 				s_TargetFOV = playerCamera->firstPersonFOV - 10; 
-                logger::info("Created scope camera successfully");
+
             } else {
                 logger::error("Failed to get camera root node");
             }
@@ -112,7 +112,7 @@ namespace ThroughScope
 
 		// 清理D3D相关资源
 		ThroughScope::D3DHooks::CleanupStaticResources();
-		logger::info("Scope resources cleaned up successfully");
+
 	}
 
     void ScopeCamera::ResetCamera()
@@ -127,7 +127,7 @@ namespace ThroughScope
         tempData.camera = s_ScopeCamera;
         s_ScopeCamera->Update(tempData);
         
-        logger::info("Camera position/rotation reset");
+
     }
 
 	void ScopeCamera::ApplyScopeSettings(const DataPersistence::ScopeConfig* config)
@@ -180,10 +180,7 @@ namespace ThroughScope
 		// 设置摄像头FOV
 		ScopeCamera::SetFOVMinMax(config->scopeSettings.minFOV, config->scopeSettings.maxFOV);
 
-		logger::info("Applied scope settings - FOV: {}-{}, Parallax: strength={:.3f}, exitPupil={:.3f}, vignette={:.3f}",
-			config->scopeSettings.minFOV, config->scopeSettings.maxFOV,
-			config->parallaxSettings.parallaxStrength, config->parallaxSettings.exitPupilRadius,
-			config->parallaxSettings.vignetteStrength);
+
 	}
 
 	void ScopeCamera::ApplyScopeTransform(RE::NiNode* scopeNode, const DataPersistence::CameraAdjustments& adjustments)
@@ -221,10 +218,7 @@ namespace ThroughScope
 
 		scopeNode->Update(updateData);
 
-		logger::info("Applied transform to scope node - Pos({:.3f}, {:.3f}, {:.3f}), Rot({:.1f}, {:.1f}, {:.1f}), Scale({:.3f})",
-			adjustments.deltaPosX, adjustments.deltaPosY, adjustments.deltaPosZ,
-			adjustments.deltaRot[0], adjustments.deltaRot[1], adjustments.deltaRot[2],
-			adjustments.deltaScale);
+
 	}
 
 	void ScopeCamera::SetupScopeForWeapon(const DataPersistence::WeaponInfo& weaponInfo)
@@ -236,7 +230,7 @@ namespace ThroughScope
 		}
 
 		const auto& config = *weaponInfo.currentConfig;
-		logger::info("Setting up scope with model: {}", config.modelName);
+
 
 		// 保存原始ZoomData值，用于后续恢复
 		static std::map<TESFormID, BGSZoomData::Data> originalZoomDataCache;
@@ -264,7 +258,7 @@ namespace ThroughScope
 
 				// 应用变换
 				ApplyScopeTransform(scopeNode, config.cameraAdjustments);
-				logger::info("Successfully loaded and positioned scope model: {}", config.modelName);
+
 			} else {
 				logger::error("Failed to load scope model: {}", config.modelName);
 				return; // 如果NIF加载失败，退出函数
@@ -292,7 +286,7 @@ namespace ThroughScope
 			// 首次设置时，缓存原始值
 			if (s_EquippedWeaponFormID != 0 && originalZoomDataCache.find(s_EquippedWeaponFormID) == originalZoomDataCache.end()) {
 				originalZoomDataCache[s_EquippedWeaponFormID] = weaponIns->zoomData->zoomData;
-				logger::info("Cached original ZoomData for weapon FormID: {:08X}", s_EquippedWeaponFormID);
+
 			}
 
 			// 应用配置的ZoomData
@@ -301,14 +295,10 @@ namespace ThroughScope
 			weaponIns->zoomData->zoomData.cameraOffset.y = config.zoomDataSettings.offsetY;
 			weaponIns->zoomData->zoomData.cameraOffset.z = config.zoomDataSettings.offsetZ;
 
-			logger::info("Applied ZoomData - FOV: {}, Offset: ({}, {}, {})",
-				config.zoomDataSettings.fovMult,
-				config.zoomDataSettings.offsetX,
-				config.zoomDataSettings.offsetY,
-				config.zoomDataSettings.offsetZ);
+
 		}
 
-		logger::info("Scope setup completed for weapon");
+
 	}
 
 	int ScopeCamera::GetScopeNodeIndexCount()
@@ -316,6 +306,7 @@ namespace ThroughScope
 		// 使用局部变量避免潜在的竞态条件
 		auto* currentNode = s_CurrentScopeNode;
 		if (!currentNode) {
+	
 			return -1;
 		}
 
@@ -354,7 +345,7 @@ namespace ThroughScope
 		if (player) {
 			if (QMW_AnimsQBZ191M_on) {
 				if (player->HasKeyword(QMW_AnimsQBZ191M_on)) {
-					logger::warn("QMW_AnimsQBZ191M_on");
+
 					return QMW_AnimsQBZ191M_on;
 				}
 			} else if (QMW_AnimsQBZ191M_off) {
@@ -437,11 +428,7 @@ namespace ThroughScope
 			weaponIns->zoomData->zoomData.cameraOffset.y = config.zoomDataSettings.offsetY;
 			weaponIns->zoomData->zoomData.cameraOffset.z = config.zoomDataSettings.offsetZ;
 
-			logger::info("Detected ZoomData reset by engine, restored to config values - FOV: {}, Offset: ({}, {}, {})",
-				config.zoomDataSettings.fovMult,
-				config.zoomDataSettings.offsetX,
-				config.zoomDataSettings.offsetY,
-				config.zoomDataSettings.offsetZ);
+
 
 			// 重置跳过计数，避免频繁检测
 			skipCount[s_EquippedWeaponFormID] = 3;

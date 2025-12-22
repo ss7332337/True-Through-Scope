@@ -594,9 +594,9 @@ namespace ThroughScope {
 		if (isScopeQuad) {
 
 			CacheAllStates();
-			/*if (ImGuiManager::GetSingleton()->IsMenuOpen()) {
+			if (ImGuiManager::GetSingleton()->IsMenuOpen()) {
 				return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
-			}*/
+			}
 			return;
 		} else {
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
@@ -685,9 +685,20 @@ namespace ThroughScope {
 		if (scopeNodeIndexCount <= 0)
 			return false;
 
-		return (vertexInfo.stride == TARGET_STRIDE || vertexInfo.stride == 24) && indexCount == scopeNodeIndexCount
-		       //&& indexInfo.offset == 2133504
-		       && indexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE && vertexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE;
+		// 检查 buffer size 是否匹配目标值
+		bool bufferSizeMatch = (indexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE && vertexInfo.desc.ByteWidth == TARGET_BUFFER_SIZE);
+		bool strideMatch = (vertexInfo.stride == TARGET_STRIDE || vertexInfo.stride == 24);
+
+		// 调试日志：当 buffer size 和 stride 匹配时，输出 indexCount 对比信息
+		if (bufferSizeMatch && strideMatch) {
+			static int debugLogCount = 0;
+			if (debugLogCount++ % 60 == 0) {  // 每60次输出一次
+				logger::info("[IsTargetDrawCall] Potential match - indexCount: {}, scopeNodeIndexCount: {}, stride: {}",
+					indexCount, scopeNodeIndexCount, vertexInfo.stride);
+			}
+		}
+
+		return strideMatch && indexCount == scopeNodeIndexCount && bufferSizeMatch;
 	}
 
 	bool D3DHooks::IsTargetDrawCall(std::vector<BufferInfo> vertexInfos, const BufferInfo& indexInfo, UINT indexCount)
@@ -1267,7 +1278,10 @@ namespace ThroughScope {
 #ifdef _DEBUG
 		if (GetAsyncKeyState(VK_F3) & 1) {
 			logger::info("Frame capture requested");
-			rdoc_api->TriggerCapture();
+			if (rdoc_api)
+				rdoc_api->TriggerCapture();
+			else
+				logger::error("rdoc_api is nullptr");
 		}
 #endif
 

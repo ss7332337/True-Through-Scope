@@ -139,8 +139,11 @@ namespace ThroughScope
 		// ========== Motion Vector Mask (fo4test 兼容) ==========
 		bool InitializeMotionVectorMask();
 		void ShutdownMotionVectorMask();
+
+	public:
 		void ApplyMotionVectorMask();  // 在scope区域清零motion vector
 
+	private:
 		Microsoft::WRL::ComPtr<ID3D11VertexShader> m_mvMaskVS;
 		Microsoft::WRL::ComPtr<ID3D11PixelShader> m_mvMaskPS;
 		Microsoft::WRL::ComPtr<ID3D11Buffer> m_mvMaskConstantBuffer;

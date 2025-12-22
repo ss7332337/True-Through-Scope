@@ -42,7 +42,7 @@ namespace ThroughScope
 	bool SecondPassRenderer::ExecuteSecondPass()
 	{
 		if (!CanExecuteSecondPass()) {
-			logger::warn("[HDR-DEBUG] ExecuteSecondPass: CanExecuteSecondPass returned FALSE");
+
 			return false;
 		}
 		
@@ -94,7 +94,7 @@ namespace ThroughScope
 				ApplyCustomHDREffect(); 
 			}*/
 			
-			ApplyCustomHDREffect(); 
+			//ApplyCustomHDREffect(); 
 
 			// 5.6 如果启用热成像，应用热成像效果
 			if (m_thermalVisionEnabled) {
@@ -133,13 +133,13 @@ namespace ThroughScope
 		// 检查玩家相机
 		auto playerCamera = *ptr_DrawWorldCamera;
 		if (!playerCamera) {
-			logger::debug("CanExecuteSecondPass: playerCamera = null");
+
 			return false;
 		}
 
 		// 检查D3D资源
 		if (!ValidateD3DResources()) {
-			logger::debug("CanExecuteSecondPass: ValidateD3DResources = false, error: {}", m_lastError);
+
 			return false;
 		}
 		return true;
@@ -196,7 +196,7 @@ namespace ThroughScope
 				if (firstPassColorDesc.Width == mainRTDesc.Width && firstPassColorDesc.Height == mainRTDesc.Height) {
 					m_context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), m_mainRTTexture);
 				} else {
-					logger::warn("[FO4Test-Compat] Skipping first pass color copy: size mismatch");
+
 				}
 			}
 
@@ -208,7 +208,7 @@ namespace ThroughScope
 				if (firstPassDepthDesc.Width == mainDSDesc.Width && firstPassDepthDesc.Height == mainDSDesc.Height) {
 					m_context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), m_mainDSTexture);
 				} else {
-					logger::warn("[FO4Test-Compat] Skipping first pass depth copy: size mismatch");
+
 				}
 			}
 
@@ -238,7 +238,7 @@ namespace ThroughScope
 			m_renderExecuted = true;
 			m_sceneRenderingComplete = true;
 			
-			logger::debug("[FO4Test-Compat] Scene rendering completed successfully");
+
 			return true;
 
 		} catch (const std::exception& e) {
@@ -254,7 +254,7 @@ namespace ThroughScope
 	{
 		// 检查场景渲染是否完成
 		if (!m_sceneRenderingComplete) {
-			logger::warn("[FO4Test-Compat] ExecutePostProcessing called but scene rendering not complete");
+
 			return false;
 		}
 
@@ -274,7 +274,7 @@ namespace ThroughScope
 			
 			D3DPERF_EndEvent();
 			
-			logger::debug("[FO4Test-Compat] Post processing completed successfully");
+
 			return true;
 
 		} catch (const std::exception& e) {
@@ -449,7 +449,6 @@ namespace ThroughScope
 
 	void SecondPassRenderer::ClearRenderTargets()
 	{
-
 		// 清理主输出，准备第二次渲染
 		float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 
@@ -466,37 +465,23 @@ namespace ThroughScope
 		// 清理深度模板缓冲区
 		m_context->ClearDepthStencilView(m_mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-		// 清理延迟渲染的G-Buffer以确保光照信息不会残留
-		if (true) {
-			// 优化模式：只清理必要的缓冲区以提升性能
-			static const int essentialBuffers[] = { 8, 9 };  // 只清理法线和主光照buffer
-			for (int bufIdx : essentialBuffers) {
-				if (bufIdx < 100 && rendererData->renderTargets[bufIdx].rtView) {
-					float clearValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-					// 对于法线缓冲区，使用默认法线值
-					if (bufIdx == 8) {
-						clearValue[0] = 0.5f;
-						clearValue[1] = 0.5f;
-						clearValue[2] = 1.0f;
-						clearValue[3] = 1.0f;
-					}
-					m_context->ClearRenderTargetView((ID3D11RenderTargetView*)rendererData->renderTargets[bufIdx].rtView, clearValue);
+		// ENB 兼容模式：清理所有可能被 ENB 读取的 G-Buffer 通道
+		// 这对于防止第一次渲染的武器模型"鬼影"至关重要
+		// 扩展清理范围从 (8, 9) 到 (5-19) 以覆盖所有 ENB 可能读取的缓冲区
+		static const int allGBuffers[] = { 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 };
+		for (int bufIdx : allGBuffers) {
+			if (bufIdx < 100 && rendererData->renderTargets[bufIdx].rtView) {
+				float clearValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+				// 对于法线缓冲区 (RT8)，使用默认法线值 (0.5, 0.5, 1.0) 表示向上的法线
+				if (bufIdx == 8) {
+					clearValue[0] = 0.5f;
+					clearValue[1] = 0.5f;
+					clearValue[2] = 1.0f;
+					clearValue[3] = 1.0f;
 				}
-			}
-		} else {
-			// 完整模式：清理所有G-Buffer
-			static const int lightingBuffers[] = { 8, 9, 10, 11, 12, 13, 14, 15 };
-			for (int bufIdx : lightingBuffers) {
-				if (bufIdx < 100 && rendererData->renderTargets[bufIdx].rtView) {
-					float clearValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-					if (bufIdx == 8) {
-						clearValue[0] = 0.5f;
-						clearValue[1] = 0.5f;
-						clearValue[2] = 1.0f;
-						clearValue[3] = 1.0f;
-					}
-					m_context->ClearRenderTargetView((ID3D11RenderTargetView*)rendererData->renderTargets[bufIdx].rtView, clearValue);
-				}
+				m_context->ClearRenderTargetView(
+					(ID3D11RenderTargetView*)rendererData->renderTargets[bufIdx].rtView, 
+					clearValue);
 			}
 		}
 	}
@@ -532,33 +517,6 @@ namespace ThroughScope
 
 	void SecondPassRenderer::DrawScopeContent()
 	{
-		// 为所有 render targets 设置调试名称，方便在 RenderDoc 中识别
-		static bool debugNamesSet = false;
-		if (!debugNamesSet) {
-			auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-			if (rendererData) {
-				// 定义调试名称 GUID (WKPDID_D3DDebugObjectName)
-				static const GUID debugNameGUID = { 0x429b8c22, 0x9188, 0x4b0c, { 0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00 } };
-				
-				for (int i = 0; i < 101; i++) {
-					auto& rt = rendererData->renderTargets[i];
-					if (rt.texture) {
-						char name[64];
-						sprintf_s(name, "GameRT_%d", i);
-						
-						ID3D11Texture2D* nativeTexture = reinterpret_cast<ID3D11Texture2D*>(rt.texture);
-						nativeTexture->SetPrivateData(debugNameGUID, (UINT)strlen(name), name);
-						
-						D3D11_TEXTURE2D_DESC desc;
-						nativeTexture->GetDesc(&desc);
-						logger::info("[RT-DEBUG] renderTargets[{}]: {}x{}, Format={}", 
-							i, desc.Width, desc.Height, (int)desc.Format);
-					}
-				}
-				debugNamesSet = true;
-				logger::info("[RT-DEBUG] Finished setting debug names for render targets");
-			}
-		}
 
 		// 设置性能标记
 		D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
@@ -691,7 +649,7 @@ namespace ThroughScope
 
 	void SecondPassRenderer::ApplyThermalVisionEffect()
 	{
-		logger::debug("Applying thermal vision effect...");
+
 
 		// 初始化热成像系统（如果尚未初始化）
 		if (!m_thermalVision) {
@@ -758,7 +716,7 @@ namespace ThroughScope
 			depthSRV->Release();
 		}
 
-		logger::debug("Thermal vision effect applied");
+
 	}
 
 	void SecondPassRenderer::ApplyEngineHDREffect()
@@ -787,32 +745,6 @@ namespace ThroughScope
 			return;
 		}
 
-		// 为所有 render targets 设置调试名称，方便在 RenderDoc 中识别
-		static bool debugNamesSet = false;
-		if (!debugNamesSet) {
-			// 定义调试名称 GUID (WKPDID_D3DDebugObjectName)
-			static const GUID debugNameGUID = { 0x429b8c22, 0x9188, 0x4b0c, { 0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00 } };
-			
-			for (int i = 0; i < 32; i++) {  // 假设最多 32 个 render targets
-				auto& rt = rendererData->renderTargets[i];
-				if (rt.texture) {
-					char name[64];
-					sprintf_s(name, "GameRT_%d", i);
-					
-					// 转换为原生 D3D11 接口
-					ID3D11Texture2D* nativeTexture = reinterpret_cast<ID3D11Texture2D*>(rt.texture);
-					nativeTexture->SetPrivateData(debugNameGUID, (UINT)strlen(name), name);
-					
-					D3D11_TEXTURE2D_DESC desc;
-					nativeTexture->GetDesc(&desc);
-					logger::info("[RT-DEBUG] renderTargets[{}]: {}x{}, Format={}", 
-						i, desc.Width, desc.Height, (int)desc.Format);
-				}
-			}
-			debugNamesSet = true;
-			logger::info("[RT-DEBUG] Finished setting debug names for render targets");
-		}
-
 		try {
 			// 备份当前完整渲染状态
 			HDRStateCache stateBackup;
@@ -820,7 +752,7 @@ namespace ThroughScope
             
             // 检查 HDR 状态是否已捕获，如果没有则跳过
             if (!g_HDRStateCache.IsValid()) {
-                logger::warn("[HDR-DEBUG] ApplyEngineHDREffect: g_HDRStateCache NOT VALID, skipping");
+
                 stateBackup.Apply(m_context);
                 D3DPERF_EndEvent();
                 return;
@@ -828,8 +760,7 @@ namespace ThroughScope
             
             // 检查 HDR 状态是否是当前帧捕获的（关键！防止使用过时状态）
             if (!D3DHooks::IsHDRStateCurrentFrame()) {
-                logger::warn("[HDR-DEBUG] ApplyEngineHDREffect: HDR state is from frame #{}, current is #{}, skipping",
-                    D3DHooks::GetHDRCapturedFrame(), D3DHooks::GetFrameNumber());
+
                 stateBackup.Apply(m_context);
                 D3DPERF_EndEvent();
                 return;
@@ -920,12 +851,12 @@ namespace ThroughScope
 			ID3D11ShaderResourceView* srv0 = g_HDRStateCache.bloomSRVCopy.Get();
 			if (!srv0) {
 				srv0 = g_HDRStateCache.psSRVs[0].Get();  // 回退到原始SRV
-				logger::warn("[HDR-DEBUG] Using fallback original Bloom SRV");
+
 			}
 			ID3D11ShaderResourceView* srv2 = g_HDRStateCache.luminanceSRVCopy.Get();
 			if (!srv2) {
 				srv2 = g_HDRStateCache.psSRVs[2].Get();  // 回退到原始SRV
-				logger::warn("[HDR-DEBUG] Using fallback original Luminance SRV");
+
 			}
 			ID3D11ShaderResourceView* srv3 = g_HDRStateCache.psSRVs[3].Get();  // Mask保持原始
 
@@ -1071,8 +1002,6 @@ namespace ThroughScope
 						if (!m_luminancePass->Initialize(m_device, m_context)) {
 							logger::error("ApplyCustomHDREffect: Failed to initialize LuminancePass");
 							m_luminancePass = nullptr;
-						} else {
-							logger::info("ApplyCustomHDREffect: LuminancePass initialized successfully");
 						}
 					}
 				}
@@ -1362,7 +1291,7 @@ namespace ThroughScope
 							rtTexture->GetDesc(&rtDesc);
 							targetWidth = rtDesc.Width;
 							targetHeight = rtDesc.Height;
-							logger::debug("[Upscaling] Rendering scope to kFrameBuffer {}x{}", targetWidth, targetHeight);
+
 							rtTexture->Release();
 						}
 						rtResource->Release();
@@ -1413,18 +1342,15 @@ namespace ThroughScope
 					if (scopeRenderMgr->IsUpscalingActive()) {
 						// Upscaling 模式：必须使用 FirstPassViewport（动态分辨率）
 						// Upscaling 动态调整 viewport 大小，如 1129.4 x 635.3
-						if (RenderUtilities::GetFirstPassViewport(viewport)) {
-							logger::debug("[Upscaling] RestoreFirstPass using FirstPass viewport {}x{}", 
-								viewport.Width, viewport.Height);
-						} else {
-							// Fallback: 使用 backBuffer
+						if (!RenderUtilities::GetFirstPassViewport(viewport)) 
+						{
 							auto rendererState = RE::BSGraphics::State::GetSingleton();
-							viewport.TopLeftX = 0;
-							viewport.TopLeftY = 0;
-							viewport.Width = static_cast<float>(rendererState.backBufferWidth);
-							viewport.Height = static_cast<float>(rendererState.backBufferHeight);
-							viewport.MinDepth = 0.0f;
-							viewport.MaxDepth = 1.0f;
+								viewport.TopLeftX = 0;
+								viewport.TopLeftY = 0;
+								viewport.Width = static_cast<float>(rendererState.backBufferWidth);
+								viewport.Height = static_cast<float>(rendererState.backBufferHeight);
+								viewport.MinDepth = 0.0f;
+								viewport.MaxDepth = 1.0f;	
 						}
 					} else {
 						// 非 Upscaling 模式：使用 targetWidth/Height
@@ -1524,10 +1450,6 @@ namespace ThroughScope
 				return true;
 			}
 
-			// 尺寸不匹配，释放旧纹理
-			logger::info("Recreating temporary BackBuffer: size changed from {}x{} to {}x{}",
-				existingDesc.Width, existingDesc.Height,
-				originalDesc.Width, originalDesc.Height);
 			SAFE_RELEASE(m_tempBackBufferTex);
 			SAFE_RELEASE(m_tempBackBufferSRV);
 		}
@@ -1628,5 +1550,152 @@ namespace ThroughScope
 			geomListCullProc1->m_pkCamera = scopeCamera;
 			geomListCullProc1->SetFrustum(&scopeCamera->viewFrustum);
 		}
+	}
+	// ========== Motion Vector Mask (fo4test 兼容) ==========
+	bool SecondPassRenderer::InitializeMotionVectorMask()
+	{
+		return true; // Use shared shaders from RenderUtilities
+	}
+
+	void SecondPassRenderer::ShutdownMotionVectorMask()
+	{
+		// Nothing to clean up locally
+	}
+
+	void SecondPassRenderer::ApplyMotionVectorMask()
+	{
+		// 使用 Stencil Test 自动清除 Scope 区域的 Motion Vectors (RT 29)
+		// Scope 渲染时会写入 Stencil，此处利用 Stencil != 0 来通过测试
+		// 相比 Scissor Rect，这能完美贴合任意形状的瞄具模型
+
+		if (!m_context || !m_device || !m_mainDSV) return;
+
+		D3DPERF_BeginEvent(0xFF0000FF, L"ApplyMotionVectorMask");
+
+		// 1. 获取 Motion Vector Render Target (Index 29)
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		ID3D11RenderTargetView* mvRTV = nullptr;
+		if (rendererData && rendererData->renderTargets[29].rtView) {
+			mvRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[29].rtView;
+		} else {
+			D3DPERF_EndEvent();
+			return; // No MV RT found
+		}
+
+		// 2. 备份当前渲染状态
+		Microsoft::WRL::ComPtr<ID3D11RenderTargetView> oldRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT];
+		Microsoft::WRL::ComPtr<ID3D11DepthStencilView> oldDSV;
+		m_context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, oldRTVs[0].GetAddressOf(), oldDSV.GetAddressOf());
+		
+		Microsoft::WRL::ComPtr<ID3D11DepthStencilState> oldDSS;
+		UINT oldStencilRef;
+		m_context->OMGetDepthStencilState(oldDSS.GetAddressOf(), &oldStencilRef);
+
+		D3D11_VIEWPORT oldViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+		UINT numViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+		m_context->RSGetViewports(&numViewports, oldViewports);
+
+		Microsoft::WRL::ComPtr<ID3D11RasterizerState> oldRS;
+		m_context->RSGetState(oldRS.GetAddressOf());
+
+		Microsoft::WRL::ComPtr<ID3D11BlendState> oldBS;
+		float oldBlendFactor[4];
+		UINT oldSampleMask;
+		m_context->OMGetBlendState(oldBS.GetAddressOf(), oldBlendFactor, &oldSampleMask);
+
+		Microsoft::WRL::ComPtr<ID3D11VertexShader> oldVS;
+		m_context->VSGetShader(oldVS.GetAddressOf(), nullptr, nullptr);
+		Microsoft::WRL::ComPtr<ID3D11PixelShader> oldPS;
+		m_context->PSGetShader(oldPS.GetAddressOf(), nullptr, nullptr);
+		D3D11_PRIMITIVE_TOPOLOGY oldTopology;
+		m_context->IAGetPrimitiveTopology(&oldTopology);
+		Microsoft::WRL::ComPtr<ID3D11InputLayout> oldInputLayout;
+		m_context->IAGetInputLayout(oldInputLayout.GetAddressOf());
+
+		try {
+			// 3. 配置 Depth Test (Masking)
+			// 使用深度测试代替 Stencil。背景被 Clear 到 1.0，Scope 几何体深度 < 1.0。
+			// 我们绘制一个全屏 Quad，强制其深度为 1.0 (通过 Viewport Min/MaxDepth)。
+			// 设置 DepthFunc = GREATER (1.0 > BufferValue)。
+			// - 如果 Buffer 是背景(1.0)，1.0 > 1.0 为假，不绘制。
+			// - 如果 Buffer 是 Scope(<1.0)，1.0 > 0.x 为真，绘制(清除 MV)。
+			D3D11_DEPTH_STENCIL_DESC dssDesc;
+			ZeroMemory(&dssDesc, sizeof(dssDesc));
+			dssDesc.DepthEnable = TRUE;
+			dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO; // 不写入深度
+			dssDesc.DepthFunc = D3D11_COMPARISON_GREATER; 
+			dssDesc.StencilEnable = FALSE;
+
+			Microsoft::WRL::ComPtr<ID3D11DepthStencilState> dssState;
+			m_device->CreateDepthStencilState(&dssDesc, &dssState);
+			m_context->OMSetDepthStencilState(dssState.Get(), 0); 
+
+			// 4. 配置 Rasterizer State
+			D3D11_RASTERIZER_DESC rsDesc;
+			ZeroMemory(&rsDesc, sizeof(rsDesc));
+			rsDesc.FillMode = D3D11_FILL_SOLID;
+			rsDesc.CullMode = D3D11_CULL_NONE;
+			rsDesc.FrontCounterClockwise = FALSE;
+			rsDesc.DepthBias = 0;
+			rsDesc.SlopeScaledDepthBias = 0.0f;
+			rsDesc.DepthBiasClamp = 0.0f;
+			rsDesc.DepthClipEnable = TRUE;
+			rsDesc.ScissorEnable = FALSE;
+			rsDesc.MultisampleEnable = FALSE;
+			rsDesc.AntialiasedLineEnable = FALSE;
+
+			Microsoft::WRL::ComPtr<ID3D11RasterizerState> rsState;
+			m_device->CreateRasterizerState(&rsDesc, &rsState);
+			m_context->RSSetState(rsState.Get());
+
+			// 设置 Viewport 为全屏，强制深度为 1.0
+			D3D11_VIEWPORT vp;
+			vp.Width = (float)RenderUtilities::GetScreenWidth();
+			vp.Height = (float)RenderUtilities::GetScreenHeight();
+			vp.MinDepth = 1.0f; // Force Z = 1.0
+			vp.MaxDepth = 1.0f; // Force Z = 1.0
+			vp.TopLeftX = 0;
+			vp.TopLeftY = 0;
+			m_context->RSSetViewports(1, &vp);
+
+			// 5. 设置 Render Target (Attach MV RTV and Main DSV)
+			m_context->OMSetRenderTargets(1, &mvRTV, m_mainDSV);
+
+			// 6. 设置 Shaders
+			m_context->VSSetShader(RenderUtilities::GetClearVelocityVS(), nullptr, 0);
+			m_context->PSSetShader(RenderUtilities::GetClearVelocityPS(), nullptr, 0);
+			m_context->IASetInputLayout(nullptr);
+			m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+			// 7. 设置 Blend State (Overwrite)
+			D3D11_BLEND_DESC blendDesc;
+			ZeroMemory(&blendDesc, sizeof(blendDesc));
+			blendDesc.RenderTarget[0].BlendEnable = FALSE;
+			blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+			
+			Microsoft::WRL::ComPtr<ID3D11BlendState> blendState;
+			m_device->CreateBlendState(&blendDesc, &blendState);
+			float blendFactor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			m_context->OMSetBlendState(blendState.Get(), blendFactor, 0xFFFFFFFF);
+
+			// 8. 绘制 Fullscreen Triangle
+			m_context->Draw(3, 0);
+
+		} catch (...) {
+			logger::warn("ApplyMotionVectorMask: Exception");
+		}
+
+	// 9. 恢复状态
+		m_context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, oldRTVs[0].GetAddressOf(), oldDSV.Get());
+		m_context->OMSetDepthStencilState(oldDSS.Get(), oldStencilRef);
+		m_context->RSSetState(oldRS.Get());
+		m_context->RSSetViewports(numViewports, oldViewports); 
+		m_context->OMSetBlendState(oldBS.Get(), oldBlendFactor, oldSampleMask);
+		m_context->VSSetShader(oldVS.Get(), nullptr, 0);
+		m_context->PSSetShader(oldPS.Get(), nullptr, 0);
+		m_context->IASetPrimitiveTopology(oldTopology);
+		m_context->IASetInputLayout(oldInputLayout.Get());
+
+		D3DPERF_EndEvent();
 	}
 }

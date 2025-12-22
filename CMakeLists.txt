@@ -269,6 +269,8 @@ add_custom_command(
 		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:${PROJECT_NAME}> "G:/Games/FO4_SO/mods/TTS True Through Scope/F4SE/Plugins/"
 		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> "G:/Games/Fallout 4 ori/Fallout 4/Mo2/mods/TTS/F4SE/Plugins/"
 		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:${PROJECT_NAME}> "G:/Games/Fallout 4 ori/Fallout 4/Mo2/mods/TTS/F4SE/Plugins/"
+		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> "I:/Games/Fallout 4 Pack/FO4SO_1.5/mods/TTS/F4SE/Plugins/"
+		COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:${PROJECT_NAME}> "I:/Games/Fallout 4 Pack/FO4SO_1.5/mods/TTS/F4SE/Plugins/"
 	)
 
 # ---- Build artifacts ----

@@ -53,6 +53,10 @@ namespace ThroughScope
 		static float GetScreenWidth() { return s_ScreenWidth; }
 		static float GetScreenHeight() { return s_ScreenHeight; }
 
+		// Shader management
+		static ID3D11PixelShader* GetClearVelocityPS() { return s_ClearVelocityPS; }
+		static ID3D11VertexShader* GetClearVelocityVS() { return s_ClearVelocityVS; }
+
 	public:
 	/*	static bool isInMainRenderSetup;
 		static bool isInDoZPrePass;
@@ -69,7 +73,13 @@ namespace ThroughScope
 
 		// Motion vector backup for fo4test compatibility
 		static ID3D11Texture2D* s_MotionVectorBackup;
+		
+		// Utility Shaders
+	public:
+		static ID3D11PixelShader* s_ClearVelocityPS;
+		static ID3D11VertexShader* s_ClearVelocityVS;
 
+	private:
         // Scope textures
         static RE::BSGraphics::Texture* s_ScopeBSTexture;
         static RE::NiTexture* s_ScopeNiTexture;

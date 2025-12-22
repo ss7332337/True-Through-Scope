@@ -38,6 +38,7 @@ set(SOURCES
 	src/rendering/ScopeRenderingManager.cpp
 	src/ImageSpaceDebugHook.cpp
 	src/HDRStateCache.cpp
+	src/ENBIntegration.cpp
 )
 	
 	

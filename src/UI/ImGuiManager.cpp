@@ -39,11 +39,11 @@ namespace ThroughScope
 				globalSettings.selectedLanguage < static_cast<int>(Language::COUNT)) {
 				Language savedLanguage = static_cast<Language>(globalSettings.selectedLanguage);
 				localization->SetLanguage(savedLanguage);
-				logger::info("Loaded saved language setting: {}", static_cast<int>(savedLanguage));
+
 			}
 
 			m_Initialized = true;
-			logger::info("ImGui initialized successfully (using existing context)");
+
 			return true;
 		}
 
@@ -127,11 +127,11 @@ namespace ThroughScope
 			globalSettings.selectedLanguage < static_cast<int>(Language::COUNT)) {
 			Language savedLanguage = static_cast<Language>(globalSettings.selectedLanguage);
 			localization->SetLanguage(savedLanguage);
-			logger::info("Loaded saved language setting: {}", static_cast<int>(savedLanguage));
+
 		}
 
 		m_Initialized = true;
-		logger::info("ImGui initialized successfully");
+
 		return true;
 	}
 
@@ -146,7 +146,7 @@ namespace ThroughScope
 		try {
 			ImGui_ImplDX11_Shutdown();
 			ImGui_ImplWin32_Shutdown();
-			logger::info("ImGui backends shut down successfully");
+
 		} catch (...) {
 			logger::warn("Error during ImGui backend shutdown, possibly shared with other mods");
 		}
@@ -155,13 +155,13 @@ namespace ThroughScope
 		if (m_CreatedImGuiContext) {
 			ImGui::DestroyContext();
 			m_CreatedImGuiContext = false;
-			logger::info("ImGui context destroyed (created by TrueThroughScope)");
+
 		} else {
-			logger::info("ImGui context preserved (created by other mod)");
+
 		}
 
 		m_Initialized = false;
-		logger::info("ImGui manager shut down");
+
 	}
 
 	void ImGuiManager::InitializePanels()
@@ -199,7 +199,7 @@ namespace ThroughScope
 			}
 		}
 
-		logger::info("Initialized {} panels", m_Panels.size());
+
 	}
 
 	void ImGuiManager::ShutdownPanels()
@@ -279,9 +279,7 @@ namespace ThroughScope
 			auto input = RE::BSInputDeviceManager::GetSingleton();
 			RE::ControlMap::GetSingleton()->ignoreKeyboardMouse = m_MenuOpen;
 
-			if (m_MenuOpen) {
-				logger::info("Menu opened");
-			}
+
 		}
 
 		for (auto& panel : m_Panels) {
@@ -505,7 +503,7 @@ namespace ThroughScope
 			if (std::filesystem::exists(systemFont)) {
 				baseFont = io.Fonts->AddFontFromFileTTF(systemFont.c_str(), 16.0f, &fontConfig, ranges);
 				if (baseFont) {
-					logger::info("Using system font as base: {}", systemFont);
+
 					break;
 				}
 			}
@@ -570,7 +568,7 @@ namespace ThroughScope
 		for (const auto& symbolFont : symbolFonts) {
 			if (std::filesystem::exists(symbolFont)) {
 				io.Fonts->AddFontFromFileTTF(symbolFont.c_str(), 16.0f, &fontConfig, symbolRanges);
-				logger::info("Added symbol font: {}", symbolFont);
+
 				break; // 只需要一个符号字体即可
 			}
 		}
@@ -582,19 +580,9 @@ namespace ThroughScope
 		io.FontDefault = baseFont;
 		
 		// 检查关键符号是否可用（调试用）
-		if (baseFont) {
-			static const ImWchar testChars[] = { 0x2022, 0x25CB, 0x2713, 0x26A0, 0 }; // ●○✓⚠
-			for (int i = 0; testChars[i] != 0; ++i) {
-				const ImFontGlyph* glyph = baseFont->FindGlyph(testChars[i]);
-				if (glyph) {
-					logger::info("Symbol U+{:04X} found in font", testChars[i]);
-				} else {
-					logger::warn("Symbol U+{:04X} NOT found in font", testChars[i]);
-				}
-			}
-		}
+
 		
-		logger::info("Language fonts loaded and merged successfully");
+
 	}
 	
 	void ImGuiManager::UpdateFontsForLanguage(Language language)
@@ -608,7 +596,7 @@ namespace ThroughScope
 			io.FontDefault = io.Fonts->Fonts[0];
 		}
 		
-		logger::info("Font updated for language: {}", static_cast<int>(language));
+
 	}
 	
 	void ImGuiManager::RebuildFonts()
@@ -624,13 +612,13 @@ namespace ThroughScope
 		ImGui_ImplDX11_InvalidateDeviceObjects();
 		ImGui_ImplDX11_CreateDeviceObjects();
 		
-		logger::info("Fonts rebuilt successfully");
+
 	}
 	
 	void ImGuiManager::RequestFontRebuild()
 	{
 		m_FontRebuildRequested = true;
-		logger::info("Font rebuild requested");
+
 	}
 
 }

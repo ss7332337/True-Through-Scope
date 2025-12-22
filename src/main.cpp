@@ -22,6 +22,7 @@
 #include "ImGuiManager.h"
 #include "rendering/RenderStateManager.h"
 #include "rendering/ScopeRenderingManager.h"
+#include "ENBIntegration.h"
 
 using namespace RE;
 using namespace RE::BSGraphics;
@@ -208,6 +209,9 @@ void InitializePlugin()
 	
 	// Initialize ScopeRenderingManager for fo4test compatibility detection
 	ThroughScope::ScopeRenderingManager::GetSingleton()->Initialize();
+	
+	// Initialize ENB integration (will detect ENB and register callback if present)
+	ThroughScope::ENBIntegration::GetSingleton()->Initialize();
 }
 
 // F4SE Query plugin
