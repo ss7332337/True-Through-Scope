@@ -1652,10 +1652,39 @@ namespace ThroughScope
 			m_device->CreateRasterizerState(&rsDesc, &rsState);
 			m_context->RSSetState(rsState.Get());
 
-			// 设置 Viewport 为全屏，强制深度为 1.0
+			// 设置 Viewport 为Motion Vector RT的实际尺寸，强制深度为 1.0
+			// [FIX] 直接从RT29获取尺寸，而不是使用硬编码的屏幕尺寸
+			// 这修复了2160p分辨率下的TAA鬼影问题（之前使用1920x1080导致只覆盖左上1/4）
 			D3D11_VIEWPORT vp;
-			vp.Width = (float)RenderUtilities::GetScreenWidth();
-			vp.Height = (float)RenderUtilities::GetScreenHeight();
+			UINT mvWidth = 0, mvHeight = 0;
+			
+			// 从Motion Vector RTV获取实际纹理尺寸
+			ID3D11Resource* mvResource = nullptr;
+			mvRTV->GetResource(&mvResource);
+			if (mvResource) {
+				ID3D11Texture2D* mvTexture = nullptr;
+				if (SUCCEEDED(mvResource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&mvTexture))) {
+					D3D11_TEXTURE2D_DESC mvDesc;
+					mvTexture->GetDesc(&mvDesc);
+					mvWidth = mvDesc.Width;
+					mvHeight = mvDesc.Height;
+					mvTexture->Release();
+				}
+				mvResource->Release();
+			}
+			
+			// 回退到深度缓冲尺寸如果无法获取MV尺寸
+			if (mvWidth == 0 || mvHeight == 0) {
+				if (m_mainDSTexture) {
+					D3D11_TEXTURE2D_DESC dsDesc;
+					m_mainDSTexture->GetDesc(&dsDesc);
+					mvWidth = dsDesc.Width;
+					mvHeight = dsDesc.Height;
+				}
+			}
+			
+			vp.Width = (float)mvWidth;
+			vp.Height = (float)mvHeight;
 			vp.MinDepth = 1.0f; // Force Z = 1.0
 			vp.MaxDepth = 1.0f; // Force Z = 1.0
 			vp.TopLeftX = 0;

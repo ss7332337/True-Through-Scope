@@ -147,6 +147,7 @@ add_library(
 set(HLSL_OUTPUT_PATHS
     "G:/Games/FO4_SO/mods/TTS True Through Scope/Shaders/XiFeiLi"
     "G:/Games/Fallout 4 ori/Fallout 4/Mo2/mods/TTS/Shaders/XiFeiLi"
+	"I:/Games/Fallout 4 Pack/FO4SO_1.5/mods/TTS/Shaders/XiFeiLi"
 )
 
 macro(set_hlsl_properties HLSL_FILE SHADER_TYPE ENTRY_POINT)
