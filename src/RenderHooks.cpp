@@ -112,9 +112,7 @@ namespace ThroughScope
 		const NiBound* aBound,
 		const unsigned int aFlags)
 	{
-		D3DPERF_BeginEvent(0xffffffff, L"BSCullingGroup_Add");
 		if (!thisPtr || !IsValidObject(apObj) || !IsValidPointer(aBound)) {
-			D3DPERF_EndEvent();
 			return;
 		}
 
@@ -131,7 +129,6 @@ namespace ThroughScope
 		}
 
 		g_hookMgr->g_BSCullingGroupAdd(thisPtr, apObj, aBound, aFlags);
-		D3DPERF_EndEvent();
 	}
 
 	/**
@@ -296,7 +293,7 @@ namespace ThroughScope
 	void __fastcall hkBSShaderAccumulator_RenderBatches(
 		BSShaderAccumulator* thisPtr, int aiShader, bool abAlphaPass, int aeGroup)
 	{
-		D3DEventNode(g_hookMgr->g_BSShaderAccumulatorRenderBatches(thisPtr, aiShader, abAlphaPass, aeGroup), L"BSShaderAccumulator_RenderBatches");
+		g_hookMgr->g_BSShaderAccumulatorRenderBatches(thisPtr, aiShader, abAlphaPass, aeGroup);
 	}
 
 	void __fastcall hkDeferredLightsImpl(uint64_t ptr_drawWorld)
