@@ -27,6 +27,63 @@ namespace ThroughScope
 	static LightBackupSystem* g_lightBackup = LightBackupSystem::GetSingleton();
 	static ScopeRenderingManager* g_scopeRenderMgr = ScopeRenderingManager::GetSingleton();
 
+	// ========== fo4test Frame Generation Interop ==========
+	// Motion Vector Deferral API - prevents FG ghosting by coordinating MV copy timing
+	namespace FGInterop
+	{
+		typedef void (*FnNotifyComplete)();
+		typedef int (*FnRegister)();
+		typedef int (*FnUnregister)();
+		
+		static FnNotifyComplete NotifyComplete = nullptr;
+		static FnRegister Register = nullptr;
+		static FnUnregister Unregister = nullptr;
+		static bool g_Initialized = false;
+		static HMODULE g_Module = nullptr;
+		
+		void Initialize()
+		{
+			if (g_Initialized) return;
+			
+			g_Module = GetModuleHandleA("AAAFrameGeneration.dll");
+			if (!g_Module) {
+				logger::info("[FGInterop] AAAFrameGeneration.dll not loaded");
+				return;
+			}
+			
+			NotifyComplete = (FnNotifyComplete)GetProcAddress(g_Module, "AAAFG_NotifyMotionVectorUpdateComplete");
+			Register = (FnRegister)GetProcAddress(g_Module, "AAAFG_RegisterMotionVectorDeferral");
+			Unregister = (FnUnregister)GetProcAddress(g_Module, "AAAFG_UnregisterMotionVectorDeferral");
+			
+			if (NotifyComplete && Register && Unregister) {
+				int count = Register();
+				g_Initialized = true;
+				logger::info("[FGInterop] Registered for MV deferral, count: {}", count);
+			} else {
+				logger::warn("[FGInterop] Failed to resolve API exports");
+			}
+		}
+		
+		void Shutdown()
+		{
+			if (g_Initialized && Unregister) {
+				Unregister();
+				logger::info("[FGInterop] Unregistered");
+			}
+			g_Initialized = false;
+		}
+		
+		// Call after ApplyMotionVectorMask each frame
+		void NotifyMVComplete()
+		{
+			if (g_Initialized && NotifyComplete) {
+				NotifyComplete();
+			}
+		}
+		
+		bool IsActive() { return g_Initialized; }
+	}
+
 	// k1stPersonCullingGroup 地址，用于 O(1) 过滤第一人称几何体
 	static REL::Relocation<BSCullingGroup*> ptr_k1stPersonCullingGroup{ REL::ID(731482) };
 
@@ -488,6 +545,12 @@ namespace ThroughScope
 	// 当 aiLast=13 时（原始函数调用前）是渲染瞄具的理想时机，可以获得 ENB 效果
 	void __fastcall hkImageSpaceManager_RenderEffectRange(void* thisPtr, int aiFirst, int aiLast, int aiSourceTarget, int aiDestTarget)
 	{
+		// 延迟初始化 FG interop（只执行一次）
+		static bool s_fgInteropInitialized = false;
+		if (!s_fgInteropInitialized) {
+			FGInterop::Initialize();
+			s_fgInteropInitialized = true;
+		}
 
 		// 用 D3DPERF 标记显示调用参数
 		wchar_t markerName[128];
@@ -518,6 +581,10 @@ namespace ThroughScope
 					}
 					// 渲染后立即清除瞄具区域的 Motion Vectors，防止 TAA 鬼影
 					renderer.ApplyMotionVectorMask(); 
+					
+					// 通知 fo4test MV 更新完成（Frame Generation 兼容）
+					FGInterop::NotifyMVComplete();
+					
 					D3DPERF_EndEvent();
 					g_scopeRenderMgr->OnFrameEnd();
 				}

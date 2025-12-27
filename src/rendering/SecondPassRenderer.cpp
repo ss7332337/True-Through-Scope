@@ -1617,17 +1617,18 @@ namespace ThroughScope
 		m_context->IAGetInputLayout(oldInputLayout.GetAddressOf());
 
 		try {
-			// 3. 配置 Depth Test (Masking)
+			// 3. 配置 Depth Test (Masking) - Solution 9
 			// 使用深度测试代替 Stencil。背景被 Clear 到 1.0，Scope 几何体深度 < 1.0。
 			// 我们绘制一个全屏 Quad，强制其深度为 1.0 (通过 Viewport Min/MaxDepth)。
-			// 设置 DepthFunc = GREATER (1.0 > BufferValue)。
-			// - 如果 Buffer 是背景(1.0)，1.0 > 1.0 为假，不绘制。
-			// - 如果 Buffer 是 Scope(<1.0)，1.0 > 0.x 为真，绘制(清除 MV)。
+			// 设置 DepthFunc = GREATER_EQUAL (1.0 >= BufferValue)。
+			// - 如果 Buffer 是背景(1.0)，1.0 >= 1.0 为真，绘制(清除天空盒 MV)。
+			// - 如果 Buffer 是 Scope(<1.0)，1.0 >= 0.x 为真，绘制(清除 MV)。
+			// 使用 GREATER_EQUAL 而非 GREATER，以包含天空盒区域（depth=1.0）
 			D3D11_DEPTH_STENCIL_DESC dssDesc;
 			ZeroMemory(&dssDesc, sizeof(dssDesc));
 			dssDesc.DepthEnable = TRUE;
 			dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO; // 不写入深度
-			dssDesc.DepthFunc = D3D11_COMPARISON_GREATER; 
+			dssDesc.DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;  // Solution 9: 包含 depth=1.0 的天空盒
 			dssDesc.StencilEnable = FALSE;
 
 			Microsoft::WRL::ComPtr<ID3D11DepthStencilState> dssState;
