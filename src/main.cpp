@@ -291,8 +291,8 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 		logger::info("MH_Initialize Not Ok, Reason: {}", (int)mhInit);
 	}
 
-	ThroughScope::d3dHooks = D3DHooks::GetSington();
-	ThroughScope::nifloader = NIFLoader::GetSington();
+	ThroughScope::d3dHooks = D3DHooks::GetSingleton();
+	ThroughScope::nifloader = NIFLoader::GetSingleton();
 
 	logger::info("TrueThroughScope: Ninja!");
 	logger::info("TrueThroughScope: TrueThroughScope does NOT use AntTweakBar - any such errors are from other mods");

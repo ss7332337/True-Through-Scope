@@ -9,7 +9,7 @@ namespace ThroughScope
 
     ID3D11DeviceContext* GetCurrentD3DContext()
     {
-        auto d3dHooks = D3DHooks::GetSington();
+        auto d3dHooks = D3DHooks::GetSingleton();
         if (d3dHooks) {
             return d3dHooks->GetContext();
         }

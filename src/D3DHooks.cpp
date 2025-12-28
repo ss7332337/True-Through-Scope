@@ -140,7 +140,7 @@ namespace ThroughScope {
 	ClipCur phookClipCursor = nullptr;
 	D3D11RSSetViewportsHook phookD3D11RSSetViewports = nullptr;
 
-	D3DHooks* D3DInstance = D3DHooks::GetSington();
+	D3DHooks* D3DInstance = D3DHooks::GetSingleton();
 	ImGuiManager* imguiMgr;
 	ID3D11DeviceContext* m_Context = nullptr;
 	ID3D11Device* m_Device = nullptr;
@@ -346,7 +346,7 @@ namespace ThroughScope {
 		}
 	}
 
-	D3DHooks* D3DHooks::GetSington()
+	D3DHooks* D3DHooks::GetSingleton()
 	{
 		static D3DHooks instance;
 		return &instance;
@@ -384,7 +384,7 @@ namespace ThroughScope {
 		m_Device = *ppDevice;
 		m_Device->GetImmediateContext(&m_Context);
 
-		GetSington()->HookAllContexts();
+		GetSingleton()->HookAllContexts();
 		logger::info("D3D hooks initialized");
 
 		return hr;

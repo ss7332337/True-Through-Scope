@@ -962,7 +962,7 @@ namespace ThroughScope
 			RemoveExistingTTSNode();
 
 			std::string fullPath = "Meshes\\TTS\\ScopeShape\\" + nifFileName;
-			auto nifLoader = NIFLoader::GetSington();
+			auto nifLoader = NIFLoader::GetSingleton();
 			RE::NiNode* loadedNode = nifLoader->LoadNIF(fullPath.c_str());
 
 			if (!loadedNode) {

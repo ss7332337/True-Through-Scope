@@ -24,7 +24,7 @@ namespace ThroughScope
         }
 
         if (!m_cachedContext || !m_cachedDevice || !m_cachedD3DHooks) {
-            m_cachedD3DHooks = D3DHooks::GetSington();
+            m_cachedD3DHooks = D3DHooks::GetSingleton();
             if (m_cachedD3DHooks) {
                 m_cachedContext = m_cachedD3DHooks->GetContext();
                 m_cachedDevice = m_cachedD3DHooks->GetDevice();

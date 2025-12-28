@@ -223,7 +223,7 @@ namespace ThroughScope
 
 	void ScopeCamera::SetupScopeForWeapon(const DataPersistence::WeaponInfo& weaponInfo)
 	{
-		auto nifLoader = NIFLoader::GetSington();
+		auto nifLoader = NIFLoader::GetSingleton();
 		if (!weaponInfo.currentConfig) {
 			logger::warn("No configuration provided for scope setup");
 			return;

@@ -9,7 +9,7 @@
 class NIFLoader
 {
 public:
-	static NIFLoader* GetSington();
+	static NIFLoader* GetSingleton();
 
 	bool LoadNIFAndAttach(const char* filePath);
 	RE::NiNode* LoadNIF(const char* filePath);

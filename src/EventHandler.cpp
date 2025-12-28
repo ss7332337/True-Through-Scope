@@ -20,7 +20,7 @@ namespace ThroughScope
 	AnimationGraphEventWatcher* AnimationGraphEventWatcher::s_Instance = nullptr;
 	std::unordered_map<uint64_t, AnimationGraphEventWatcher::FnProcessEvent> AnimationGraphEventWatcher::fnHash;
 
-	NIFLoader* m_NIFLoader = NIFLoader::GetSington();
+	NIFLoader* m_NIFLoader = NIFLoader::GetSingleton();
 
 	
 

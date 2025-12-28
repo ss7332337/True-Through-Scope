@@ -237,7 +237,7 @@ namespace ThroughScope
 
 			// 加载新模型
 			std::string fullPath = "Meshes\\TTS\\ScopeShape\\" + modelName;
-			auto nifLoader = NIFLoader::GetSington();
+			auto nifLoader = NIFLoader::GetSingleton();
 			RE::NiNode* loadedNode = nifLoader->LoadNIF(fullPath.c_str());
 
 			if (!loadedNode) {

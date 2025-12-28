@@ -91,7 +91,6 @@ namespace ThroughScope
 	void __fastcall hkDrawWorld_Render_UI(uint64_t thisPtr);  // Debug hook
 	void __fastcall hkUI_BeginRender();  // Upscaling mode: render scope after Upscaling, before UI
 	void __fastcall hkSetUseDynamicResolutionViewport(void* thisPtr, bool a_useDynamicResolution);  // Debug: fo4test PostDisplay timing
-	void __fastcall hkDrawWorld_Imagespace();  // Debug: Upscaling/TAA occurs here
 	void __fastcall hkDrawWorld_Render_PostUI();  // Debug: After Upscaling, before UI - potential scope render point
 	void __fastcall hkUI_ScreenSpace_RenderMenus(void* thisPtr);  // Debug: Actual UI overlay rendering
 	bool __fastcall hkBSShaderAccumulator_RegisterObject(BSShaderAccumulator* thisPtr, BSGeometry* apGeometry);  // Validate geometry before registration

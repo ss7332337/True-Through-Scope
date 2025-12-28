@@ -39,7 +39,7 @@ namespace ThroughScope
         // 所以从未成功捕获过 HDR 状态，导致闪烁问题
         if (shouldCapture) {
              // 获取 D3D Context
-             ID3D11DeviceContext* context = D3DHooks::GetSington()->GetContext();
+             ID3D11DeviceContext* context = D3DHooks::GetSingleton()->GetContext();
              if (context) {
                  // 直接捕获当前 HDR 状态（此时 HDR::Render 刚刚完成，所有状态已设置）
                  g_HDRStateCache.Capture(context);

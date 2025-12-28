@@ -2,7 +2,7 @@
 
 using namespace RE;
 
-NIFLoader* NIFLoader::GetSington()
+NIFLoader* NIFLoader::GetSingleton()
 {
 	static NIFLoader instance;
 	return &instance;

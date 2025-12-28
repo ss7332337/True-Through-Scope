@@ -237,7 +237,7 @@ namespace ThroughScope {
 		};
 
     public:
-		static D3DHooks* GetSington();
+		static D3DHooks* GetSingleton();
 		static void CleanupStaticResources(); // 添加静态资源清理函数
 		static void NameAllRenderTargets();   // 为RenderDoc调试命名所有101个渲染目标
         bool Initialize();

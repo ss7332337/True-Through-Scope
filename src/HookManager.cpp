@@ -51,7 +51,6 @@ extern void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* 
 	extern void __fastcall hkDrawWorld_Render_UI(uint64_t thisPtr);
 	extern void __fastcall hkUI_BeginRender();
 	extern void __fastcall hkSetUseDynamicResolutionViewport(void* thisPtr, bool a_useDynamicResolution);
-	extern void __fastcall hkDrawWorld_Imagespace();
 	extern void __fastcall hkDrawWorld_Render_PostUI();
 	extern void __fastcall hkUI_ScreenSpace_RenderMenus(void* thisPtr);
 
@@ -141,9 +140,6 @@ extern void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* 
 
 		CreateAndEnableHook((LPVOID)SetUseDynamicResolutionViewport_Ori.address(), &hkSetUseDynamicResolutionViewport,
 			reinterpret_cast<LPVOID*>(&g_SetUseDynamicResolutionViewport), "SetUseDynamicResolutionViewport");
-
-		CreateAndEnableHook((LPVOID)DrawWorld_Imagespace_Ori.address(), &hkDrawWorld_Imagespace,
-			reinterpret_cast<LPVOID*>(&g_DrawWorld_Imagespace), "DrawWorld_Imagespace");
 
 		CreateAndEnableHook((LPVOID)DrawWorld_Render_PostUI_Ori.address(), &hkDrawWorld_Render_PostUI,
 			reinterpret_cast<LPVOID*>(&g_DrawWorld_Render_PostUI), "DrawWorld_Render_PostUI");
