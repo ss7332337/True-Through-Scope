@@ -642,26 +642,20 @@ namespace ThroughScope
 		D3DPERF_EndEvent();
 	}
 
-	// ========== DrawWorld::Imagespace Debug Hook ==========
-	// Upscaling/TAA 发生处 - 这是 FSR3/DLSS 处理的核心位置
-	void __fastcall hkDrawWorld_Imagespace()
-	{
-		D3DPERF_BeginEvent(0xFFFF8800, L"DrawWorld_Imagespace (Upscaling/TAA)");
-		g_hookMgr->g_DrawWorld_Imagespace();
-		D3DPERF_EndEvent();
-	}
-
 	// ========== DrawWorld::Render_PostUI Debug Hook ==========
-	// 在 Upscaling 后，UI 前 - 这是瞄具渲染的理想位置！
 	void __fastcall hkDrawWorld_Render_PostUI()
 	{
-		D3DPERF_BeginEvent(0xFF00FF00, L"DrawWorld_Render_PostUI (IDEAL_SCOPE_RENDER_POINT)");
+		D3DPERF_BeginEvent(0xFF00FF00, L"DrawWorld_Render_PostUI");
 		g_hookMgr->g_DrawWorld_Render_PostUI();
+		
+		// MV 调试可视化 - 在右上角显示 RT_29
+		SecondPassRenderer::RenderMVDebugOverlay();
+		
 		D3DPERF_EndEvent();
 	}
 
 	// ========== UI::ScreenSpace_RenderMenus Debug Hook ==========
-	// 实际 UI 覆盖层渲染
+	// 用于渲染菜单（比如暂停菜单、工作台菜单、物品菜单等）
 	void __fastcall hkUI_ScreenSpace_RenderMenus(void* thisPtr)
 	{
 		D3DPERF_BeginEvent(0xFFFF00FF, L"UI_ScreenSpace_RenderMenus");

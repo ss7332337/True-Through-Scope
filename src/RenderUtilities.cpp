@@ -19,6 +19,7 @@ namespace ThroughScope
 	ID3D11VertexShader* RenderUtilities::s_ClearVelocityVS = nullptr;
 	ID3D11PixelShader* RenderUtilities::s_ScopeMVPS = nullptr;
 	ID3D11VertexShader* RenderUtilities::s_ScopeMVVS = nullptr;
+	ID3D11PixelShader* RenderUtilities::s_MVDebugPS = nullptr;
 
     RE::BSGraphics::Texture* RenderUtilities::s_ScopeBSTexture = nullptr;
     RE::NiTexture* RenderUtilities::s_ScopeNiTexture = nullptr;
@@ -87,6 +88,27 @@ namespace ThroughScope
 			o.Pos = float4(o.UV * 2.0 - 1.0, 0.0, 1.0);
 			o.Pos.y = -o.Pos.y;
 			return o;
+		}
+	)";
+
+	// MV Debug Pixel Shader - visualizes motion vectors as colors
+	const char* g_MVDebugPSCode = R"(
+		Texture2D<float2> MVTexture : register(t0);
+		SamplerState PointSamp : register(s0);
+		struct PS_IN { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; };
+		float4 main(PS_IN input) : SV_Target {
+			float2 mv = MVTexture.Sample(PointSamp, input.UV);
+			// Gray background so we can see the overlay
+			float3 color = float3(0.2, 0.2, 0.2);  // Base gray
+			// Amplify and visualize: red = horizontal, green = vertical
+			float r = abs(mv.x) * 10.0;
+			float g = abs(mv.y) * 10.0;
+			color.r += r;
+			color.g += g;
+			// Blue = direction hint (positive = blue tint)
+			if (mv.x > 0) color.b += 0.3;
+			if (mv.y > 0) color.b += 0.3;
+			return float4(saturate(color), 1.0);
 		}
 	)";
 
@@ -193,6 +215,29 @@ namespace ThroughScope
 			blob->Release();
 			if (FAILED(hr)) {
 				logger::error("Failed to create ScopeMV vertex shader");
+			}
+		}
+
+		// --- Compile MV Debug PS ---
+		hr = D3DCompile(
+			g_MVDebugPSCode,
+			strlen(g_MVDebugPSCode),
+			nullptr, nullptr, nullptr,
+			"main", "ps_5_0",
+			0, 0, &blob, &errorBlob
+		);
+
+		if (FAILED(hr)) {
+			if (errorBlob) {
+				logger::error("Failed to compile MVDebugPS: {}", (char*)errorBlob->GetBufferPointer());
+				errorBlob->Release();
+			}
+		} else {
+			if (errorBlob) errorBlob->Release();
+			hr = device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_MVDebugPS);
+			blob->Release();
+			if (FAILED(hr)) {
+				logger::error("Failed to create MVDebug pixel shader");
 			}
 		}
 

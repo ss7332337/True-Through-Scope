@@ -1918,4 +1918,152 @@ namespace ThroughScope
 
 		D3DPERF_EndEvent();
 	}
+
+	// ========== MV Debug Overlay ==========
+	bool SecondPassRenderer::s_ShowMVDebug = true;  // 默认开启调试
+
+	void SecondPassRenderer::RenderMVDebugOverlay()
+	{
+		if (!s_ShowMVDebug) return;
+
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		if (!rendererData) return;
+
+		ID3D11DeviceContext* context = (ID3D11DeviceContext*)rendererData->context;
+		ID3D11Device* device = (ID3D11Device*)rendererData->device;
+		if (!context || !device) return;
+
+		D3DPERF_BeginEvent(0xFFFF0000, L"MV_Debug_Overlay");
+
+		try {
+			// 获取 RT_29 Motion Vectors SRV
+			ID3D11ShaderResourceView* mvSRV = (ID3D11ShaderResourceView*)rendererData->renderTargets[29].srView;
+			if (!mvSRV) {
+				D3DPERF_EndEvent();
+				return;
+			}
+
+			// 直接获取 backbuffer RTV (renderTargets[0] 通常是 backbuffer)
+			ID3D11RenderTargetView* backbufferRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[0].rtView;
+			if (!backbufferRTV) {
+				// 尝试从 SwapChain 获取
+				D3DPERF_EndEvent();
+				return;
+			}
+
+			// 备份当前 RTV
+			ID3D11RenderTargetView* currentRTV = nullptr;
+			ID3D11DepthStencilView* currentDSV = nullptr;
+			context->OMGetRenderTargets(1, &currentRTV, &currentDSV);
+
+			// 备份当前状态
+			Microsoft::WRL::ComPtr<ID3D11VertexShader> oldVS;
+			Microsoft::WRL::ComPtr<ID3D11PixelShader> oldPS;
+			Microsoft::WRL::ComPtr<ID3D11BlendState> oldBS;
+			FLOAT oldBlendFactor[4];
+			UINT oldSampleMask;
+			D3D11_PRIMITIVE_TOPOLOGY oldTopology;
+			Microsoft::WRL::ComPtr<ID3D11InputLayout> oldInputLayout;
+
+			context->VSGetShader(oldVS.GetAddressOf(), nullptr, nullptr);
+			context->PSGetShader(oldPS.GetAddressOf(), nullptr, nullptr);
+			context->OMGetBlendState(oldBS.GetAddressOf(), oldBlendFactor, &oldSampleMask);
+			context->IAGetPrimitiveTopology(&oldTopology);
+			context->IAGetInputLayout(oldInputLayout.GetAddressOf());
+
+			// 使用简单的全屏三角形 shader 渲染 MV 纹理
+			// 这里我们直接绘制到一个小的 viewport
+
+			// 设置小的 viewport (右上角 1/4 屏幕)
+			D3D11_VIEWPORT oldViewport;
+			UINT numViewports = 1;
+			context->RSGetViewports(&numViewports, &oldViewport);
+
+			D3D11_VIEWPORT debugViewport;
+			debugViewport.TopLeftX = oldViewport.Width * 0.75f;
+			debugViewport.TopLeftY = 0;
+			debugViewport.Width = oldViewport.Width * 0.25f;
+			debugViewport.Height = oldViewport.Height * 0.25f;
+			debugViewport.MinDepth = 0.0f;
+			debugViewport.MaxDepth = 1.0f;
+			context->RSSetViewports(1, &debugViewport);
+
+			// 设置 shader
+			context->VSSetShader(RenderUtilities::GetScopeMVVS(), nullptr, 0);
+			context->PSSetShader(RenderUtilities::GetMVDebugPS(), nullptr, 0);
+
+			// 绑定 MV 纹理
+			context->PSSetShaderResources(0, 1, &mvSRV);
+
+			// 创建 sampler (如果还没有)
+			static Microsoft::WRL::ComPtr<ID3D11SamplerState> mvDebugSampler;
+			if (!mvDebugSampler) {
+				D3D11_SAMPLER_DESC sampDesc = {};
+				sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+				sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+				sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+				sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+				device->CreateSamplerState(&sampDesc, mvDebugSampler.GetAddressOf());
+			}
+			context->PSSetSamplers(0, 1, mvDebugSampler.GetAddressOf());
+
+			// 禁用混合
+			static Microsoft::WRL::ComPtr<ID3D11BlendState> mvDebugBlend;
+			if (!mvDebugBlend) {
+				D3D11_BLEND_DESC blendDesc = {};
+				blendDesc.RenderTarget[0].BlendEnable = FALSE;
+				blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+				device->CreateBlendState(&blendDesc, mvDebugBlend.GetAddressOf());
+			}
+			float blendFactor[4] = { 0, 0, 0, 0 };
+			context->OMSetBlendState(mvDebugBlend.Get(), blendFactor, 0xFFFFFFFF);
+
+			// 设置 RTV 到 backbuffer
+			context->OMSetRenderTargets(1, &backbufferRTV, nullptr);
+
+			// 创建禁用剔除的 Rasterizer State
+			static Microsoft::WRL::ComPtr<ID3D11RasterizerState> mvDebugRS;
+			if (!mvDebugRS) {
+				D3D11_RASTERIZER_DESC rsDesc = {};
+				rsDesc.FillMode = D3D11_FILL_SOLID;
+				rsDesc.CullMode = D3D11_CULL_NONE;  // 禁用剔除！
+				rsDesc.FrontCounterClockwise = FALSE;
+				rsDesc.DepthClipEnable = TRUE;
+				device->CreateRasterizerState(&rsDesc, mvDebugRS.GetAddressOf());
+			}
+			
+			// 备份并设置 RS
+			Microsoft::WRL::ComPtr<ID3D11RasterizerState> oldRS;
+			context->RSGetState(oldRS.GetAddressOf());
+			context->RSSetState(mvDebugRS.Get());
+
+			// 绘制全屏三角形
+			context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			context->IASetInputLayout(nullptr);
+			context->Draw(3, 0);
+			
+			// 恢复 RS
+			context->RSSetState(oldRS.Get());
+
+			// 清理 SRV 绑定
+			ID3D11ShaderResourceView* nullSRV = nullptr;
+			context->PSSetShaderResources(0, 1, &nullSRV);
+
+			// 恢复状态
+			context->RSSetViewports(1, &oldViewport);
+			context->VSSetShader(oldVS.Get(), nullptr, 0);
+			context->PSSetShader(oldPS.Get(), nullptr, 0);
+			context->OMSetBlendState(oldBS.Get(), oldBlendFactor, oldSampleMask);
+			context->IASetPrimitiveTopology(oldTopology);
+			context->IASetInputLayout(oldInputLayout.Get());
+
+			if (currentRTV) currentRTV->Release();
+			if (currentDSV) currentDSV->Release();
+
+		} catch (...) {
+			logger::warn("RenderMVDebugOverlay: Exception");
+		}
+
+		D3DPERF_EndEvent();
+	}
 }

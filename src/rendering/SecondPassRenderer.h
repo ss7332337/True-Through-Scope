@@ -149,6 +149,10 @@ namespace ThroughScope
 	public:
 		void ApplyMotionVectorMask();  // 在scope区域清零motion vector
 
+		// MV 调试可视化 - 在屏幕角落显示 RT_29 内容
+		static void RenderMVDebugOverlay();
+		static bool s_ShowMVDebug;  // 是否显示 MV 调试
+
 	private:
 		Microsoft::WRL::ComPtr<ID3D11VertexShader> m_mvMaskVS;
 		Microsoft::WRL::ComPtr<ID3D11PixelShader> m_mvMaskPS;

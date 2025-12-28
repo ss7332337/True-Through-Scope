@@ -61,6 +61,9 @@ namespace ThroughScope
 		static ID3D11PixelShader* GetScopeMVPS() { return s_ScopeMVPS; }
 		static ID3D11VertexShader* GetScopeMVVS() { return s_ScopeMVVS; }
 
+		// MV Debug visualization shader
+		static ID3D11PixelShader* GetMVDebugPS() { return s_MVDebugPS; }
+
 	public:
 	/*	static bool isInMainRenderSetup;
 		static bool isInDoZPrePass;
@@ -84,6 +87,7 @@ namespace ThroughScope
 		static ID3D11VertexShader* s_ClearVelocityVS;
 		static ID3D11PixelShader* s_ScopeMVPS;
 		static ID3D11VertexShader* s_ScopeMVVS;
+		static ID3D11PixelShader* s_MVDebugPS;  // MV 可视化 shader
 
 	private:
         // Scope textures
