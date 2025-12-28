@@ -61,6 +61,7 @@ namespace ThroughScope
         bool UpdateScopeCamera();
         void ClearRenderTargets();
         bool SyncLighting();
+        bool BackupDepthBuffer();  // 备份深度缓冲区用于 MV Mask 深度比较
 
         /*
          * 执行第二次渲染,生成瞄具内容
@@ -92,6 +93,11 @@ namespace ThroughScope
         ID3D11DepthStencilView* m_mainDSV = nullptr;
         ID3D11Texture2D* m_mainRTTexture = nullptr;
         ID3D11Texture2D* m_mainDSTexture = nullptr;
+        
+        // ========== 深度备份（用于 MV Mask 深度比较）==========
+        ID3D11Texture2D* m_depthBackupTex = nullptr;
+        ID3D11ShaderResourceView* m_depthBackupSRV = nullptr;
+        bool m_depthBackupCreated = false;
 
         // ========== 相机状态 ==========
         RE::NiCamera* m_playerCamera = nullptr;

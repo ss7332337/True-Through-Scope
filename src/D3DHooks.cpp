@@ -73,6 +73,11 @@ namespace ThroughScope {
 	static ID3D11SamplerState* lutSamplerState = nullptr;
 	static ID3D11BlendState* blendState = nullptr;
 	static ID3D11Buffer* constantBuffer = nullptr;
+	
+	// ScopeQuad draw parameters for stencil write
+	static UINT s_ScopeQuadIndexCount = 0;
+	static UINT s_ScopeQuadStartIndexLocation = 0;
+	static INT s_ScopeQuadBaseVertexLocation = 0;
 	Microsoft::WRL::ComPtr<ID3D11Texture2D> D3DHooks::s_ReticleTexture = nullptr;
 	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> D3DHooks::s_ReticleSRV = nullptr;
 
@@ -569,6 +574,9 @@ namespace ThroughScope {
 		Utilities::CreateAndEnableHook(&ClipCursor, ClipCursorHook, reinterpret_cast<LPVOID*>(&phookClipCursor), "ClipCursorHook");
 		Utilities::CreateAndEnableHook(rsSetViewportsFunc, reinterpret_cast<void*>(hkRSSetViewports), reinterpret_cast<void**>(&phookD3D11RSSetViewports), "RSSetViewportsHook");
 
+		// Name all render targets for RenderDoc debugging
+		NameAllRenderTargets();
+
 		logger::info("D3D11 hooks initialized successfully");
 		return true;
     }
@@ -592,12 +600,22 @@ namespace ThroughScope {
 		bool isScopeQuad = IsScopeQuadBeingDrawn(pContext, IndexCount);
 		//bool isScopeQuad = IsScopeQuadBeingDrawnShape(pContext, IndexCount);
 		if (isScopeQuad) {
+			D3DPERF_BeginEvent(0xFFFF00FF, L"TTS_ScopeQuad_Detected");  // 紫色标记
 
 			CacheAllStates();
+			
+			// 保存索引数量用于后续 SetScopeTexture 绘制
+			s_ScopeQuadIndexCount = IndexCount;
+			s_ScopeQuadStartIndexLocation = StartIndexLocation;
+			s_ScopeQuadBaseVertexLocation = BaseVertexLocation;
+			
+			D3DPERF_EndEvent();
+			
 			if (ImGuiManager::GetSingleton()->IsMenuOpen()) {
 				return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 			}
-			return;
+			
+			return;  // 跳过原始绘制，后续在 SetScopeTexture 中用自定义 shader 绘制
 		} else {
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 		}
@@ -681,7 +699,7 @@ namespace ThroughScope {
 
 	bool D3DHooks::IsTargetDrawCall(const BufferInfo& vertexInfo, const BufferInfo& indexInfo, UINT indexCount)
 	{
-		int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
+		UINT scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
 		if (scopeNodeIndexCount <= 0)
 			return false;
 
@@ -1253,6 +1271,65 @@ namespace ThroughScope {
 		ID3D11SamplerState* samplers[2] = { samplerState, lutSamplerState };
 		pContext->PSSetSamplers(0, 2, samplers);
 
+		// === 绘制 ScopeQuad 并写入 Stencil ===
+		// ScopeQuad 在 hkDrawIndexed 中被跳过了，需要在这里用自定义 shader 绘制
+		D3DPERF_BeginEvent(0xFF00FFFF, L"TTS_ScopeQuad_DrawWithStencil");  // 青色标记
+		
+		if (s_ScopeQuadIndexCount > 0) {
+			// 获取当前 RTV 和需要绑定的 DSV
+			auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+			ID3D11DepthStencilView* mainDSV = nullptr;
+			if (rendererData && rendererData->depthStencilTargets[2].dsView[0]) {
+				mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
+			}
+			
+			// 备份原始 RTV/DSV
+			Microsoft::WRL::ComPtr<ID3D11RenderTargetView> oldRTV;
+			Microsoft::WRL::ComPtr<ID3D11DepthStencilView> oldDSV;
+			pContext->OMGetRenderTargets(1, oldRTV.GetAddressOf(), oldDSV.GetAddressOf());
+			
+			// 备份原始 DSS
+			Microsoft::WRL::ComPtr<ID3D11DepthStencilState> oldDSS;
+			UINT oldStencilRef;
+			pContext->OMGetDepthStencilState(oldDSS.GetAddressOf(), &oldStencilRef);
+			
+			// 创建写入 stencil 的 DSS
+			D3D11_DEPTH_STENCIL_DESC dssDesc;
+			ZeroMemory(&dssDesc, sizeof(dssDesc));
+			dssDesc.DepthEnable = TRUE;
+			dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+			dssDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+			dssDesc.StencilEnable = TRUE;
+			dssDesc.StencilReadMask = 0xFF;
+			dssDesc.StencilWriteMask = 0xFF;  // 允许写入 stencil
+			dssDesc.FrontFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
+			dssDesc.FrontFace.StencilDepthFailOp = D3D11_STENCIL_OP_KEEP;
+			dssDesc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_REPLACE;  // 通过时替换为 ref
+			dssDesc.FrontFace.StencilFunc = D3D11_COMPARISON_ALWAYS;    // 总是写入
+			dssDesc.BackFace = dssDesc.FrontFace;
+			
+			Microsoft::WRL::ComPtr<ID3D11DepthStencilState> stencilWriteDSS;
+			if (SUCCEEDED(device->CreateDepthStencilState(&dssDesc, stencilWriteDSS.GetAddressOf()))) {
+				// 绑定 RTV + DSV（确保 stencil 可写）
+				ID3D11RenderTargetView* rtv = oldRTV.Get();
+				pContext->OMSetRenderTargets(1, &rtv, mainDSV);
+				
+				// 设置 stencil ref = 127（使用唯一值避免与其他渲染冲突）
+				pContext->OMSetDepthStencilState(stencilWriteDSS.Get(), 127);
+				
+				// 绘制 ScopeQuad
+				isSelfDrawCall = true;
+				pContext->DrawIndexed(s_ScopeQuadIndexCount, s_ScopeQuadStartIndexLocation, s_ScopeQuadBaseVertexLocation);
+				isSelfDrawCall = false;
+				
+				// 恢复原始 RTV/DSV 和 DSS
+				pContext->OMSetRenderTargets(1, oldRTV.GetAddressOf(), oldDSV.Get());
+				pContext->OMSetDepthStencilState(oldDSS.Get(), oldStencilRef);
+			}
+		}
+		
+		D3DPERF_EndEvent();
+
 		// 确保释放设备引用
 		device->Release();
 	}
@@ -1649,6 +1726,152 @@ namespace ThroughScope {
 
 		// 设置单个RenderTarget，保持原有的DepthStencil
 		m_Context->OMSetRenderTargets(1, &targetRTV, s_CachedOMState.depthStencilView.Get());
+	}
+
+	void D3DHooks::NameAllRenderTargets()
+	{
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		if (!rendererData) {
+			logger::warn("NameAllRenderTargets: RendererData not available");
+			return;
+		}
+
+		// Render target names derived from independent IDA Pro analysis of Fallout 4 renderer
+		// Based on shader inputs, string references, and rendering pipeline analysis
+		static const char* rtNames[101] = {
+			"RT_00_FrameBuffer",                     // 0 - Final SwapChain output
+			"RT_01_RefractionNormals",               // 1 - Refraction normal map for water/glass
+			"RT_02_ScenePreAlpha",                   // 2 - Scene before alpha blending
+			"RT_03_SceneMain",                       // 3 - Main scene color buffer
+			"RT_04_SceneTemp",                       // 4 - Scene temporary / PreUI buffer
+			"RT_05_Unknown",                         // 5
+			"RT_06_Unknown",                         // 6
+			"RT_07_SSR_Raw",                         // 7 - Screen-Space Reflections raw data
+			"RT_08_SSR_Blurred",                     // 8 - SSR blurred result
+			"RT_09_SSR_BlurredExtra",                // 9 - SSR extra blur pass
+			"RT_10_SSR_Direction",                   // 10 - SSR ray direction
+			"RT_11_SSR_Mask",                        // 11 - SSR mask
+			"RT_12_Unknown",                         // 12
+			"RT_13_Unknown",                         // 13
+			"RT_14_BlurVertical",                    // 14 - Vertical blur pass
+			"RT_15_BlurHorizontal",                  // 15 - Horizontal blur (downscaled for color adjustment)
+			"RT_16_Unknown",                         // 16
+			"RT_17_UI",                              // 17 - User Interface
+			"RT_18_UI_Temp",                         // 18 - UI temporary
+			"RT_19_Unknown",                         // 19
+			"RT_20_GBuffer_Normal",                  // 20 - G-Buffer normals
+			"RT_21_GBuffer_NormalSwap",              // 21 - G-Buffer normals swap
+			"RT_22_GBuffer_Albedo",                  // 22 - G-Buffer albedo/diffuse
+			"RT_23_GBuffer_Emissive",                // 23 - G-Buffer emissive
+			"RT_24_GBuffer_Material",                // 24 - G-Buffer material (Glossiness/Specular/SSS)
+			"RT_25_Unknown",                         // 25
+			"RT_26_TAA_History",                     // 26 - TAA accumulation history buffer
+			"RT_27_TAA_HistorySwap",                 // 27 - TAA history swap buffer
+			"RT_28_SSAO",                            // 28 - Screen-Space Ambient Occlusion
+			"RT_29_MotionVectors",                   // 29 - TAA motion vectors
+			"RT_30_Unknown",                         // 30
+			"RT_31_Unknown",                         // 31
+			"RT_32_Unknown",                         // 32
+			"RT_33_Unknown",                         // 33
+			"RT_34_Unknown",                         // 34
+			"RT_35_Unknown",                         // 35
+			"RT_36_UI_Downscaled",                   // 36 - Downscaled UI
+			"RT_37_UI_DownscaledComposite",          // 37 - UI downscale composite
+			"RT_38_Unknown",                         // 38
+			"RT_39_DepthMips",                       // 39 - Main depth with mip levels
+			"RT_40_Unknown",                         // 40
+			"RT_41_Unknown",                         // 41
+			"RT_42_Unknown",                         // 42
+			"RT_43_Unknown",                         // 43
+			"RT_44_Unknown",                         // 44
+			"RT_45_Unknown",                         // 45
+			"RT_46_Unknown",                         // 46
+			"RT_47_Unknown",                         // 47
+			"RT_48_SSAO_Temp1",                      // 48 - SSAO temporary buffer 1
+			"RT_49_SSAO_Temp2",                      // 49 - SSAO temporary buffer 2
+			"RT_50_SSAO_Temp3",                      // 50 - SSAO temporary buffer 3
+			"RT_51_Unknown",                         // 51
+			"RT_52_Unknown",                         // 52
+			"RT_53_Unknown",                         // 53
+			"RT_54_Unknown",                         // 54
+			"RT_55_Unknown",                         // 55
+			"RT_56_Unknown",                         // 56
+			"RT_57_Mask",                            // 57 - Unknown mask
+			"RT_58_DeferredDiffuse",                 // 58 - Deferred lighting diffuse
+			"RT_59_DeferredSpecular",                // 59 - Deferred lighting specular
+			"RT_60_Unknown",                         // 60
+			"RT_61_Unknown",                         // 61
+			"RT_62_Unknown",                         // 62
+			"RT_63_Unknown",                         // 63
+			"RT_64_HDR_Downscale",                   // 64 - HDR downscale base
+			"RT_65_HDR_Luminance2",                  // 65 - HDR luminance level 2
+			"RT_66_HDR_Luminance3",                  // 66 - HDR luminance level 3
+			"RT_67_HDR_Luminance4",                  // 67 - HDR luminance level 4
+			"RT_68_HDR_Adaptation",                  // 68 - HDR eye adaptation
+			"RT_69_HDR_AdaptationSwap",              // 69 - HDR adaptation swap (1x1 pixel)
+			"RT_70_HDR_Luminance6",                  // 70 - HDR luminance level 6
+			"RT_71_Bloom1",                          // 71 - Bloom pass 1
+			"RT_72_Bloom2",                          // 72 - Bloom pass 2
+			"RT_73_Bloom3",                          // 73 - Bloom pass 3
+			"RT_74_Unknown",                         // 74
+			"RT_75_Unknown",                         // 75
+			"RT_76_Unknown",                         // 76
+			"RT_77_Unknown",                         // 77
+			"RT_78_Unknown",                         // 78
+			"RT_79_Unknown",                         // 79
+			"RT_80_GodRays",                         // 80 - God rays / volumetric lighting
+			"RT_81_VolumetricTemp",                  // 81 - Volumetric lighting temp
+			"RT_82_Unknown",                         // 82
+			"RT_83_Unknown",                         // 83
+			"RT_84_Unknown",                         // 84
+			"RT_85_Unknown",                         // 85
+			"RT_86_Unknown",                         // 86
+			"RT_87_Unknown",                         // 87
+			"RT_88_Unknown",                         // 88
+			"RT_89_Unknown",                         // 89
+			"RT_90_Unknown",                         // 90
+			"RT_91_Unknown",                         // 91
+			"RT_92_Unknown",                         // 92
+			"RT_93_Unknown",                         // 93
+			"RT_94_Unknown",                         // 94
+			"RT_95_Unknown",                         // 95
+			"RT_96_Unknown",                         // 96
+			"RT_97_Unknown",                         // 97
+			"RT_98_Unknown",                         // 98
+			"RT_99_Unknown",                         // 99
+			"RT_100_Unknown"                         // 100
+		};
+
+		int namedCount = 0;
+		for (int i = 0; i < 101; i++) {
+			auto& rt = rendererData->renderTargets[i];
+			
+			// Name the texture
+			if (rt.texture) {
+				auto tex = reinterpret_cast<ID3D11Texture2D*>(rt.texture);
+				tex->SetPrivateData(WKPDID_D3DDebugObjectName, 
+					(UINT)strlen(rtNames[i]), rtNames[i]);
+			}
+			
+			// Name the render target view
+			if (rt.rtView) {
+				auto rtv = reinterpret_cast<ID3D11RenderTargetView*>(rt.rtView);
+				std::string rtvName = std::string(rtNames[i]) + "_RTV";
+				rtv->SetPrivateData(WKPDID_D3DDebugObjectName,
+					(UINT)rtvName.length(), rtvName.c_str());
+			}
+			
+			// Name the shader resource view
+			if (rt.srView) {
+				auto srv = reinterpret_cast<ID3D11ShaderResourceView*>(rt.srView);
+				std::string srvName = std::string(rtNames[i]) + "_SRV";
+				srv->SetPrivateData(WKPDID_D3DDebugObjectName,
+					(UINT)srvName.length(), srvName.c_str());
+				namedCount++;
+			}
+		}
+
+		logger::info("NameAllRenderTargets: Named {} render targets for RenderDoc debugging", namedCount);
 	}
 
 	void D3DHooks::CleanupStaticResources()

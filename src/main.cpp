@@ -67,6 +67,10 @@ RE::NiCamera* ThroughScope::ggg_ScopeCamera = nullptr;
 __m128 ThroughScope::g_ScopeViewProjMat[4] = {};
 bool ThroughScope::g_ScopeViewProjMatValid = false;
 
+// 保存上一帧的 Scope ViewProjMat，用于 Motion Vector 计算
+__m128 ThroughScope::g_ScopePreviousViewProjMat[4] = {};
+bool ThroughScope::g_ScopePreviousViewProjMatValid = false;
+
 // 保存主相机的 FOV，在第一次渲染时从 PlayerCamera->firstPersonFOV 获取
 float ThroughScope::g_MainCameraFOV = 70.0f;  // 默认值
 

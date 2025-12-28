@@ -37,6 +37,11 @@ namespace ThroughScope
 	extern __m128 g_ScopeViewProjMat[4];
 	extern bool g_ScopeViewProjMatValid;
 
+	// 保存上一帧的 Scope ViewProjMat，用于 Motion Vector 计算
+	// 解决 TAA 运动模糊问题：需要正确的 MV 而非清零
+	extern __m128 g_ScopePreviousViewProjMat[4];
+	extern bool g_ScopePreviousViewProjMatValid;
+
 	// 保存主相机的 FOV（角度制），在第一次渲染时从 PlayerCamera->firstPersonFOV 获取
 	// 用于 BSSkyShader::SetupGeometry Hook 计算缩放因子
 	extern float g_MainCameraFOV;

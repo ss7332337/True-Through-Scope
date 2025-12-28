@@ -17,6 +17,8 @@ namespace ThroughScope
 
 	ID3D11PixelShader* RenderUtilities::s_ClearVelocityPS = nullptr;
 	ID3D11VertexShader* RenderUtilities::s_ClearVelocityVS = nullptr;
+	ID3D11PixelShader* RenderUtilities::s_ScopeMVPS = nullptr;
+	ID3D11VertexShader* RenderUtilities::s_ScopeMVVS = nullptr;
 
     RE::BSGraphics::Texture* RenderUtilities::s_ScopeBSTexture = nullptr;
     RE::NiTexture* RenderUtilities::s_ScopeNiTexture = nullptr;
@@ -50,6 +52,44 @@ namespace ThroughScope
 		"   output.Pos.w = 1.0;"
 		"   return output;"
 		"}";
+
+	// Scope Motion Vector Pixel Shader - calculates correct MV from depth reprojection
+	const char* g_ScopeMVPSCode = R"(
+		cbuffer MVConstants : register(b0) {
+			float4x4 InvViewProj;      // Current frame inverse ViewProj
+			float4x4 PrevViewProj;     // Previous frame ViewProj
+			float2 ScreenSize;         // Screen dimensions
+			float2 Padding;            // Alignment padding
+		};
+		Texture2D<float> DepthTex : register(t0);
+		SamplerState PointSamp : register(s0);
+		struct PS_IN { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; };
+		float4 main(PS_IN input) : SV_Target {
+			float depth = DepthTex.Sample(PointSamp, input.UV);
+			float2 ndc = input.UV * 2.0 - 1.0;
+			ndc.y = -ndc.y;
+			float4 clipPos = float4(ndc, depth, 1.0);
+			float4 worldPos = mul(InvViewProj, clipPos);
+			worldPos /= worldPos.w;
+			float4 prevClip = mul(PrevViewProj, worldPos);
+			float2 prevNDC = prevClip.xy / prevClip.w;
+			float2 velocity = (ndc - prevNDC) * 0.5;
+			return float4(velocity, 0.0, 0.0);
+		}
+	)";
+
+	// Scope Motion Vector Vertex Shader - fullscreen triangle with UV
+	const char* g_ScopeMVVSCode = R"(
+		struct VS_OUT { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; };
+		VS_OUT main(uint id : SV_VertexID) {
+			VS_OUT o;
+			o.UV = float2((id << 1) & 2, id & 2);
+			o.Pos = float4(o.UV * 2.0 - 1.0, 0.0, 1.0);
+			o.Pos.y = -o.Pos.y;
+			return o;
+		}
+	)";
+
 
 	static bool CreateClearVelocityShader()
 	{
@@ -109,8 +149,56 @@ namespace ThroughScope
 			return false;
 		}
 
+		// --- Compile ScopeMV PS (for correct motion vector calculation) ---
+		hr = D3DCompile(
+			g_ScopeMVPSCode,
+			strlen(g_ScopeMVPSCode),
+			nullptr, nullptr, nullptr,
+			"main", "ps_5_0",
+			0, 0, &blob, &errorBlob
+		);
+
+		if (FAILED(hr)) {
+			if (errorBlob) {
+				logger::error("Failed to compile ScopeMVPS: {}", (char*)errorBlob->GetBufferPointer());
+				errorBlob->Release();
+			}
+			// Continue - fallback to clear velocity shader
+		} else {
+			if (errorBlob) errorBlob->Release();
+			hr = device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_ScopeMVPS);
+			blob->Release();
+			if (FAILED(hr)) {
+				logger::error("Failed to create ScopeMV pixel shader");
+			}
+		}
+
+		// --- Compile ScopeMV VS ---
+		hr = D3DCompile(
+			g_ScopeMVVSCode,
+			strlen(g_ScopeMVVSCode),
+			nullptr, nullptr, nullptr,
+			"main", "vs_5_0",
+			0, 0, &blob, &errorBlob
+		);
+
+		if (FAILED(hr)) {
+			if (errorBlob) {
+				logger::error("Failed to compile ScopeMVVS: {}", (char*)errorBlob->GetBufferPointer());
+				errorBlob->Release();
+			}
+		} else {
+			if (errorBlob) errorBlob->Release();
+			hr = device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_ScopeMVVS);
+			blob->Release();
+			if (FAILED(hr)) {
+				logger::error("Failed to create ScopeMV vertex shader");
+			}
+		}
+
 		return true;
 	}
+
 
     bool RenderUtilities::Initialize()
     {

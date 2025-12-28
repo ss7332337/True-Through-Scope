@@ -56,6 +56,10 @@ namespace ThroughScope
 		// Shader management
 		static ID3D11PixelShader* GetClearVelocityPS() { return s_ClearVelocityPS; }
 		static ID3D11VertexShader* GetClearVelocityVS() { return s_ClearVelocityVS; }
+		
+		// Scope Motion Vector shaders - correct MV calculation for TAA
+		static ID3D11PixelShader* GetScopeMVPS() { return s_ScopeMVPS; }
+		static ID3D11VertexShader* GetScopeMVVS() { return s_ScopeMVVS; }
 
 	public:
 	/*	static bool isInMainRenderSetup;
@@ -78,6 +82,8 @@ namespace ThroughScope
 	public:
 		static ID3D11PixelShader* s_ClearVelocityPS;
 		static ID3D11VertexShader* s_ClearVelocityVS;
+		static ID3D11PixelShader* s_ScopeMVPS;
+		static ID3D11VertexShader* s_ScopeMVVS;
 
 	private:
         // Scope textures
