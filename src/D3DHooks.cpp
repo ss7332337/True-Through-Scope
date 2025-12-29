@@ -1594,6 +1594,71 @@ namespace ThroughScope {
 		pContext->VSGetSamplers(0, VSStateCache::MAX_SAMPLERS,
 			reinterpret_cast<ID3D11SamplerState**>(s_CachedVSState.samplers));
 
+		// [Plan A] 从 cb2 提取 WVP 矩阵，计算 scope quad 屏幕中心位置
+		// cb2 包含完整的 World-View-Projection 矩阵，用于将模型顶点变换到 clip space
+		if (s_CachedVSState.copiedConstantBuffers[2].Get()) {
+			// 创建 staging buffer 用于读取 cb2 数据
+			D3D11_BUFFER_DESC stagingDesc;
+			s_CachedVSState.copiedConstantBuffers[2]->GetDesc(&stagingDesc);
+			stagingDesc.Usage = D3D11_USAGE_STAGING;
+			stagingDesc.BindFlags = 0;
+			stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+			
+			Microsoft::WRL::ComPtr<ID3D11Buffer> stagingBuffer;
+			HRESULT hr = device->CreateBuffer(&stagingDesc, nullptr, stagingBuffer.GetAddressOf());
+			if (SUCCEEDED(hr)) {
+				pContext->CopyResource(stagingBuffer.Get(), s_CachedVSState.copiedConstantBuffers[2].Get());
+				
+				D3D11_MAPPED_SUBRESOURCE mapped;
+				hr = pContext->Map(stagingBuffer.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+				if (SUCCEEDED(hr)) {
+					// cb2 structure (WVP matrix): 4 float4 rows
+					float* cb2Data = (float*)mapped.pData;
+					// Row-major WVP matrix: cb2[0-3]
+					float wvp00 = cb2Data[0], wvp01 = cb2Data[1], wvp02 = cb2Data[2], wvp03 = cb2Data[3];
+					float wvp10 = cb2Data[4], wvp11 = cb2Data[5], wvp12 = cb2Data[6], wvp13 = cb2Data[7];
+					float wvp20 = cb2Data[8], wvp21 = cb2Data[9], wvp22 = cb2Data[10], wvp23 = cb2Data[11];
+					float wvp30 = cb2Data[12], wvp31 = cb2Data[13], wvp32 = cb2Data[14], wvp33 = cb2Data[15];
+					
+					pContext->Unmap(stagingBuffer.Get(), 0);
+					
+					// 计算模型原点 (0,0,0,1) 在 clip space 的位置
+					// Shader: dp4 r1.x, cb2[0].xyzw, r0.xyzw  (r0 = vertex position, w=1)
+					// 对于原点 (0,0,0,1): clipPos = cb2[row] * (0,0,0,1) = cb2[row].w
+					float clipX = wvp03;  // cb2[0].w
+					float clipY = wvp13;  // cb2[1].w
+					float clipZ = wvp23;  // cb2[2].w
+					float clipW = wvp33;  // cb2[3].w
+					
+					if (fabsf(clipW) > 0.0001f) {
+						// 透视除法得到 NDC
+						float ndcX = clipX / clipW;
+						float ndcY = clipY / clipW;
+						
+						// 转换到 UV 空间 (0-1)
+						// D3D NDC: X [-1,1] left-to-right, Y [-1,1] bottom-to-top
+						float u = ndcX * 0.5f + 0.5f;
+						float v = -ndcY * 0.5f + 0.5f;  // Y flip for D3D
+						
+						// 估算 scope quad 半径：使用模型空间 (+1,0,0,1) 点计算
+						// 这假设 scope quad 模型在 X 方向有 1.0 单位的半径
+						float edgeClipX = wvp00 + wvp03;  // (1,0,0,1) dot cb2[0]
+						float edgeClipY = wvp10 + wvp13;  // (1,0,0,1) dot cb2[1]
+						float edgeClipW = wvp30 + wvp33;  // (1,0,0,1) dot cb2[3]
+						
+						if (fabsf(edgeClipW) > 0.0001f) {
+							float edgeNdcX = edgeClipX / edgeClipW;
+							float edgeU = edgeNdcX * 0.5f + 0.5f;
+							float radius = fabsf(edgeU - u);
+							
+							// 设置 scope quad 屏幕位置供 MV merge shader 使用
+							RenderUtilities::SetScopeQuadScreenPosition(u, v, radius);
+						}
+					}
+				}
+			}
+		}
+
 		device->Release();
 	}
 

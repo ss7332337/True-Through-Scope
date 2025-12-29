@@ -114,6 +114,22 @@ namespace ThroughScope
 		static D3D11_VIEWPORT s_FirstPassViewport;
 		static bool s_HasFirstPassViewport;
 		
+		// Scope quad screen position for MV merge (Plan A)
+		static float s_ScopeQuadCenterU;  // Scope center X in UV space (0-1)
+		static float s_ScopeQuadCenterV;  // Scope center Y in UV space (0-1)
+		static float s_ScopeQuadRadius;   // Scope radius in UV space
+		
+	public:
+		// Scope screen position for MV merge (Plan A)
+		static void SetScopeQuadScreenPosition(float centerU, float centerV, float radius) {
+			s_ScopeQuadCenterU = centerU;
+			s_ScopeQuadCenterV = centerV;
+			s_ScopeQuadRadius = radius;
+		}
+		static float GetScopeQuadCenterU() { return s_ScopeQuadCenterU; }
+		static float GetScopeQuadCenterV() { return s_ScopeQuadCenterV; }
+		static float GetScopeQuadRadius() { return s_ScopeQuadRadius; }
+		
 	public:
 		static void SetFirstPassViewport(const D3D11_VIEWPORT& viewport) {
 			s_FirstPassViewport = viewport;

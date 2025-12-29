@@ -1848,10 +1848,13 @@ namespace ThroughScope
 				DirectX::XMStoreFloat4x4(&constants.PrevViewProj, DirectX::XMMatrixTranspose(prevViewProj));
 				constants.ScreenSize = DirectX::XMFLOAT2(vp.Width, vp.Height);
 				
-				// Scope region parameters - TODO: 这些值应该从 ScopeData 或配置中获取
-				// 当前假设 scope 在屏幕中心，半径约为屏幕宽度的 0.15 (可调整)
-				constants.ScopeCenter = DirectX::XMFLOAT2(0.5f, 0.5f);  // 屏幕中心
-				constants.ScopeRadius = 0.15f;  // UV 空间半径 (约 30% 屏幕宽度的直径)
+				// Scope region parameters - 从 RenderUtilities 获取动态位置
+				// RestoreFirstPass 或 D3DHooks 应该在绘制 scope 前设置这些值
+				constants.ScopeCenter = DirectX::XMFLOAT2(
+					RenderUtilities::GetScopeQuadCenterU(),
+					RenderUtilities::GetScopeQuadCenterV()
+				);
+				constants.ScopeRadius = RenderUtilities::GetScopeQuadRadius();
 				constants.DepthThreshold = 0.0f;  // 保留，暂未使用
 				constants.Padding2 = DirectX::XMFLOAT2(0.0f, 0.0f);
 				

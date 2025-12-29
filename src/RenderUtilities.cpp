@@ -34,6 +34,12 @@ namespace ThroughScope
 	// DLSS/FSR3 upscaling support
 	D3D11_VIEWPORT RenderUtilities::s_FirstPassViewport = {};
 	bool RenderUtilities::s_HasFirstPassViewport = false;
+	
+	// Scope quad screen position for MV merge (Plan A)
+	float RenderUtilities::s_ScopeQuadCenterU = 0.5f;  // Default: screen center
+	float RenderUtilities::s_ScopeQuadCenterV = 0.5f;
+	float RenderUtilities::s_ScopeQuadRadius = 0.15f;  // Default radius
+
 
 	// Simple Pixel Shader to clear motion vectors (output 0,0,0,0)
 	const char* g_ClearVelocityPSCode = 
