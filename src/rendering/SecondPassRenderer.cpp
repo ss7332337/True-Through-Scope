@@ -394,6 +394,14 @@ namespace ThroughScope
 					mainDSDesc.Width, mainDSDesc.Height);
 			}
 
+			// [Plan A] Backup Motion Vectors (RT_29) for merge after scope rendering
+			if (RenderUtilities::GetFirstPassMVBackup()) {
+				auto mvTexture = (ID3D11Texture2D*)rendererData->renderTargets[29].texture;
+				if (mvTexture) {
+					m_context->CopyResource(RenderUtilities::GetFirstPassMVBackup(), mvTexture);
+				}
+			}
+
 			RenderUtilities::SetFirstPassComplete(true);
 		} else {
 			m_lastError = "Failed to find valid render target textures";
@@ -1773,7 +1781,12 @@ namespace ThroughScope
 			// 先设置 RTV + nullptr（禁用 DSV 绑定以避免 SRV/DSV 冲突）
 			m_context->OMSetRenderTargets(1, &mvRTV, nullptr);
 
-			// 6. 设置 Shaders - 使用正确的 MV 计算 shader（如果上一帧矩阵有效）
+			// 6. 设置 Shaders - 使用 MV Merge shader (Plan A) 或回退到原有 shader
+			bool useMVMerge = g_ScopePreviousViewProjMatValid && 
+							  RenderUtilities::GetMVMergePS() != nullptr &&
+							  RenderUtilities::GetScopeMVVS() != nullptr &&
+							  RenderUtilities::GetFirstPassMVSRV() != nullptr;
+			
 			bool useCorrectMV = g_ScopePreviousViewProjMatValid && 
 							   RenderUtilities::GetScopeMVPS() != nullptr && 
 							   RenderUtilities::GetScopeMVVS() != nullptr;
@@ -1781,22 +1794,25 @@ namespace ThroughScope
 			// DEBUG: 诊断 useCorrectMV 为 false 的原因
 			static int logCounter = 0;
 			if (logCounter++ < 5) {  // 只在前 5 帧输出
-				logger::info("ApplyMVMask: g_ScopePreviousViewProjMatValid={}, MVPS={}, MVVS={}, useCorrectMV={}",
-					g_ScopePreviousViewProjMatValid,
-					(void*)RenderUtilities::GetScopeMVPS(),
-					(void*)RenderUtilities::GetScopeMVVS(),
-					useCorrectMV);
+				logger::info("ApplyMVMask: useMVMerge={}, useCorrectMV={}, MVMergePS={}, FirstPassMVSRV={}",
+					useMVMerge, useCorrectMV,
+					(void*)RenderUtilities::GetMVMergePS(),
+					(void*)RenderUtilities::GetFirstPassMVSRV());
 			}
 
-			if (useCorrectMV) {
-				D3DPERF_BeginEvent(0xFF00FF00, L"ScopeMV_CorrectCalculation");
+			if (useMVMerge) {
+				// [Plan A] Use MV Merge shader - samples first pass MV for outside scope, calculates scope MV for inside
+				D3DPERF_BeginEvent(0xFF00FF00, L"ScopeMV_PlanA_Merge");
 				
-				// 创建常量缓冲区 (必须与 HLSL cbuffer 结构匹配)
-				struct MVConstants {
+				// 常量缓冲区 (匹配 g_MVMergePSCode 中的 cbuffer MVMergeConstants)
+				struct MVMergeConstants {
 					DirectX::XMFLOAT4X4 InvViewProj;
 					DirectX::XMFLOAT4X4 PrevViewProj;
-					DirectX::XMFLOAT2 ScreenSize;    // 屏幕尺寸
-					DirectX::XMFLOAT2 Padding;       // 对齐填充
+					DirectX::XMFLOAT2 ScreenSize;
+					DirectX::XMFLOAT2 ScopeCenter;    // UV space (0-1)
+					float ScopeRadius;                // UV space
+					float DepthThreshold;
+					DirectX::XMFLOAT2 Padding2;
 				};
 				
 				// 构建当前帧 ViewProj 矩阵
@@ -1827,16 +1843,22 @@ namespace ThroughScope
 				DirectX::XMMATRIX invViewProj = DirectX::XMMatrixInverse(nullptr, currentViewProj);
 				
 				// 填充常量缓冲区
-				MVConstants constants;
+				MVMergeConstants constants;
 				DirectX::XMStoreFloat4x4(&constants.InvViewProj, DirectX::XMMatrixTranspose(invViewProj));
 				DirectX::XMStoreFloat4x4(&constants.PrevViewProj, DirectX::XMMatrixTranspose(prevViewProj));
 				constants.ScreenSize = DirectX::XMFLOAT2(vp.Width, vp.Height);
-				constants.Padding = DirectX::XMFLOAT2(0.0f, 0.0f);
+				
+				// Scope region parameters - TODO: 这些值应该从 ScopeData 或配置中获取
+				// 当前假设 scope 在屏幕中心，半径约为屏幕宽度的 0.15 (可调整)
+				constants.ScopeCenter = DirectX::XMFLOAT2(0.5f, 0.5f);  // 屏幕中心
+				constants.ScopeRadius = 0.15f;  // UV 空间半径 (约 30% 屏幕宽度的直径)
+				constants.DepthThreshold = 0.0f;  // 保留，暂未使用
+				constants.Padding2 = DirectX::XMFLOAT2(0.0f, 0.0f);
 				
 				// 创建常量缓冲区
 				D3D11_BUFFER_DESC cbDesc;
 				ZeroMemory(&cbDesc, sizeof(cbDesc));
-				cbDesc.ByteWidth = sizeof(MVConstants);
+				cbDesc.ByteWidth = sizeof(MVMergeConstants);
 				cbDesc.Usage = D3D11_USAGE_IMMUTABLE;
 				cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 				
@@ -1856,13 +1878,93 @@ namespace ThroughScope
 				
 				// 设置 shader 和资源
 				m_context->VSSetShader(RenderUtilities::GetScopeMVVS(), nullptr, 0);
+				m_context->PSSetShader(RenderUtilities::GetMVMergePS(), nullptr, 0);  // Use merge shader
+				m_context->PSSetConstantBuffers(0, 1, mvConstantBuffer.GetAddressOf());
+				
+				// [Plan A] 绑定两个 SRV：slot 0 = 第一pass的MV备份, slot 1 = 深度
+				ID3D11ShaderResourceView* srvs[2] = { 
+					RenderUtilities::GetFirstPassMVSRV(),  // t0: First pass MV
+					depthSRV                               // t1: Depth
+				};
+				m_context->PSSetShaderResources(0, 2, srvs);
+				
+				// 设置采样器
+				D3D11_SAMPLER_DESC sampDesc;
+				ZeroMemory(&sampDesc, sizeof(sampDesc));
+				sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+				sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+				sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+				sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+				Microsoft::WRL::ComPtr<ID3D11SamplerState> pointSampler;
+				m_device->CreateSamplerState(&sampDesc, &pointSampler);
+				m_context->PSSetSamplers(0, 1, pointSampler.GetAddressOf());
+				
+				D3DPERF_EndEvent();
+			} else if (useCorrectMV) {
+				D3DPERF_BeginEvent(0xFFFFFF00, L"ScopeMV_Fallback_FullScreenCalc");
+				
+				// 回退：使用原有的全屏覆盖 shader (不推荐，会影响 scope 外区域)
+				struct MVConstants {
+					DirectX::XMFLOAT4X4 InvViewProj;
+					DirectX::XMFLOAT4X4 PrevViewProj;
+					DirectX::XMFLOAT2 ScreenSize;
+					DirectX::XMFLOAT2 Padding;
+				};
+				
+				DirectX::XMMATRIX currentViewProj = DirectX::XMMatrixSet(
+					g_ScopeViewProjMat[0].m128_f32[0], g_ScopeViewProjMat[0].m128_f32[1], 
+					g_ScopeViewProjMat[0].m128_f32[2], g_ScopeViewProjMat[0].m128_f32[3],
+					g_ScopeViewProjMat[1].m128_f32[0], g_ScopeViewProjMat[1].m128_f32[1], 
+					g_ScopeViewProjMat[1].m128_f32[2], g_ScopeViewProjMat[1].m128_f32[3],
+					g_ScopeViewProjMat[2].m128_f32[0], g_ScopeViewProjMat[2].m128_f32[1], 
+					g_ScopeViewProjMat[2].m128_f32[2], g_ScopeViewProjMat[2].m128_f32[3],
+					g_ScopeViewProjMat[3].m128_f32[0], g_ScopeViewProjMat[3].m128_f32[1], 
+					g_ScopeViewProjMat[3].m128_f32[2], g_ScopeViewProjMat[3].m128_f32[3]
+				);
+				DirectX::XMMATRIX prevViewProj = DirectX::XMMatrixSet(
+					g_ScopePreviousViewProjMat[0].m128_f32[0], g_ScopePreviousViewProjMat[0].m128_f32[1], 
+					g_ScopePreviousViewProjMat[0].m128_f32[2], g_ScopePreviousViewProjMat[0].m128_f32[3],
+					g_ScopePreviousViewProjMat[1].m128_f32[0], g_ScopePreviousViewProjMat[1].m128_f32[1], 
+					g_ScopePreviousViewProjMat[1].m128_f32[2], g_ScopePreviousViewProjMat[1].m128_f32[3],
+					g_ScopePreviousViewProjMat[2].m128_f32[0], g_ScopePreviousViewProjMat[2].m128_f32[1], 
+					g_ScopePreviousViewProjMat[2].m128_f32[2], g_ScopePreviousViewProjMat[2].m128_f32[3],
+					g_ScopePreviousViewProjMat[3].m128_f32[0], g_ScopePreviousViewProjMat[3].m128_f32[1], 
+					g_ScopePreviousViewProjMat[3].m128_f32[2], g_ScopePreviousViewProjMat[3].m128_f32[3]
+				);
+				DirectX::XMMATRIX invViewProj = DirectX::XMMatrixInverse(nullptr, currentViewProj);
+				
+				MVConstants constants;
+				DirectX::XMStoreFloat4x4(&constants.InvViewProj, DirectX::XMMatrixTranspose(invViewProj));
+				DirectX::XMStoreFloat4x4(&constants.PrevViewProj, DirectX::XMMatrixTranspose(prevViewProj));
+				constants.ScreenSize = DirectX::XMFLOAT2(vp.Width, vp.Height);
+				constants.Padding = DirectX::XMFLOAT2(0.0f, 0.0f);
+				
+				D3D11_BUFFER_DESC cbDesc;
+				ZeroMemory(&cbDesc, sizeof(cbDesc));
+				cbDesc.ByteWidth = sizeof(MVConstants);
+				cbDesc.Usage = D3D11_USAGE_IMMUTABLE;
+				cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+				
+				D3D11_SUBRESOURCE_DATA cbData;
+				cbData.pSysMem = &constants;
+				cbData.SysMemPitch = 0;
+				cbData.SysMemSlicePitch = 0;
+				
+				Microsoft::WRL::ComPtr<ID3D11Buffer> mvConstantBuffer;
+				m_device->CreateBuffer(&cbDesc, &cbData, &mvConstantBuffer);
+				
+				ID3D11ShaderResourceView* depthSRV = nullptr;
+				if (rendererData && rendererData->depthStencilTargets[2].srViewDepth) {
+					depthSRV = (ID3D11ShaderResourceView*)rendererData->depthStencilTargets[2].srViewDepth;
+				}
+				
+				m_context->VSSetShader(RenderUtilities::GetScopeMVVS(), nullptr, 0);
 				m_context->PSSetShader(RenderUtilities::GetScopeMVPS(), nullptr, 0);
 				m_context->PSSetConstantBuffers(0, 1, mvConstantBuffer.GetAddressOf());
 				if (depthSRV) {
 					m_context->PSSetShaderResources(0, 1, &depthSRV);
 				}
 				
-				// 设置采样器
 				D3D11_SAMPLER_DESC sampDesc;
 				ZeroMemory(&sampDesc, sizeof(sampDesc));
 				sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;

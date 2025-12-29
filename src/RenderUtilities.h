@@ -64,6 +64,13 @@ namespace ThroughScope
 		// MV Debug visualization shader
 		static ID3D11PixelShader* GetMVDebugPS() { return s_MVDebugPS; }
 
+		// First pass MV backup for Plan A merge
+		static ID3D11Texture2D* GetFirstPassMVBackup() { return s_MotionVectorBackup; }
+		static ID3D11ShaderResourceView* GetFirstPassMVSRV() { return s_FirstPassMVSRV; }
+
+		// MV Merge shader (samples first pass MV, calculates scope MV, blends based on region)
+		static ID3D11PixelShader* GetMVMergePS() { return s_MVMergePS; }
+
 	public:
 	/*	static bool isInMainRenderSetup;
 		static bool isInDoZPrePass;
@@ -78,8 +85,9 @@ namespace ThroughScope
 		static ID3D11Texture2D* s_BackBufferTexture;
 		static ID3D11ShaderResourceView* s_BackBufferSRV;
 
-		// Motion vector backup for fo4test compatibility
+		// Motion vector backup for Plan A MV merge
 		static ID3D11Texture2D* s_MotionVectorBackup;
+		static ID3D11ShaderResourceView* s_FirstPassMVSRV;
 		
 		// Utility Shaders
 	public:
@@ -88,6 +96,7 @@ namespace ThroughScope
 		static ID3D11PixelShader* s_ScopeMVPS;
 		static ID3D11VertexShader* s_ScopeMVVS;
 		static ID3D11PixelShader* s_MVDebugPS;  // MV 可视化 shader
+		static ID3D11PixelShader* s_MVMergePS;  // MV 合并 shader (Plan A)
 
 	private:
         // Scope textures

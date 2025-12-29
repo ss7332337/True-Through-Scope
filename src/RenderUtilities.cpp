@@ -14,12 +14,14 @@ namespace ThroughScope
     ID3D11ShaderResourceView* RenderUtilities::s_BackBufferSRV = nullptr;
 
 	ID3D11Texture2D* RenderUtilities::s_MotionVectorBackup = nullptr;
+	ID3D11ShaderResourceView* RenderUtilities::s_FirstPassMVSRV = nullptr;
 
 	ID3D11PixelShader* RenderUtilities::s_ClearVelocityPS = nullptr;
 	ID3D11VertexShader* RenderUtilities::s_ClearVelocityVS = nullptr;
 	ID3D11PixelShader* RenderUtilities::s_ScopeMVPS = nullptr;
 	ID3D11VertexShader* RenderUtilities::s_ScopeMVVS = nullptr;
 	ID3D11PixelShader* RenderUtilities::s_MVDebugPS = nullptr;
+	ID3D11PixelShader* RenderUtilities::s_MVMergePS = nullptr;
 
     RE::BSGraphics::Texture* RenderUtilities::s_ScopeBSTexture = nullptr;
     RE::NiTexture* RenderUtilities::s_ScopeNiTexture = nullptr;
@@ -112,6 +114,67 @@ namespace ThroughScope
 		}
 	)";
 
+
+	// MV Merge Pixel Shader - merges first pass MV with scope-corrected MV based on region mask
+	// Plan A implementation: backup first pass MV, then selectively overwrite scope region
+	const char* g_MVMergePSCode = R"(
+		cbuffer MVMergeConstants : register(b0) {
+			float4x4 InvViewProj;      // Current frame inverse ViewProj (scope camera)
+			float4x4 PrevViewProj;     // Previous frame ViewProj (scope camera)
+			float2 ScreenSize;         // Screen dimensions
+			float2 ScopeCenter;        // Scope center in UV space (0-1)
+			float ScopeRadius;         // Scope radius in UV space
+			float DepthThreshold;      // Depth threshold for scope region detection
+			float2 Padding2;           // Alignment padding
+		};
+		Texture2D<float2> FirstPassMV : register(t0);  // Backed up first pass MV
+		Texture2D<float> DepthTex : register(t1);      // Current depth buffer
+		SamplerState PointSamp : register(s0);
+		struct PS_IN { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; };
+		
+		float2 main(PS_IN input) : SV_Target {
+			float2 uv = input.UV;
+			
+			// 1. Check if pixel is inside scope circular region
+			// Account for aspect ratio by converting to pixel-space distance
+			float aspectRatio = ScreenSize.x / ScreenSize.y;
+			float2 offset = uv - ScopeCenter;
+			offset.x *= aspectRatio;  // Scale X by aspect ratio to make circle round
+			float dist = length(offset);
+			
+			// Adjust radius for aspect ratio comparison
+			float adjustedRadius = ScopeRadius * aspectRatio;
+			
+			if (dist > adjustedRadius) {
+				// Outside scope region - return original first pass MV
+				return FirstPassMV.Sample(PointSamp, uv);
+			}
+			
+			// 2. Inside scope region - calculate correct MV using scope camera matrices
+			float depth = DepthTex.Sample(PointSamp, uv);
+			
+			// Reconstruct world position from depth
+			float2 ndc = uv * 2.0 - 1.0;
+			ndc.y = -ndc.y;  // D3D Y flip
+			float4 clipPos = float4(ndc, depth, 1.0);
+			
+			float4 worldPos = mul(InvViewProj, clipPos);
+			worldPos /= worldPos.w;
+			
+			// Reproject using previous frame's scope camera matrix
+			float4 prevClip = mul(PrevViewProj, worldPos);
+			float2 prevNDC = prevClip.xy / prevClip.w;
+			
+			// Calculate velocity (MV is in NDC/2 space)
+			float2 velocity = (ndc - prevNDC) * 0.5;
+			
+			// 3. Blend at scope edge for smooth transition
+			float edgeFade = saturate((adjustedRadius - dist) / (adjustedRadius * 0.1));
+			float2 firstPassMV = FirstPassMV.Sample(PointSamp, uv);
+			
+			return lerp(firstPassMV, velocity, edgeFade);
+		}
+	)";
 
 	static bool CreateClearVelocityShader()
 	{
@@ -241,6 +304,32 @@ namespace ThroughScope
 			}
 		}
 
+		// --- Compile MV Merge PS (Plan A) ---
+		hr = D3DCompile(
+			g_MVMergePSCode,
+			strlen(g_MVMergePSCode),
+			nullptr, nullptr, nullptr,
+			"main", "ps_5_0",
+			0, 0, &blob, &errorBlob
+		);
+
+		if (FAILED(hr)) {
+			if (errorBlob) {
+				logger::error("Failed to compile MVMergePS: {}", (char*)errorBlob->GetBufferPointer());
+				errorBlob->Release();
+			}
+			// Non-fatal - fallback to existing MV shaders
+		} else {
+			if (errorBlob) errorBlob->Release();
+			hr = device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_MVMergePS);
+			blob->Release();
+			if (FAILED(hr)) {
+				logger::error("Failed to create MVMerge pixel shader");
+			} else {
+				logger::info("Successfully created MV Merge shader for Plan A");
+			}
+		}
+
 		return true;
 	}
 
@@ -344,6 +433,43 @@ namespace ThroughScope
             return false;
         }
 
+        // Create MV backup texture for Plan A merge (matching RT_29 format: R16G16_FLOAT)
+        D3D11_TEXTURE2D_DESC mvDesc;
+        ZeroMemory(&mvDesc, sizeof(mvDesc));
+        mvDesc.Width = width;
+        mvDesc.Height = height;
+        mvDesc.MipLevels = 1;
+        mvDesc.ArraySize = 1;
+        mvDesc.Format = DXGI_FORMAT_R16G16_FLOAT;  // Motion vector format (2-channel float16)
+        mvDesc.SampleDesc.Count = 1;
+        mvDesc.SampleDesc.Quality = 0;
+        mvDesc.Usage = D3D11_USAGE_DEFAULT;
+        mvDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;  // Only need SRV for reading backed up MV
+        mvDesc.CPUAccessFlags = 0;
+        mvDesc.MiscFlags = 0;
+
+        hr = device->CreateTexture2D(&mvDesc, nullptr, &s_MotionVectorBackup);
+        if (FAILED(hr)) {
+            logger::error("Failed to create MV backup texture. HRESULT: 0x{:X}", hr);
+            // Non-fatal - Plan A merge will be disabled
+        } else {
+            // Create SRV for the MV backup texture
+            D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+            ZeroMemory(&srvDesc, sizeof(srvDesc));
+            srvDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
+            srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+            srvDesc.Texture2D.MostDetailedMip = 0;
+            srvDesc.Texture2D.MipLevels = 1;
+            hr = device->CreateShaderResourceView(s_MotionVectorBackup, &srvDesc, &s_FirstPassMVSRV);
+            if (FAILED(hr)) {
+                logger::error("Failed to create MV backup SRV. HRESULT: 0x{:X}", hr);
+                s_MotionVectorBackup->Release();
+                s_MotionVectorBackup = nullptr;
+            } else {
+                logger::info("MV backup texture created for Plan A merge ({}x{})", width, height);
+            }
+        }
+
         logger::info("Temporary textures created successfully");
         return true;
     }
@@ -373,6 +499,18 @@ namespace ThroughScope
 		if (s_ClearVelocityVS) {
 			s_ClearVelocityVS->Release();
 			s_ClearVelocityVS = nullptr;
+		}
+		if (s_MotionVectorBackup) {
+			s_MotionVectorBackup->Release();
+			s_MotionVectorBackup = nullptr;
+		}
+		if (s_FirstPassMVSRV) {
+			s_FirstPassMVSRV->Release();
+			s_FirstPassMVSRV = nullptr;
+		}
+		if (s_MVMergePS) {
+			s_MVMergePS->Release();
+			s_MVMergePS = nullptr;
 		}
     }
 }
