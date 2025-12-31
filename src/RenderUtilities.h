@@ -53,28 +53,18 @@ namespace ThroughScope
 		static float GetScreenWidth() { return s_ScreenWidth; }
 		static float GetScreenHeight() { return s_ScreenHeight; }
 
-		// Shader management
-		static ID3D11PixelShader* GetClearVelocityPS() { return s_ClearVelocityPS; }
-		static ID3D11VertexShader* GetClearVelocityVS() { return s_ClearVelocityVS; }
-		
-		// Scope Motion Vector shaders - correct MV calculation for TAA
-		static ID3D11PixelShader* GetScopeMVPS() { return s_ScopeMVPS; }
+		// Shader management - Fullscreen VS with UV
 		static ID3D11VertexShader* GetScopeMVVS() { return s_ScopeMVVS; }
 
 		// MV Debug visualization shader
 		static ID3D11PixelShader* GetMVDebugPS() { return s_MVDebugPS; }
 
+		// MV Copy shader for stencil-masked FirstPassMV copying
+		static ID3D11PixelShader* GetMVCopyPS() { return s_MVCopyPS; }
+
 		// First pass MV backup for Plan A merge
 		static ID3D11Texture2D* GetFirstPassMVBackup() { return s_MotionVectorBackup; }
 		static ID3D11ShaderResourceView* GetFirstPassMVSRV() { return s_FirstPassMVSRV; }
-
-		// MV Merge shader (samples first pass MV, calculates scope MV, blends based on region)
-		static ID3D11PixelShader* GetMVMergePS() { return s_MVMergePS; }
-
-	public:
-	/*	static bool isInMainRenderSetup;
-		static bool isInDoZPrePass;
-		static bool isInDoZPrePass;*/
 
     private:
         static ID3D11Texture2D* s_FirstPassColorTexture;
@@ -91,12 +81,9 @@ namespace ThroughScope
 		
 		// Utility Shaders
 	public:
-		static ID3D11PixelShader* s_ClearVelocityPS;
-		static ID3D11VertexShader* s_ClearVelocityVS;
-		static ID3D11PixelShader* s_ScopeMVPS;
-		static ID3D11VertexShader* s_ScopeMVVS;
-		static ID3D11PixelShader* s_MVDebugPS;  // MV 可视化 shader
-		static ID3D11PixelShader* s_MVMergePS;  // MV 合并 shader (Plan A)
+		static ID3D11VertexShader* s_ScopeMVVS;      // Fullscreen triangle VS with UV
+		static ID3D11PixelShader* s_MVDebugPS;       // MV 可视化 shader
+		static ID3D11PixelShader* s_MVCopyPS;        // MV 复制 shader (stencil-masked)
 
 	private:
         // Scope textures

@@ -1273,32 +1273,35 @@ namespace ThroughScope {
 
 		// === 绘制 ScopeQuad 并写入 Stencil ===
 		// ScopeQuad 在 hkDrawIndexed 中被跳过了，需要在这里用自定义 shader 绘制
+		// 注意：此 DrawIndexed 同时完成 stencil 写入和实际渲染（已合并两个调用）
 		D3DPERF_BeginEvent(0xFF00FFFF, L"TTS_ScopeQuad_DrawWithStencil");  // 青色标记
 		
-		if (s_ScopeQuadIndexCount > 0) {
-			// 获取当前 RTV 和需要绑定的 DSV
+		// 使用 ScopeCamera 获取正确的索引数量（与原 RestoreFirstPass 一致）
+		int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
+		if (scopeNodeIndexCount > 0) {
+			// 获取支持 stencil 的 DSV
 			auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-			ID3D11DepthStencilView* mainDSV = nullptr;
+			ID3D11DepthStencilView* stencilDSV = nullptr;
 			if (rendererData && rendererData->depthStencilTargets[2].dsView[0]) {
-				mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
+				stencilDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
 			}
-			
-			// 备份原始 RTV/DSV
-			Microsoft::WRL::ComPtr<ID3D11RenderTargetView> oldRTV;
-			Microsoft::WRL::ComPtr<ID3D11DepthStencilView> oldDSV;
-			pContext->OMGetRenderTargets(1, oldRTV.GetAddressOf(), oldDSV.GetAddressOf());
-			
+
+			// 获取当前绑定的 RTV（由 RestoreFirstPass 设置）
+			Microsoft::WRL::ComPtr<ID3D11RenderTargetView> currentRTV;
+			Microsoft::WRL::ComPtr<ID3D11DepthStencilView> currentDSV;
+			pContext->OMGetRenderTargets(1, currentRTV.GetAddressOf(), currentDSV.GetAddressOf());
+
 			// 备份原始 DSS
 			Microsoft::WRL::ComPtr<ID3D11DepthStencilState> oldDSS;
 			UINT oldStencilRef;
 			pContext->OMGetDepthStencilState(oldDSS.GetAddressOf(), &oldStencilRef);
-			
-			// 创建写入 stencil 的 DSS
+
+			// 创建写入 stencil 的 DSS（禁用深度测试，避免被场景深度遮挡）
 			D3D11_DEPTH_STENCIL_DESC dssDesc;
 			ZeroMemory(&dssDesc, sizeof(dssDesc));
-			dssDesc.DepthEnable = TRUE;
-			dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
-			dssDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+			dssDesc.DepthEnable = FALSE;  // 禁用深度测试，避免 ScopeQuad 被场景深度遮挡
+			dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;  // 不写入深度
+			dssDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
 			dssDesc.StencilEnable = TRUE;
 			dssDesc.StencilReadMask = 0xFF;
 			dssDesc.StencilWriteMask = 0xFF;  // 允许写入 stencil
@@ -1307,23 +1310,24 @@ namespace ThroughScope {
 			dssDesc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_REPLACE;  // 通过时替换为 ref
 			dssDesc.FrontFace.StencilFunc = D3D11_COMPARISON_ALWAYS;    // 总是写入
 			dssDesc.BackFace = dssDesc.FrontFace;
-			
+
 			Microsoft::WRL::ComPtr<ID3D11DepthStencilState> stencilWriteDSS;
 			if (SUCCEEDED(device->CreateDepthStencilState(&dssDesc, stencilWriteDSS.GetAddressOf()))) {
-				// 绑定 RTV + DSV（确保 stencil 可写）
-				ID3D11RenderTargetView* rtv = oldRTV.Get();
-				pContext->OMSetRenderTargets(1, &rtv, mainDSV);
-				
-				// 设置 stencil ref = 127（使用唯一值避免与其他渲染冲突）
+				// 关键：绑定当前 RTV + 带 stencil 的 DSV（解决 "No Resource" 问题）
+				ID3D11RenderTargetView* rtv = currentRTV.Get();
+				pContext->OMSetRenderTargets(1, &rtv, stencilDSV);
+
+				// 设置 stencil ref = 127
 				pContext->OMSetDepthStencilState(stencilWriteDSS.Get(), 127);
-				
-				// 绘制 ScopeQuad
+
+				// 绘制 ScopeQuad（同时写入 stencil 和渲染颜色）
+				// 使用 StartIndexLocation=0, BaseVertexLocation=0（与原 RestoreFirstPass 一致）
 				isSelfDrawCall = true;
-				pContext->DrawIndexed(s_ScopeQuadIndexCount, s_ScopeQuadStartIndexLocation, s_ScopeQuadBaseVertexLocation);
+				pContext->DrawIndexed(scopeNodeIndexCount, 0, 0);
 				isSelfDrawCall = false;
-				
+
 				// 恢复原始 RTV/DSV 和 DSS
-				pContext->OMSetRenderTargets(1, oldRTV.GetAddressOf(), oldDSV.Get());
+				pContext->OMSetRenderTargets(1, currentRTV.GetAddressOf(), currentDSV.Get());
 				pContext->OMSetDepthStencilState(oldDSS.Get(), oldStencilRef);
 			}
 		}

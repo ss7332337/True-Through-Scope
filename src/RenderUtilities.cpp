@@ -16,12 +16,9 @@ namespace ThroughScope
 	ID3D11Texture2D* RenderUtilities::s_MotionVectorBackup = nullptr;
 	ID3D11ShaderResourceView* RenderUtilities::s_FirstPassMVSRV = nullptr;
 
-	ID3D11PixelShader* RenderUtilities::s_ClearVelocityPS = nullptr;
-	ID3D11VertexShader* RenderUtilities::s_ClearVelocityVS = nullptr;
-	ID3D11PixelShader* RenderUtilities::s_ScopeMVPS = nullptr;
 	ID3D11VertexShader* RenderUtilities::s_ScopeMVVS = nullptr;
 	ID3D11PixelShader* RenderUtilities::s_MVDebugPS = nullptr;
-	ID3D11PixelShader* RenderUtilities::s_MVMergePS = nullptr;
+	ID3D11PixelShader* RenderUtilities::s_MVCopyPS = nullptr;
 
     RE::BSGraphics::Texture* RenderUtilities::s_ScopeBSTexture = nullptr;
     RE::NiTexture* RenderUtilities::s_ScopeNiTexture = nullptr;
@@ -41,51 +38,16 @@ namespace ThroughScope
 	float RenderUtilities::s_ScopeQuadRadius = 0.15f;  // Default radius
 
 
-	// Simple Pixel Shader to clear motion vectors (output 0,0,0,0)
-	const char* g_ClearVelocityPSCode = 
-		"struct PS_OUTPUT { float4 Color : SV_Target; };"
-		"PS_OUTPUT main() {"
-		"   PS_OUTPUT output;"
-		"   output.Color = float4(0.0f, 0.0f, 0.0f, 0.0f);"
-		"   return output;"
-		"}";
-
-	// Simple Vertex Shader for Fullscreen Triangle (no VB needed)
-	const char* g_ClearVelocityVSCode = 
-		"struct VS_OUTPUT { float4 Pos : SV_POSITION; };"
-		"VS_OUTPUT main(uint id : SV_VertexID) {"
-		"   VS_OUTPUT output;"
-		"   output.Pos.x = (float)(id / 2) * 4.0 - 1.0;"
-		"   output.Pos.y = (float)(id % 2) * 4.0 - 1.0;"
-		"   output.Pos.z = 0.0;"
-		"   output.Pos.w = 1.0;"
-		"   return output;"
-		"}";
-
-	// Scope Motion Vector Pixel Shader - calculates correct MV from depth reprojection
-	const char* g_ScopeMVPSCode = R"(
-		cbuffer MVConstants : register(b0) {
-			float4x4 InvViewProj;      // Current frame inverse ViewProj
-			float4x4 PrevViewProj;     // Previous frame ViewProj
-			float2 ScreenSize;         // Screen dimensions
-			float2 Padding;            // Alignment padding
-		};
-		Texture2D<float> DepthTex : register(t0);
+	// Simple Pixel Shader to copy MV from texture (samples t0, outputs directly)
+	const char* g_MVCopyPSCode = R"(
+		Texture2D<float2> InputMV : register(t0);
 		SamplerState PointSamp : register(s0);
 		struct PS_IN { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; };
-		float4 main(PS_IN input) : SV_Target {
-			float depth = DepthTex.Sample(PointSamp, input.UV);
-			float2 ndc = input.UV * 2.0 - 1.0;
-			ndc.y = -ndc.y;
-			float4 clipPos = float4(ndc, depth, 1.0);
-			float4 worldPos = mul(InvViewProj, clipPos);
-			worldPos /= worldPos.w;
-			float4 prevClip = mul(PrevViewProj, worldPos);
-			float2 prevNDC = prevClip.xy / prevClip.w;
-			float2 velocity = (ndc - prevNDC) * 0.5;
-			return float4(velocity, 0.0, 0.0);
+		float2 main(PS_IN input) : SV_Target {
+			return InputMV.Sample(PointSamp, input.UV);
 		}
 	)";
+
 
 	// Scope Motion Vector Vertex Shader - fullscreen triangle with UV
 	const char* g_ScopeMVVSCode = R"(
@@ -121,150 +83,16 @@ namespace ThroughScope
 	)";
 
 
-	// MV Merge Pixel Shader - merges first pass MV with scope-corrected MV based on region mask
-	// Plan A implementation: backup first pass MV, then selectively overwrite scope region
-	const char* g_MVMergePSCode = R"(
-		cbuffer MVMergeConstants : register(b0) {
-			float4x4 InvViewProj;      // Current frame inverse ViewProj (scope camera)
-			float4x4 PrevViewProj;     // Previous frame ViewProj (scope camera)
-			float2 ScreenSize;         // Screen dimensions
-			float2 ScopeCenter;        // Scope center in UV space (0-1)
-			float ScopeRadius;         // Scope radius in UV space
-			float DepthThreshold;      // Depth threshold for scope region detection
-			float2 Padding2;           // Alignment padding
-		};
-		Texture2D<float2> FirstPassMV : register(t0);  // Backed up first pass MV
-		Texture2D<float> DepthTex : register(t1);      // Current depth buffer
-		SamplerState PointSamp : register(s0);
-		struct PS_IN { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; };
-		
-		float2 main(PS_IN input) : SV_Target {
-			float2 uv = input.UV;
-			
-			// 1. Check if pixel is inside scope circular region
-			// Account for aspect ratio by converting to pixel-space distance
-			float aspectRatio = ScreenSize.x / ScreenSize.y;
-			float2 offset = uv - ScopeCenter;
-			offset.x *= aspectRatio;  // Scale X by aspect ratio to make circle round
-			float dist = length(offset);
-			
-			// Adjust radius for aspect ratio comparison
-			float adjustedRadius = ScopeRadius * aspectRatio;
-			
-			if (dist > adjustedRadius) {
-				// Outside scope region - return original first pass MV
-				return FirstPassMV.Sample(PointSamp, uv);
-			}
-			
-			// 2. Inside scope region - calculate correct MV using scope camera matrices
-			float depth = DepthTex.Sample(PointSamp, uv);
-			
-			// Reconstruct world position from depth
-			float2 ndc = uv * 2.0 - 1.0;
-			ndc.y = -ndc.y;  // D3D Y flip
-			float4 clipPos = float4(ndc, depth, 1.0);
-			
-			float4 worldPos = mul(InvViewProj, clipPos);
-			worldPos /= worldPos.w;
-			
-			// Reproject using previous frame's scope camera matrix
-			float4 prevClip = mul(PrevViewProj, worldPos);
-			float2 prevNDC = prevClip.xy / prevClip.w;
-			
-			// Calculate velocity (MV is in NDC/2 space)
-			float2 velocity = (ndc - prevNDC) * 0.5;
-			
-			// 3. Blend at scope edge for smooth transition
-			float edgeFade = saturate((adjustedRadius - dist) / (adjustedRadius * 0.1));
-			float2 firstPassMV = FirstPassMV.Sample(PointSamp, uv);
-			
-			return lerp(firstPassMV, velocity, edgeFade);
-		}
-	)";
-
-	static bool CreateClearVelocityShader()
+	static bool CreateMVShaders()
 	{
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
 		ID3D11Device* device = (ID3D11Device*)rendererData->device;
 
 		ID3DBlob* blob = nullptr;
 		ID3DBlob* errorBlob = nullptr;
+		HRESULT hr;
 
-		// --- Compile PS ---
-		HRESULT hr = D3DCompile(
-			g_ClearVelocityPSCode,
-			strlen(g_ClearVelocityPSCode),
-			nullptr, nullptr, nullptr,
-			"main", "ps_5_0",
-			0, 0, &blob, &errorBlob
-		);
-
-		if (FAILED(hr)) {
-			if (errorBlob) {
-				logger::error("Failed to compile ClearVelocityPS: {}", (char*)errorBlob->GetBufferPointer());
-				errorBlob->Release();
-			}
-			return false;
-		}
-		if (errorBlob) errorBlob->Release();
-
-		hr = device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_ClearVelocityPS);
-		blob->Release();
-		if (FAILED(hr)) {
-			logger::error("Failed to create ClearVelocity pixel shader");
-			return false;
-		}
-
-		// --- Compile VS ---
-		hr = D3DCompile(
-			g_ClearVelocityVSCode,
-			strlen(g_ClearVelocityVSCode),
-			nullptr, nullptr, nullptr,
-			"main", "vs_5_0",
-			0, 0, &blob, &errorBlob
-		);
-
-		if (FAILED(hr)) {
-			if (errorBlob) {
-				logger::error("Failed to compile ClearVelocityVS: {}", (char*)errorBlob->GetBufferPointer());
-				errorBlob->Release();
-			}
-			return false;
-		}
-		if (errorBlob) errorBlob->Release();
-
-		hr = device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_ClearVelocityVS);
-		blob->Release();
-		if (FAILED(hr)) {
-			logger::error("Failed to create ClearVelocity vertex shader");
-			return false;
-		}
-
-		// --- Compile ScopeMV PS (for correct motion vector calculation) ---
-		hr = D3DCompile(
-			g_ScopeMVPSCode,
-			strlen(g_ScopeMVPSCode),
-			nullptr, nullptr, nullptr,
-			"main", "ps_5_0",
-			0, 0, &blob, &errorBlob
-		);
-
-		if (FAILED(hr)) {
-			if (errorBlob) {
-				logger::error("Failed to compile ScopeMVPS: {}", (char*)errorBlob->GetBufferPointer());
-				errorBlob->Release();
-			}
-			// Continue - fallback to clear velocity shader
-		} else {
-			if (errorBlob) errorBlob->Release();
-			hr = device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_ScopeMVPS);
-			blob->Release();
-			if (FAILED(hr)) {
-				logger::error("Failed to create ScopeMV pixel shader");
-			}
-		}
-
-		// --- Compile ScopeMV VS ---
+		// --- Compile ScopeMV VS (fullscreen triangle with UV) ---
 		hr = D3DCompile(
 			g_ScopeMVVSCode,
 			strlen(g_ScopeMVVSCode),
@@ -278,12 +106,14 @@ namespace ThroughScope
 				logger::error("Failed to compile ScopeMVVS: {}", (char*)errorBlob->GetBufferPointer());
 				errorBlob->Release();
 			}
+			return false;  // Critical - needed for all MV operations
 		} else {
 			if (errorBlob) errorBlob->Release();
 			hr = device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_ScopeMVVS);
 			blob->Release();
 			if (FAILED(hr)) {
 				logger::error("Failed to create ScopeMV vertex shader");
+				return false;
 			}
 		}
 
@@ -301,6 +131,7 @@ namespace ThroughScope
 				logger::error("Failed to compile MVDebugPS: {}", (char*)errorBlob->GetBufferPointer());
 				errorBlob->Release();
 			}
+			// Non-fatal - debug overlay just won't work
 		} else {
 			if (errorBlob) errorBlob->Release();
 			hr = device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_MVDebugPS);
@@ -310,10 +141,10 @@ namespace ThroughScope
 			}
 		}
 
-		// --- Compile MV Merge PS (Plan A) ---
+		// --- Compile MV Copy PS (stencil-masked copy from FirstPassMV) ---
 		hr = D3DCompile(
-			g_MVMergePSCode,
-			strlen(g_MVMergePSCode),
+			g_MVCopyPSCode,
+			strlen(g_MVCopyPSCode),
 			nullptr, nullptr, nullptr,
 			"main", "ps_5_0",
 			0, 0, &blob, &errorBlob
@@ -321,21 +152,21 @@ namespace ThroughScope
 
 		if (FAILED(hr)) {
 			if (errorBlob) {
-				logger::error("Failed to compile MVMergePS: {}", (char*)errorBlob->GetBufferPointer());
+				logger::error("Failed to compile MVCopyPS: {}", (char*)errorBlob->GetBufferPointer());
 				errorBlob->Release();
 			}
-			// Non-fatal - fallback to existing MV shaders
+			return false;  // Critical - needed for MV mask merge
 		} else {
 			if (errorBlob) errorBlob->Release();
-			hr = device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_MVMergePS);
+			hr = device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_MVCopyPS);
 			blob->Release();
 			if (FAILED(hr)) {
-				logger::error("Failed to create MVMerge pixel shader");
-			} else {
-				logger::info("Successfully created MV Merge shader for Plan A");
+				logger::error("Failed to create MVCopy pixel shader");
+				return false;
 			}
 		}
 
+		logger::info("Successfully created MV shaders (ScopeMVVS, MVDebugPS, MVCopyPS)");
 		return true;
 	}
 
@@ -349,8 +180,8 @@ namespace ThroughScope
             return false;
         }
 
-		if (!CreateClearVelocityShader()) {
-			logger::warn("Failed to create ClearVelocity shader - motion vector clearing disabled");
+		if (!CreateMVShaders()) {
+			logger::warn("Failed to create MV shaders - motion vector operations disabled");
 		}
 
         return true;
@@ -498,14 +329,6 @@ namespace ThroughScope
             s_SecondPassDepthTexture->Release();
             s_SecondPassDepthTexture = nullptr;
         }
-		if (s_ClearVelocityPS) {
-			s_ClearVelocityPS->Release();
-			s_ClearVelocityPS = nullptr;
-		}
-		if (s_ClearVelocityVS) {
-			s_ClearVelocityVS->Release();
-			s_ClearVelocityVS = nullptr;
-		}
 		if (s_MotionVectorBackup) {
 			s_MotionVectorBackup->Release();
 			s_MotionVectorBackup = nullptr;
@@ -514,9 +337,17 @@ namespace ThroughScope
 			s_FirstPassMVSRV->Release();
 			s_FirstPassMVSRV = nullptr;
 		}
-		if (s_MVMergePS) {
-			s_MVMergePS->Release();
-			s_MVMergePS = nullptr;
+		if (s_ScopeMVVS) {
+			s_ScopeMVVS->Release();
+			s_ScopeMVVS = nullptr;
+		}
+		if (s_MVDebugPS) {
+			s_MVDebugPS->Release();
+			s_MVDebugPS = nullptr;
+		}
+		if (s_MVCopyPS) {
+			s_MVCopyPS->Release();
+			s_MVCopyPS = nullptr;
 		}
     }
 }

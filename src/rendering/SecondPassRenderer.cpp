@@ -655,7 +655,7 @@ namespace ThroughScope
 					logger::info("DrawScopeContent: Matrix update - g_ScopeViewProjMatValid={}, setting g_ScopePreviousViewProjMatValid",
 						g_ScopeViewProjMatValid);
 				}
-				
+
 				// 保存当前矩阵到 "上一帧" 供下一帧 MV 计算使用
 				if (g_ScopeViewProjMatValid) {
 					g_ScopePreviousViewProjMat[0] = g_ScopeViewProjMat[0];
@@ -664,7 +664,7 @@ namespace ThroughScope
 					g_ScopePreviousViewProjMat[3] = g_ScopeViewProjMat[3];
 					g_ScopePreviousViewProjMatValid = true;
 				}
-				
+
 				// 保存当前帧矩阵
 				g_ScopeViewProjMat[0] = viewProjMat[0];
 				g_ScopeViewProjMat[1] = viewProjMat[1];
@@ -1417,6 +1417,7 @@ namespace ThroughScope
 
 
 			// 渲染瞄具内容
+			// 注意：SetScopeTexture 内部已经完成 DrawIndexed（已合并 stencil 写入和颜色渲染）
 			int scopeNodeIndexCount = ScopeCamera::GetScopeNodeIndexCount();
 			if (scopeNodeIndexCount != -1 && targetRTV) {
 				try {
@@ -1450,10 +1451,8 @@ namespace ThroughScope
 					m_context->RSSetViewports(1, &viewport);
 					
 					RenderUtilities::SetRender_PreUIComplete(true);
+					// SetScopeTexture 现在内部完成 DrawIndexed（stencil + 颜色渲染已合并）
 					m_d3dHooks->SetScopeTexture(m_context);
-					D3DHooks::isSelfDrawCall = true;
-					m_context->DrawIndexed(scopeNodeIndexCount, 0, 0);
-					D3DHooks::isSelfDrawCall = false;
 					RenderUtilities::SetRender_PreUIComplete(false);
 				} catch (...) {
 					logger::error("Exception during scope content rendering");
@@ -1649,13 +1648,14 @@ namespace ThroughScope
 
 	void SecondPassRenderer::ApplyMotionVectorMask()
 	{
-		// 使用 Stencil Test 自动清除 Scope 区域的 Motion Vectors (RT 29)
-		// Scope 渲染时会写入 Stencil，此处利用 Stencil != 0 来通过测试
-		// 相比 Scissor Rect，这能完美贴合任意形状的瞄具模型
+		// 使用 Stencil Test 合并 Motion Vectors：
+		// - Scope 区域 (stencil == 127): 使用 FirstPassMV (第一次渲染的玩家相机 MV)
+		// - 非 Scope 区域 (stencil != 127): 保留当前 RT29 的 MV
+		// ScopeQuad 渲染时在 SetScopeTexture 中写入 stencil = 127
 
 		if (!m_context || !m_device) return;
 
-		D3DPERF_BeginEvent(0xFF0000FF, L"ApplyMotionVectorMask");
+		D3DPERF_BeginEvent(0xFF0000FF, L"ApplyMotionVectorMask_StencilBased");
 
 		// 1. 获取 Motion Vector Render Target (Index 29)
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
@@ -1667,11 +1667,24 @@ namespace ThroughScope
 			return; // No MV RT found
 		}
 
-		// 2. 获取 DSV - 直接使用 m_mainDSV（从初始化时缓存的 depthStencilTargets[2]）
-		// 注意：shadowState 指针可能无效，避免使用
-		ID3D11DepthStencilView* activeDSV = m_mainDSV;
+		// 2. 检查 FirstPassMV 是否可用
+		ID3D11ShaderResourceView* firstPassMVSRV = RenderUtilities::GetFirstPassMVSRV();
+		if (!firstPassMVSRV) {
+			D3DPERF_EndEvent();
+			return; // 没有第一次渲染的 MV 备份，无法进行合并
+		}
+
+		// 3. 获取带 Stencil 的 DSV (depthStencilTargets[2])
+		ID3D11DepthStencilView* stencilDSV = nullptr;
+		if (rendererData && rendererData->depthStencilTargets[2].dsView[0]) {
+			stencilDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
+		}
+		if (!stencilDSV) {
+			D3DPERF_EndEvent();
+			return; // 没有 DSV，无法进行 stencil 测试
+		}
 		
-		// 3. 备份当前渲染状态
+		// 4. 备份当前渲染状态
 		Microsoft::WRL::ComPtr<ID3D11RenderTargetView> oldRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT];
 		Microsoft::WRL::ComPtr<ID3D11DepthStencilView> oldDSV;
 		m_context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, oldRTVs[0].GetAddressOf(), oldDSV.GetAddressOf());
@@ -1702,22 +1715,25 @@ namespace ThroughScope
 		m_context->IAGetInputLayout(oldInputLayout.GetAddressOf());
 
 		try {
-			// 4. 配置 Stencil Test - 使用 stencil != 0 识别 Scope 区域
-			// ScopeQuad 渲染时会在 hkDrawIndexed 中写入 stencil = 1
+			// 5. 配置 Stencil Test - 只在 stencil != 127 的像素上通过
+			// Scope 区域 (stencil == 127) 保留当前 RT29 的 MV
+			// 非 Scope 区域 (stencil != 127) 使用 FirstPassMV 覆盖
 			D3D11_DEPTH_STENCIL_DESC dssDesc;
 			ZeroMemory(&dssDesc, sizeof(dssDesc));
-			dssDesc.DepthEnable = FALSE;
+			dssDesc.DepthEnable = FALSE;  // 禁用深度测试
 			dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
 			dssDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
-			// 注意：stencil 测试已禁用，因为：
-			// 1. TAA 不使用 stencil（完全忽略 stencil 值）
-			// 2. 绑定 DSV 会与深度 SRV 冲突（同一资源不能同时作为输入/输出）
-			// 正确的 MV 遮罩需要在 shader 中基于深度来判断 scope 区域
-			dssDesc.StencilEnable = FALSE;
+			dssDesc.StencilEnable = TRUE;  // 启用 stencil 测试
+			dssDesc.StencilReadMask = 0xFF;
+			dssDesc.StencilWriteMask = 0x00;  // 不写入 stencil
+			dssDesc.FrontFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
+			dssDesc.FrontFace.StencilDepthFailOp = D3D11_STENCIL_OP_KEEP;
+			dssDesc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
+			dssDesc.FrontFace.StencilFunc = D3D11_COMPARISON_NOT_EQUAL;  // stencil != ref 时通过
+			dssDesc.BackFace = dssDesc.FrontFace;
 
-			Microsoft::WRL::ComPtr<ID3D11DepthStencilState> dssState;
-			m_device->CreateDepthStencilState(&dssDesc, &dssState);
-			m_context->OMSetDepthStencilState(dssState.Get(), 0); 
+			Microsoft::WRL::ComPtr<ID3D11DepthStencilState> stencilTestDSS;
+			m_device->CreateDepthStencilState(&dssDesc, &stencilTestDSS); 
 
 			// 4. 配置 Rasterizer State
 			D3D11_RASTERIZER_DESC rsDesc;
@@ -1776,214 +1792,31 @@ namespace ThroughScope
 			vp.TopLeftY = 0;
 			m_context->RSSetViewports(1, &vp);
 
-			// 5. 设置 Render Target
-			// 注意：如果需要读取深度 SRV，不能同时绑定同一资源作为 DSV
-			// 先设置 RTV + nullptr（禁用 DSV 绑定以避免 SRV/DSV 冲突）
-			m_context->OMSetRenderTargets(1, &mvRTV, nullptr);
+			// 6. 设置 Render Target + Stencil DSV
+			// 关键：绑定 mvRTV + stencilDSV 以启用 stencil 测试
+			m_context->OMSetRenderTargets(1, &mvRTV, stencilDSV);
 
-			// 6. 设置 Shaders - 使用 MV Merge shader (Plan A) 或回退到原有 shader
-			bool useMVMerge = g_ScopePreviousViewProjMatValid && 
-							  RenderUtilities::GetMVMergePS() != nullptr &&
-							  RenderUtilities::GetScopeMVVS() != nullptr &&
-							  RenderUtilities::GetFirstPassMVSRV() != nullptr;
+			// 7. 设置 Stencil State - ref = 127 (与 ScopeQuad 写入的值匹配)
+			m_context->OMSetDepthStencilState(stencilTestDSS.Get(), 127);
+
+			// 8. 设置 Shader - 使用 MVCopyPS 采样并输出 FirstPassMV
+			// 在 stencil == 127 的区域，覆盖为 FirstPassMV
+			m_context->VSSetShader(RenderUtilities::GetScopeMVVS(), nullptr, 0);
+			m_context->PSSetShader(RenderUtilities::GetMVCopyPS(), nullptr, 0);
+
+			// 9. 绑定 FirstPassMV 作为输入 (slot 0)
+			m_context->PSSetShaderResources(0, 1, &firstPassMVSRV);
 			
-			bool useCorrectMV = g_ScopePreviousViewProjMatValid && 
-							   RenderUtilities::GetScopeMVPS() != nullptr && 
-							   RenderUtilities::GetScopeMVVS() != nullptr;
-
-			// DEBUG: 诊断 useCorrectMV 为 false 的原因
-			static int logCounter = 0;
-			if (logCounter++ < 5) {  // 只在前 5 帧输出
-				logger::info("ApplyMVMask: useMVMerge={}, useCorrectMV={}, MVMergePS={}, FirstPassMVSRV={}",
-					useMVMerge, useCorrectMV,
-					(void*)RenderUtilities::GetMVMergePS(),
-					(void*)RenderUtilities::GetFirstPassMVSRV());
-			}
-
-			if (useMVMerge) {
-				// [Plan A] Use MV Merge shader - samples first pass MV for outside scope, calculates scope MV for inside
-				D3DPERF_BeginEvent(0xFF00FF00, L"ScopeMV_PlanA_Merge");
-				
-				// 常量缓冲区 (匹配 g_MVMergePSCode 中的 cbuffer MVMergeConstants)
-				struct MVMergeConstants {
-					DirectX::XMFLOAT4X4 InvViewProj;
-					DirectX::XMFLOAT4X4 PrevViewProj;
-					DirectX::XMFLOAT2 ScreenSize;
-					DirectX::XMFLOAT2 ScopeCenter;    // UV space (0-1)
-					float ScopeRadius;                // UV space
-					float DepthThreshold;
-					DirectX::XMFLOAT2 Padding2;
-				};
-				
-				// 构建当前帧 ViewProj 矩阵
-				DirectX::XMMATRIX currentViewProj = DirectX::XMMatrixSet(
-					g_ScopeViewProjMat[0].m128_f32[0], g_ScopeViewProjMat[0].m128_f32[1], 
-					g_ScopeViewProjMat[0].m128_f32[2], g_ScopeViewProjMat[0].m128_f32[3],
-					g_ScopeViewProjMat[1].m128_f32[0], g_ScopeViewProjMat[1].m128_f32[1], 
-					g_ScopeViewProjMat[1].m128_f32[2], g_ScopeViewProjMat[1].m128_f32[3],
-					g_ScopeViewProjMat[2].m128_f32[0], g_ScopeViewProjMat[2].m128_f32[1], 
-					g_ScopeViewProjMat[2].m128_f32[2], g_ScopeViewProjMat[2].m128_f32[3],
-					g_ScopeViewProjMat[3].m128_f32[0], g_ScopeViewProjMat[3].m128_f32[1], 
-					g_ScopeViewProjMat[3].m128_f32[2], g_ScopeViewProjMat[3].m128_f32[3]
-				);
-				
-				// 构建上一帧 ViewProj 矩阵
-				DirectX::XMMATRIX prevViewProj = DirectX::XMMatrixSet(
-					g_ScopePreviousViewProjMat[0].m128_f32[0], g_ScopePreviousViewProjMat[0].m128_f32[1], 
-					g_ScopePreviousViewProjMat[0].m128_f32[2], g_ScopePreviousViewProjMat[0].m128_f32[3],
-					g_ScopePreviousViewProjMat[1].m128_f32[0], g_ScopePreviousViewProjMat[1].m128_f32[1], 
-					g_ScopePreviousViewProjMat[1].m128_f32[2], g_ScopePreviousViewProjMat[1].m128_f32[3],
-					g_ScopePreviousViewProjMat[2].m128_f32[0], g_ScopePreviousViewProjMat[2].m128_f32[1], 
-					g_ScopePreviousViewProjMat[2].m128_f32[2], g_ScopePreviousViewProjMat[2].m128_f32[3],
-					g_ScopePreviousViewProjMat[3].m128_f32[0], g_ScopePreviousViewProjMat[3].m128_f32[1], 
-					g_ScopePreviousViewProjMat[3].m128_f32[2], g_ScopePreviousViewProjMat[3].m128_f32[3]
-				);
-				
-				// 计算逆矩阵
-				DirectX::XMMATRIX invViewProj = DirectX::XMMatrixInverse(nullptr, currentViewProj);
-				
-				// 填充常量缓冲区
-				MVMergeConstants constants;
-				DirectX::XMStoreFloat4x4(&constants.InvViewProj, DirectX::XMMatrixTranspose(invViewProj));
-				DirectX::XMStoreFloat4x4(&constants.PrevViewProj, DirectX::XMMatrixTranspose(prevViewProj));
-				constants.ScreenSize = DirectX::XMFLOAT2(vp.Width, vp.Height);
-				
-				// Scope region parameters - 从 RenderUtilities 获取动态位置
-				// RestoreFirstPass 或 D3DHooks 应该在绘制 scope 前设置这些值
-				constants.ScopeCenter = DirectX::XMFLOAT2(
-					RenderUtilities::GetScopeQuadCenterU(),
-					RenderUtilities::GetScopeQuadCenterV()
-				);
-				constants.ScopeRadius = RenderUtilities::GetScopeQuadRadius();
-				constants.DepthThreshold = 0.0f;  // 保留，暂未使用
-				constants.Padding2 = DirectX::XMFLOAT2(0.0f, 0.0f);
-				
-				// 创建常量缓冲区
-				D3D11_BUFFER_DESC cbDesc;
-				ZeroMemory(&cbDesc, sizeof(cbDesc));
-				cbDesc.ByteWidth = sizeof(MVMergeConstants);
-				cbDesc.Usage = D3D11_USAGE_IMMUTABLE;
-				cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-				
-				D3D11_SUBRESOURCE_DATA cbData;
-				cbData.pSysMem = &constants;
-				cbData.SysMemPitch = 0;
-				cbData.SysMemSlicePitch = 0;
-				
-				Microsoft::WRL::ComPtr<ID3D11Buffer> mvConstantBuffer;
-				m_device->CreateBuffer(&cbDesc, &cbData, &mvConstantBuffer);
-				
-				// 获取深度纹理 SRV
-				ID3D11ShaderResourceView* depthSRV = nullptr;
-				if (rendererData && rendererData->depthStencilTargets[2].srViewDepth) {
-					depthSRV = (ID3D11ShaderResourceView*)rendererData->depthStencilTargets[2].srViewDepth;
-				}
-				
-				// 设置 shader 和资源
-				m_context->VSSetShader(RenderUtilities::GetScopeMVVS(), nullptr, 0);
-				m_context->PSSetShader(RenderUtilities::GetMVMergePS(), nullptr, 0);  // Use merge shader
-				m_context->PSSetConstantBuffers(0, 1, mvConstantBuffer.GetAddressOf());
-				
-				// [Plan A] 绑定两个 SRV：slot 0 = 第一pass的MV备份, slot 1 = 深度
-				ID3D11ShaderResourceView* srvs[2] = { 
-					RenderUtilities::GetFirstPassMVSRV(),  // t0: First pass MV
-					depthSRV                               // t1: Depth
-				};
-				m_context->PSSetShaderResources(0, 2, srvs);
-				
-				// 设置采样器
-				D3D11_SAMPLER_DESC sampDesc;
-				ZeroMemory(&sampDesc, sizeof(sampDesc));
-				sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
-				sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-				sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-				sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-				Microsoft::WRL::ComPtr<ID3D11SamplerState> pointSampler;
-				m_device->CreateSamplerState(&sampDesc, &pointSampler);
-				m_context->PSSetSamplers(0, 1, pointSampler.GetAddressOf());
-				
-				D3DPERF_EndEvent();
-			} else if (useCorrectMV) {
-				D3DPERF_BeginEvent(0xFFFFFF00, L"ScopeMV_Fallback_FullScreenCalc");
-				
-				// 回退：使用原有的全屏覆盖 shader (不推荐，会影响 scope 外区域)
-				struct MVConstants {
-					DirectX::XMFLOAT4X4 InvViewProj;
-					DirectX::XMFLOAT4X4 PrevViewProj;
-					DirectX::XMFLOAT2 ScreenSize;
-					DirectX::XMFLOAT2 Padding;
-				};
-				
-				DirectX::XMMATRIX currentViewProj = DirectX::XMMatrixSet(
-					g_ScopeViewProjMat[0].m128_f32[0], g_ScopeViewProjMat[0].m128_f32[1], 
-					g_ScopeViewProjMat[0].m128_f32[2], g_ScopeViewProjMat[0].m128_f32[3],
-					g_ScopeViewProjMat[1].m128_f32[0], g_ScopeViewProjMat[1].m128_f32[1], 
-					g_ScopeViewProjMat[1].m128_f32[2], g_ScopeViewProjMat[1].m128_f32[3],
-					g_ScopeViewProjMat[2].m128_f32[0], g_ScopeViewProjMat[2].m128_f32[1], 
-					g_ScopeViewProjMat[2].m128_f32[2], g_ScopeViewProjMat[2].m128_f32[3],
-					g_ScopeViewProjMat[3].m128_f32[0], g_ScopeViewProjMat[3].m128_f32[1], 
-					g_ScopeViewProjMat[3].m128_f32[2], g_ScopeViewProjMat[3].m128_f32[3]
-				);
-				DirectX::XMMATRIX prevViewProj = DirectX::XMMatrixSet(
-					g_ScopePreviousViewProjMat[0].m128_f32[0], g_ScopePreviousViewProjMat[0].m128_f32[1], 
-					g_ScopePreviousViewProjMat[0].m128_f32[2], g_ScopePreviousViewProjMat[0].m128_f32[3],
-					g_ScopePreviousViewProjMat[1].m128_f32[0], g_ScopePreviousViewProjMat[1].m128_f32[1], 
-					g_ScopePreviousViewProjMat[1].m128_f32[2], g_ScopePreviousViewProjMat[1].m128_f32[3],
-					g_ScopePreviousViewProjMat[2].m128_f32[0], g_ScopePreviousViewProjMat[2].m128_f32[1], 
-					g_ScopePreviousViewProjMat[2].m128_f32[2], g_ScopePreviousViewProjMat[2].m128_f32[3],
-					g_ScopePreviousViewProjMat[3].m128_f32[0], g_ScopePreviousViewProjMat[3].m128_f32[1], 
-					g_ScopePreviousViewProjMat[3].m128_f32[2], g_ScopePreviousViewProjMat[3].m128_f32[3]
-				);
-				DirectX::XMMATRIX invViewProj = DirectX::XMMatrixInverse(nullptr, currentViewProj);
-				
-				MVConstants constants;
-				DirectX::XMStoreFloat4x4(&constants.InvViewProj, DirectX::XMMatrixTranspose(invViewProj));
-				DirectX::XMStoreFloat4x4(&constants.PrevViewProj, DirectX::XMMatrixTranspose(prevViewProj));
-				constants.ScreenSize = DirectX::XMFLOAT2(vp.Width, vp.Height);
-				constants.Padding = DirectX::XMFLOAT2(0.0f, 0.0f);
-				
-				D3D11_BUFFER_DESC cbDesc;
-				ZeroMemory(&cbDesc, sizeof(cbDesc));
-				cbDesc.ByteWidth = sizeof(MVConstants);
-				cbDesc.Usage = D3D11_USAGE_IMMUTABLE;
-				cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-				
-				D3D11_SUBRESOURCE_DATA cbData;
-				cbData.pSysMem = &constants;
-				cbData.SysMemPitch = 0;
-				cbData.SysMemSlicePitch = 0;
-				
-				Microsoft::WRL::ComPtr<ID3D11Buffer> mvConstantBuffer;
-				m_device->CreateBuffer(&cbDesc, &cbData, &mvConstantBuffer);
-				
-				ID3D11ShaderResourceView* depthSRV = nullptr;
-				if (rendererData && rendererData->depthStencilTargets[2].srViewDepth) {
-					depthSRV = (ID3D11ShaderResourceView*)rendererData->depthStencilTargets[2].srViewDepth;
-				}
-				
-				m_context->VSSetShader(RenderUtilities::GetScopeMVVS(), nullptr, 0);
-				m_context->PSSetShader(RenderUtilities::GetScopeMVPS(), nullptr, 0);
-				m_context->PSSetConstantBuffers(0, 1, mvConstantBuffer.GetAddressOf());
-				if (depthSRV) {
-					m_context->PSSetShaderResources(0, 1, &depthSRV);
-				}
-				
-				D3D11_SAMPLER_DESC sampDesc;
-				ZeroMemory(&sampDesc, sizeof(sampDesc));
-				sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
-				sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-				sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-				sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-				Microsoft::WRL::ComPtr<ID3D11SamplerState> pointSampler;
-				m_device->CreateSamplerState(&sampDesc, &pointSampler);
-				m_context->PSSetSamplers(0, 1, pointSampler.GetAddressOf());
-				
-				D3DPERF_EndEvent();
-			} else {
-				// 回退：使用清零 shader
-				m_context->VSSetShader(RenderUtilities::GetClearVelocityVS(), nullptr, 0);
-				m_context->PSSetShader(RenderUtilities::GetClearVelocityPS(), nullptr, 0);
-			}
+			// 设置点采样器
+			D3D11_SAMPLER_DESC sampDesc;
+			ZeroMemory(&sampDesc, sizeof(sampDesc));
+			sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+			sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+			sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+			sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+			Microsoft::WRL::ComPtr<ID3D11SamplerState> pointSampler;
+			m_device->CreateSamplerState(&sampDesc, &pointSampler);
+			m_context->PSSetSamplers(0, 1, pointSampler.GetAddressOf());
 			
 			m_context->IASetInputLayout(nullptr);
 			m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
