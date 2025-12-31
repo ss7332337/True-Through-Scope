@@ -66,6 +66,19 @@ namespace ThroughScope
 		static ID3D11Texture2D* GetFirstPassMVBackup() { return s_MotionVectorBackup; }
 		static ID3D11ShaderResourceView* GetFirstPassMVSRV() { return s_FirstPassMVSRV; }
 
+		// Temporary MV texture for blend operation (copy of RT29)
+		static ID3D11Texture2D* GetTempMVTexture() { return s_TempMVTexture; }
+		static ID3D11ShaderResourceView* GetTempMVSRV() { return s_TempMVSRV; }
+
+		// Stencil SRV for reading stencil buffer in shader
+		static ID3D11ShaderResourceView* GetStencilSRV() { return s_StencilSRV; }
+
+		// MV Blend shader for edge feathering
+		static ID3D11PixelShader* GetMVBlendPS() { return s_MVBlendPS; }
+
+		// White output shader for writing to FG interpolation skip mask
+		static ID3D11PixelShader* GetWhiteOutputPS() { return s_WhiteOutputPS; }
+
     private:
         static ID3D11Texture2D* s_FirstPassColorTexture;
         static ID3D11Texture2D* s_FirstPassDepthTexture;
@@ -78,12 +91,21 @@ namespace ThroughScope
 		// Motion vector backup for Plan A MV merge
 		static ID3D11Texture2D* s_MotionVectorBackup;
 		static ID3D11ShaderResourceView* s_FirstPassMVSRV;
+
+		// Temporary MV texture for blend operation
+		static ID3D11Texture2D* s_TempMVTexture;
+		static ID3D11ShaderResourceView* s_TempMVSRV;
+
+		// Stencil SRV for reading stencil in shader
+		static ID3D11ShaderResourceView* s_StencilSRV;
 		
 		// Utility Shaders
 	public:
 		static ID3D11VertexShader* s_ScopeMVVS;      // Fullscreen triangle VS with UV
 		static ID3D11PixelShader* s_MVDebugPS;       // MV 可视化 shader
 		static ID3D11PixelShader* s_MVCopyPS;        // MV 复制 shader (stencil-masked)
+		static ID3D11PixelShader* s_MVBlendPS;       // MV 混合 shader (edge feathering)
+		static ID3D11PixelShader* s_WhiteOutputPS;   // White output shader for FG skip mask
 
 	private:
         // Scope textures

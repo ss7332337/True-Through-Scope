@@ -29,15 +29,18 @@ namespace ThroughScope
 
 	// ========== fo4test Frame Generation Interop ==========
 	// Motion Vector Deferral API - prevents FG ghosting by coordinating MV copy timing
+	// Interpolation Skip Mask API - marks scope region to skip FG interpolation
 	namespace FGInterop
 	{
 		typedef void (*FnNotifyComplete)();
 		typedef int (*FnRegister)();
 		typedef int (*FnUnregister)();
+		typedef ID3D11RenderTargetView* (*FnGetInterpolationMaskRTV)();
 		
 		static FnNotifyComplete NotifyComplete = nullptr;
 		static FnRegister Register = nullptr;
 		static FnUnregister Unregister = nullptr;
+		static FnGetInterpolationMaskRTV GetInterpolationMaskRTV = nullptr;
 		static bool g_Initialized = false;
 		static HMODULE g_Module = nullptr;
 		
@@ -54,11 +57,15 @@ namespace ThroughScope
 			NotifyComplete = (FnNotifyComplete)GetProcAddress(g_Module, "AAAFG_NotifyMotionVectorUpdateComplete");
 			Register = (FnRegister)GetProcAddress(g_Module, "AAAFG_RegisterMotionVectorDeferral");
 			Unregister = (FnUnregister)GetProcAddress(g_Module, "AAAFG_UnregisterMotionVectorDeferral");
+			GetInterpolationMaskRTV = (FnGetInterpolationMaskRTV)GetProcAddress(g_Module, "AAAFG_GetInterpolationMaskRTV");
 			
 			if (NotifyComplete && Register && Unregister) {
 				int count = Register();
 				g_Initialized = true;
 				logger::info("[FGInterop] Registered for MV deferral, count: {}", count);
+				if (GetInterpolationMaskRTV) {
+					logger::info("[FGInterop] Interpolation skip mask API available");
+				}
 			} else {
 				logger::warn("[FGInterop] Failed to resolve API exports");
 			}
@@ -81,7 +88,18 @@ namespace ThroughScope
 			}
 		}
 		
+		// Get the RTV for writing to the interpolation skip mask
+		// Returns nullptr if FG not active or API not available
+		ID3D11RenderTargetView* GetMaskRTV()
+		{
+			if (g_Initialized && GetInterpolationMaskRTV) {
+				return GetInterpolationMaskRTV();
+			}
+			return nullptr;
+		}
+		
 		bool IsActive() { return g_Initialized; }
+		bool IsMaskAPIAvailable() { return g_Initialized && GetInterpolationMaskRTV != nullptr; }
 	}
 
 	// k1stPersonCullingGroup 地址，用于 O(1) 过滤第一人称几何体
@@ -580,7 +598,18 @@ namespace ThroughScope
 						logger::warn("[RenderEffectRange Hook] SecondPassRenderer failed");
 					}
 					// 渲染后立即清除瞄具区域的 Motion Vectors，防止 TAA 鬼影
-					renderer.ApplyMotionVectorMask(); 
+					renderer.ApplyMotionVectorMask();
+
+					// Write to FG interpolation skip mask if API available
+					// This marks the scope region so FG will NOT interpolate those pixels
+					if (FGInterop::IsMaskAPIAvailable()) {
+						ID3D11RenderTargetView* maskRTV = FGInterop::GetMaskRTV();
+						if (maskRTV) {
+							D3DPERF_BeginEvent(0xFFFF8800, L"WriteToFGInterpolationMask");
+							renderer.WriteToFGInterpolationMask(maskRTV);
+							D3DPERF_EndEvent();
+						}
+					}
 					
 					// 通知 fo4test MV 更新完成（Frame Generation 兼容）
 					FGInterop::NotifyMVComplete();

@@ -1715,27 +1715,121 @@ namespace ThroughScope
 		m_context->IAGetInputLayout(oldInputLayout.GetAddressOf());
 
 		try {
-			// 5. 配置 Stencil Test - 只在 stencil != 127 的像素上通过
-			// Scope 区域 (stencil == 127) 保留当前 RT29 的 MV
-			// 非 Scope 区域 (stencil != 127) 使用 FirstPassMV 覆盖
-			D3D11_DEPTH_STENCIL_DESC dssDesc;
-			ZeroMemory(&dssDesc, sizeof(dssDesc));
-			dssDesc.DepthEnable = FALSE;  // 禁用深度测试
-			dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
-			dssDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
-			dssDesc.StencilEnable = TRUE;  // 启用 stencil 测试
-			dssDesc.StencilReadMask = 0xFF;
-			dssDesc.StencilWriteMask = 0x00;  // 不写入 stencil
-			dssDesc.FrontFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
-			dssDesc.FrontFace.StencilDepthFailOp = D3D11_STENCIL_OP_KEEP;
-			dssDesc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
-			dssDesc.FrontFace.StencilFunc = D3D11_COMPARISON_NOT_EQUAL;  // stencil != ref 时通过
-			dssDesc.BackFace = dssDesc.FrontFace;
+			// 5. 复制当前 RT29 到临时纹理（用于 shader 读取）
+			ID3D11Texture2D* tempMVTexture = RenderUtilities::GetTempMVTexture();
+			ID3D11ShaderResourceView* tempMVSRV = RenderUtilities::GetTempMVSRV();
+			ID3D11ShaderResourceView* stencilSRV = RenderUtilities::GetStencilSRV();
+			ID3D11PixelShader* mvBlendPS = RenderUtilities::GetMVBlendPS();
 
-			Microsoft::WRL::ComPtr<ID3D11DepthStencilState> stencilTestDSS;
-			m_device->CreateDepthStencilState(&dssDesc, &stencilTestDSS); 
+			if (!tempMVTexture || !tempMVSRV || !stencilSRV || !mvBlendPS) {
+				// Fallback: 使用原来的硬边缘方式
+				logger::warn("ApplyMotionVectorMask: Missing resources for edge feathering, using hard edge fallback");
+				
+				// 配置 Stencil Test (fallback - 硬边缘)
+				D3D11_DEPTH_STENCIL_DESC dssDesc;
+				ZeroMemory(&dssDesc, sizeof(dssDesc));
+				dssDesc.DepthEnable = FALSE;
+				dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+				dssDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+				dssDesc.StencilEnable = TRUE;
+				dssDesc.StencilReadMask = 0xFF;
+				dssDesc.StencilWriteMask = 0x00;
+				dssDesc.FrontFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
+				dssDesc.FrontFace.StencilDepthFailOp = D3D11_STENCIL_OP_KEEP;
+				dssDesc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
+				dssDesc.FrontFace.StencilFunc = D3D11_COMPARISON_NOT_EQUAL;
+				dssDesc.BackFace = dssDesc.FrontFace;
 
-			// 4. 配置 Rasterizer State
+				Microsoft::WRL::ComPtr<ID3D11DepthStencilState> stencilTestDSS;
+				m_device->CreateDepthStencilState(&dssDesc, &stencilTestDSS);
+				
+				m_context->OMSetRenderTargets(1, &mvRTV, stencilDSV);
+				m_context->OMSetDepthStencilState(stencilTestDSS.Get(), 127);
+				m_context->VSSetShader(RenderUtilities::GetScopeMVVS(), nullptr, 0);
+				m_context->PSSetShader(RenderUtilities::GetMVCopyPS(), nullptr, 0);
+				m_context->PSSetShaderResources(0, 1, &firstPassMVSRV);
+			} else {
+				// Edge Feathering Mode：使用 MVBlendPS 做平滑过渡
+				
+				// Step 1: 复制当前 RT29 到临时纹理
+				ID3D11Resource* mvResource = nullptr;
+				mvRTV->GetResource(&mvResource);
+				if (mvResource) {
+					m_context->CopyResource(tempMVTexture, mvResource);
+					mvResource->Release();
+				}
+
+				// Step 2: 禁用 stencil test（shader 内部读取 stencil）
+				D3D11_DEPTH_STENCIL_DESC dssDesc;
+				ZeroMemory(&dssDesc, sizeof(dssDesc));
+				dssDesc.DepthEnable = FALSE;
+				dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+				dssDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+				dssDesc.StencilEnable = FALSE;  // 禁用硬件 stencil test
+
+				Microsoft::WRL::ComPtr<ID3D11DepthStencilState> noStencilDSS;
+				m_device->CreateDepthStencilState(&dssDesc, &noStencilDSS);
+				
+				// Step 3: 设置 Render Target（不需要 DSV）
+				m_context->OMSetRenderTargets(1, &mvRTV, nullptr);
+				m_context->OMSetDepthStencilState(noStencilDSS.Get(), 0);
+				
+				// Step 4: 设置 Shaders
+				m_context->VSSetShader(RenderUtilities::GetScopeMVVS(), nullptr, 0);
+				m_context->PSSetShader(mvBlendPS, nullptr, 0);
+				
+				// Step 5: 绑定 3 个输入纹理
+				// t0 = FirstPassMV, t1 = TempMV (当前 RT29), t2 = StencilSRV
+				ID3D11ShaderResourceView* srvs[3] = { firstPassMVSRV, tempMVSRV, stencilSRV };
+				m_context->PSSetShaderResources(0, 3, srvs);
+				
+				// Step 6: 创建并绑定常量缓冲区
+				struct BlendConstants {
+					float TexelSizeX;
+					float TexelSizeY;
+					float FeatherRadius;
+					float StencilRef;
+				};
+				
+				UINT mvWidth = 0, mvHeight = 0;
+				ID3D11Resource* mvRes = nullptr;
+				mvRTV->GetResource(&mvRes);
+				if (mvRes) {
+					ID3D11Texture2D* mvTex = nullptr;
+					if (SUCCEEDED(mvRes->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&mvTex))) {
+						D3D11_TEXTURE2D_DESC desc;
+						mvTex->GetDesc(&desc);
+						mvWidth = desc.Width;
+						mvHeight = desc.Height;
+						mvTex->Release();
+					}
+					mvRes->Release();
+				}
+				
+				BlendConstants blendConst;
+				blendConst.TexelSizeX = 1.0f / (float)mvWidth;
+				blendConst.TexelSizeY = 1.0f / (float)mvHeight;
+				blendConst.FeatherRadius = 5.0f;  // 5 像素羽化半径
+				blendConst.StencilRef = 127.0f;   // Stencil 参考值
+				
+				D3D11_BUFFER_DESC cbDesc;
+				ZeroMemory(&cbDesc, sizeof(cbDesc));
+				cbDesc.ByteWidth = sizeof(BlendConstants);
+				cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+				cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+				cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+				
+				D3D11_SUBRESOURCE_DATA cbData;
+				cbData.pSysMem = &blendConst;
+				cbData.SysMemPitch = 0;
+				cbData.SysMemSlicePitch = 0;
+				
+				Microsoft::WRL::ComPtr<ID3D11Buffer> blendCB;
+				m_device->CreateBuffer(&cbDesc, &cbData, &blendCB);
+				m_context->PSSetConstantBuffers(0, 1, blendCB.GetAddressOf());
+			}
+
+			// 配置 Rasterizer State
 			D3D11_RASTERIZER_DESC rsDesc;
 			ZeroMemory(&rsDesc, sizeof(rsDesc));
 			rsDesc.FillMode = D3D11_FILL_SOLID;
@@ -1753,59 +1847,30 @@ namespace ThroughScope
 			m_device->CreateRasterizerState(&rsDesc, &rsState);
 			m_context->RSSetState(rsState.Get());
 
-			// 设置 Viewport 为Motion Vector RT的实际尺寸，强制深度为 1.0
-			// [FIX] 直接从RT29获取尺寸，而不是使用硬编码的屏幕尺寸
-			// 这修复了2160p分辨率下的TAA鬼影问题（之前使用1920x1080导致只覆盖左上1/4）
-			D3D11_VIEWPORT vp;
-			UINT mvWidth = 0, mvHeight = 0;
-			
-			// 从Motion Vector RTV获取实际纹理尺寸
-			ID3D11Resource* mvResource = nullptr;
-			mvRTV->GetResource(&mvResource);
-			if (mvResource) {
+			// 设置 Viewport
+			UINT mvWidth2 = 0, mvHeight2 = 0;
+			ID3D11Resource* mvResource2 = nullptr;
+			mvRTV->GetResource(&mvResource2);
+			if (mvResource2) {
 				ID3D11Texture2D* mvTexture = nullptr;
-				if (SUCCEEDED(mvResource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&mvTexture))) {
+				if (SUCCEEDED(mvResource2->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&mvTexture))) {
 					D3D11_TEXTURE2D_DESC mvDesc;
 					mvTexture->GetDesc(&mvDesc);
-					mvWidth = mvDesc.Width;
-					mvHeight = mvDesc.Height;
+					mvWidth2 = mvDesc.Width;
+					mvHeight2 = mvDesc.Height;
 					mvTexture->Release();
 				}
-				mvResource->Release();
+				mvResource2->Release();
 			}
 			
-			// 回退到深度缓冲尺寸如果无法获取MV尺寸
-			if (mvWidth == 0 || mvHeight == 0) {
-				if (m_mainDSTexture) {
-					D3D11_TEXTURE2D_DESC dsDesc;
-					m_mainDSTexture->GetDesc(&dsDesc);
-					mvWidth = dsDesc.Width;
-					mvHeight = dsDesc.Height;
-				}
-			}
-			
-			vp.Width = (float)mvWidth;
-			vp.Height = (float)mvHeight;
-			vp.MinDepth = 0.0f;  // 正常深度范围（stencil 测试不需要强制 Z=1.0）
+			D3D11_VIEWPORT vp;
+			vp.Width = (float)mvWidth2;
+			vp.Height = (float)mvHeight2;
+			vp.MinDepth = 0.0f;
 			vp.MaxDepth = 1.0f;
 			vp.TopLeftX = 0;
 			vp.TopLeftY = 0;
 			m_context->RSSetViewports(1, &vp);
-
-			// 6. 设置 Render Target + Stencil DSV
-			// 关键：绑定 mvRTV + stencilDSV 以启用 stencil 测试
-			m_context->OMSetRenderTargets(1, &mvRTV, stencilDSV);
-
-			// 7. 设置 Stencil State - ref = 127 (与 ScopeQuad 写入的值匹配)
-			m_context->OMSetDepthStencilState(stencilTestDSS.Get(), 127);
-
-			// 8. 设置 Shader - 使用 MVCopyPS 采样并输出 FirstPassMV
-			// 在 stencil == 127 的区域，覆盖为 FirstPassMV
-			m_context->VSSetShader(RenderUtilities::GetScopeMVVS(), nullptr, 0);
-			m_context->PSSetShader(RenderUtilities::GetMVCopyPS(), nullptr, 0);
-
-			// 9. 绑定 FirstPassMV 作为输入 (slot 0)
-			m_context->PSSetShaderResources(0, 1, &firstPassMVSRV);
 			
 			// 设置点采样器
 			D3D11_SAMPLER_DESC sampDesc;
@@ -1821,7 +1886,7 @@ namespace ThroughScope
 			m_context->IASetInputLayout(nullptr);
 			m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-			// 7. 设置 Blend State (Overwrite)
+			// 设置 Blend State (Overwrite)
 			D3D11_BLEND_DESC blendDesc;
 			ZeroMemory(&blendDesc, sizeof(blendDesc));
 			blendDesc.RenderTarget[0].BlendEnable = FALSE;
@@ -1832,12 +1897,12 @@ namespace ThroughScope
 			float blendFactor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
 			m_context->OMSetBlendState(blendState.Get(), blendFactor, 0xFFFFFFFF);
 
-			// 8. 绘制 Fullscreen Triangle
+			// 绘制 Fullscreen Triangle
 			m_context->Draw(3, 0);
 			
 			// 清理 SRV 绑定
-			ID3D11ShaderResourceView* nullSRV = nullptr;
-			m_context->PSSetShaderResources(0, 1, &nullSRV);
+			ID3D11ShaderResourceView* nullSRVs[3] = { nullptr, nullptr, nullptr };
+			m_context->PSSetShaderResources(0, 3, nullSRVs);
 
 		} catch (...) {
 			logger::warn("ApplyMotionVectorMask: Exception");
@@ -1853,6 +1918,120 @@ namespace ThroughScope
 		m_context->PSSetShader(oldPS.Get(), nullptr, 0);
 		m_context->IASetPrimitiveTopology(oldTopology);
 		m_context->IASetInputLayout(oldInputLayout.Get());
+
+		D3DPERF_EndEvent();
+	}
+
+	// ========== WriteToFGInterpolationMask ==========
+	// Writes white pixels to fo4test's interpolation skip mask in the scope region
+	// Uses the same stencil test as ApplyMotionVectorMask to identify scope pixels
+	void SecondPassRenderer::WriteToFGInterpolationMask(ID3D11RenderTargetView* maskRTV)
+	{
+		if (!m_context || !m_device || !maskRTV) return;
+
+		D3DPERF_BeginEvent(0xFFFF8800, L"WriteToFGInterpolationMask");
+
+		// Get stencil DSV
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		ID3D11DepthStencilView* stencilDSV = nullptr;
+		if (rendererData && rendererData->depthStencilTargets[2].dsView[0]) {
+			stencilDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
+		}
+		if (!stencilDSV) {
+			D3DPERF_EndEvent();
+			return;
+		}
+
+		ID3D11PixelShader* whitePS = RenderUtilities::GetWhiteOutputPS();
+		ID3D11VertexShader* scopeVS = RenderUtilities::GetScopeMVVS();
+		if (!whitePS || !scopeVS) {
+			D3DPERF_EndEvent();
+			return;
+		}
+
+		// Backup current state
+		Microsoft::WRL::ComPtr<ID3D11RenderTargetView> oldRTV;
+		Microsoft::WRL::ComPtr<ID3D11DepthStencilView> oldDSV;
+		m_context->OMGetRenderTargets(1, oldRTV.GetAddressOf(), oldDSV.GetAddressOf());
+
+		Microsoft::WRL::ComPtr<ID3D11DepthStencilState> oldDSS;
+		UINT oldStencilRef;
+		m_context->OMGetDepthStencilState(oldDSS.GetAddressOf(), &oldStencilRef);
+
+		Microsoft::WRL::ComPtr<ID3D11VertexShader> oldVS;
+		Microsoft::WRL::ComPtr<ID3D11PixelShader> oldPS;
+		m_context->VSGetShader(oldVS.GetAddressOf(), nullptr, nullptr);
+		m_context->PSGetShader(oldPS.GetAddressOf(), nullptr, nullptr);
+
+		D3D11_VIEWPORT oldViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+		UINT numViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+		m_context->RSGetViewports(&numViewports, oldViewports);
+
+		try {
+			// Set render target to mask texture
+			m_context->OMSetRenderTargets(1, &maskRTV, stencilDSV);
+
+			// Configure stencil test: only pass where stencil == 127 (scope region)
+			D3D11_DEPTH_STENCIL_DESC dssDesc;
+			ZeroMemory(&dssDesc, sizeof(dssDesc));
+			dssDesc.DepthEnable = FALSE;
+			dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+			dssDesc.StencilEnable = TRUE;
+			dssDesc.StencilReadMask = 0xFF;
+			dssDesc.StencilWriteMask = 0x00;
+			dssDesc.FrontFace.StencilFunc = D3D11_COMPARISON_EQUAL;
+			dssDesc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
+			dssDesc.FrontFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
+			dssDesc.FrontFace.StencilDepthFailOp = D3D11_STENCIL_OP_KEEP;
+			dssDesc.BackFace = dssDesc.FrontFace;
+
+			Microsoft::WRL::ComPtr<ID3D11DepthStencilState> stencilDSS;
+			HRESULT hr = m_device->CreateDepthStencilState(&dssDesc, stencilDSS.GetAddressOf());
+			if (SUCCEEDED(hr)) {
+				m_context->OMSetDepthStencilState(stencilDSS.Get(), 127);
+			}
+
+			// Get texture size for viewport
+			ID3D11Texture2D* maskTex = nullptr;
+			maskRTV->GetResource((ID3D11Resource**)&maskTex);
+			if (maskTex) {
+				D3D11_TEXTURE2D_DESC texDesc;
+				maskTex->GetDesc(&texDesc);
+				maskTex->Release();
+
+				D3D11_VIEWPORT maskViewport;
+				maskViewport.TopLeftX = 0;
+				maskViewport.TopLeftY = 0;
+				maskViewport.Width = (float)texDesc.Width;
+				maskViewport.Height = (float)texDesc.Height;
+				maskViewport.MinDepth = 0.0f;
+				maskViewport.MaxDepth = 1.0f;
+				m_context->RSSetViewports(1, &maskViewport);
+			}
+
+			// Set shaders
+			m_context->VSSetShader(scopeVS, nullptr, 0);
+			m_context->PSSetShader(whitePS, nullptr, 0);
+			m_context->IASetInputLayout(nullptr);
+			m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+			// Draw fullscreen triangle (stencil test filters to scope region only)
+			m_context->Draw(3, 0);
+
+			// Unbind
+			m_context->PSSetShader(nullptr, nullptr, 0);
+			m_context->VSSetShader(nullptr, nullptr, 0);
+
+		} catch (...) {
+			logger::error("WriteToFGInterpolationMask: Exception during mask write");
+		}
+
+		// Restore state
+		m_context->OMSetRenderTargets(1, oldRTV.GetAddressOf(), oldDSV.Get());
+		m_context->OMSetDepthStencilState(oldDSS.Get(), oldStencilRef);
+		m_context->VSSetShader(oldVS.Get(), nullptr, 0);
+		m_context->PSSetShader(oldPS.Get(), nullptr, 0);
+		m_context->RSSetViewports(numViewports, oldViewports);
 
 		D3DPERF_EndEvent();
 	}

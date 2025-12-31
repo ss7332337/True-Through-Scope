@@ -148,6 +148,10 @@ namespace ThroughScope
 
 	public:
 		void ApplyMotionVectorMask();  // 在scope区域清零motion vector
+		
+		// Write white pixels to fo4test's interpolation skip mask texture
+		// This marks the scope region so Frame Generation will NOT interpolate those pixels
+		void WriteToFGInterpolationMask(ID3D11RenderTargetView* maskRTV);
 
 		// MV 调试可视化 - 在屏幕角落显示 RT_29 内容
 		static void RenderMVDebugOverlay();
