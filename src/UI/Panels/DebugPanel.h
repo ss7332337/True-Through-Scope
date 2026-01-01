@@ -5,6 +5,7 @@
 #include "D3DHooks.h"
 #include "Utilities.h"
 #include "LocalizationManager.h"
+#include "rendering/SecondPassRenderer.h"
 
 namespace ThroughScope
 {

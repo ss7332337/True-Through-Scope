@@ -20,11 +20,22 @@ namespace ThroughScope
 	ID3D11ShaderResourceView* RenderUtilities::s_TempMVSRV = nullptr;
 	ID3D11ShaderResourceView* RenderUtilities::s_StencilSRV = nullptr;
 
-	ID3D11VertexShader* RenderUtilities::s_ScopeMVVS = nullptr;
+	// GBuffer backup for stencil-based merge
+	ID3D11Texture2D* RenderUtilities::s_GBufferNormalBackup = nullptr;
+	ID3D11ShaderResourceView* RenderUtilities::s_FirstPassGBNormalSRV = nullptr;
+	ID3D11Texture2D* RenderUtilities::s_GBufferAlbedoBackup = nullptr;
+	ID3D11ShaderResourceView* RenderUtilities::s_FirstPassGBAlbedoSRV = nullptr;
+	ID3D11Texture2D* RenderUtilities::s_TempGBufferTexture = nullptr;
+	ID3D11ShaderResourceView* RenderUtilities::s_TempGBufferSRV = nullptr;
+
+	ID3D11VertexShader* RenderUtilities::s_FullscreenVS = nullptr;
 	ID3D11PixelShader* RenderUtilities::s_MVDebugPS = nullptr;
 	ID3D11PixelShader* RenderUtilities::s_MVCopyPS = nullptr;
 	ID3D11PixelShader* RenderUtilities::s_MVBlendPS = nullptr;
 	ID3D11PixelShader* RenderUtilities::s_WhiteOutputPS = nullptr;
+	ID3D11PixelShader* RenderUtilities::s_GBufferCopyPS = nullptr;
+	ID3D11PixelShader* RenderUtilities::s_EmissiveDebugPS = nullptr;
+	ID3D11PixelShader* RenderUtilities::s_HalfResMergePS = nullptr;
 
     RE::BSGraphics::Texture* RenderUtilities::s_ScopeBSTexture = nullptr;
     RE::NiTexture* RenderUtilities::s_ScopeNiTexture = nullptr;
@@ -51,6 +62,54 @@ namespace ThroughScope
 		struct PS_IN { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; };
 		float2 main(PS_IN input) : SV_Target {
 			return InputMV.Sample(PointSamp, input.UV);
+		}
+	)";
+
+	// Generic Pixel Shader to copy RGBA texture (for GBuffer debug display)
+	const char* g_GBufferCopyPSCode = R"(
+		Texture2D<float4> InputTex : register(t0);
+		SamplerState PointSamp : register(s0);
+		struct PS_IN { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; };
+		float4 main(PS_IN input) : SV_Target {
+			return InputTex.Sample(PointSamp, input.UV);
+		}
+	)";
+
+	// Half-Resolution Merge Pixel Shader - for merging half-res RTs with stencil masking
+	// The half-res RT (960x540) needs to sample the full-res stencil (1920x1080)
+	// Since UV is normalized (0-1), the same UV maps to the same screen position in both resolutions
+	// t0 = backup texture (first-pass content to restore)
+	// t1 = stencil texture (full-res)
+	// If stencil == 127, we're in scope region - DISCARD (keep current content)
+	// Otherwise, output first-pass content (restore outside scope)
+	const char* g_HalfResMergePSCode = R"(
+		Texture2D<float4> FirstPassTex : register(t0);
+		Texture2D<uint2> StencilTex : register(t1);  // R24G8 format, stencil in .y
+		SamplerState PointSamp : register(s0);
+		
+		cbuffer HalfResParams : register(b0) {
+			float2 FullResSize;  // 1920, 1080
+			float2 Padding;
+		};
+		
+		struct PS_IN { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; };
+		
+		float4 main(PS_IN input) : SV_Target {
+			// UV is already in 0-1 normalized space for both half-res and full-res
+			// Same UV = same screen position
+			float2 stencilUV = saturate(input.UV);
+			
+			// Get stencil value at corresponding full-res pixel
+			int2 stencilCoord = int2(stencilUV * FullResSize);
+			uint stencilVal = StencilTex.Load(int3(stencilCoord, 0)).y;
+			
+			// If stencil == 127, we're in scope region - keep current content (discard)
+			if (stencilVal == 127) {
+				discard;
+			}
+			
+			// Outside scope - restore first-pass content
+			return FirstPassTex.Sample(PointSamp, input.UV);
 		}
 	)";
 
@@ -117,7 +176,7 @@ namespace ThroughScope
 
 
 	// Scope Motion Vector Vertex Shader - fullscreen triangle with UV
-	const char* g_ScopeMVVSCode = R"(
+	const char* g_FullscreenVSCode = R"(
 		struct VS_OUT { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; };
 		VS_OUT main(uint id : SV_VertexID) {
 			VS_OUT o;
@@ -149,6 +208,23 @@ namespace ThroughScope
 		}
 	)";
 
+	// Emissive Debug Pixel Shader - amplifies and tone-maps HDR emissive values for visibility
+	const char* g_EmissiveDebugPSCode = R"(
+		Texture2D<float4> EmissiveTex : register(t0);
+		SamplerState PointSamp : register(s0);
+		struct PS_IN { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; };
+		float4 main(PS_IN input) : SV_Target {
+			float4 emissive = EmissiveTex.Sample(PointSamp, input.UV);
+			// Amplify emissive values (they are typically very small HDR values)
+			float3 color = emissive.rgb * 50.0;  // 50x amplification
+			// Apply simple Reinhard tone mapping for HDR visualization
+			color = color / (1.0 + color);
+			// Add slight gamma for visibility
+			color = pow(abs(color), 0.8);
+			return float4(color, 1.0);
+		}
+	)";
+
 
 	static bool CreateMVShaders()
 	{
@@ -161,8 +237,8 @@ namespace ThroughScope
 
 		// --- Compile ScopeMV VS (fullscreen triangle with UV) ---
 		hr = D3DCompile(
-			g_ScopeMVVSCode,
-			strlen(g_ScopeMVVSCode),
+			g_FullscreenVSCode,
+			strlen(g_FullscreenVSCode),
 			nullptr, nullptr, nullptr,
 			"main", "vs_5_0",
 			0, 0, &blob, &errorBlob
@@ -170,13 +246,13 @@ namespace ThroughScope
 
 		if (FAILED(hr)) {
 			if (errorBlob) {
-				logger::error("Failed to compile ScopeMVVS: {}", (char*)errorBlob->GetBufferPointer());
+				logger::error("Failed to compile FullscreenVS: {}", (char*)errorBlob->GetBufferPointer());
 				errorBlob->Release();
 			}
 			return false;  // Critical - needed for all MV operations
 		} else {
 			if (errorBlob) errorBlob->Release();
-			hr = device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_ScopeMVVS);
+			hr = device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_FullscreenVS);
 			blob->Release();
 			if (FAILED(hr)) {
 				logger::error("Failed to create ScopeMV vertex shader");
@@ -279,7 +355,67 @@ namespace ThroughScope
 			}
 		}
 
-		logger::info("Successfully created MV shaders (ScopeMVVS, MVDebugPS, MVCopyPS, MVBlendPS, WhiteOutputPS)");
+		// Compile GBufferCopyPS (for GBuffer debug display - float4 output)
+		hr = D3DCompile(g_GBufferCopyPSCode, strlen(g_GBufferCopyPSCode), "GBufferCopyPS", nullptr, nullptr,
+			"main", "ps_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
+		if (FAILED(hr)) {
+			if (errorBlob) {
+				logger::error("Failed to compile GBufferCopyPS: {}", (char*)errorBlob->GetBufferPointer());
+				errorBlob->Release();
+			}
+			// Non-fatal
+		} else {
+			if (errorBlob) errorBlob->Release();
+			hr = device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_GBufferCopyPS);
+			blob->Release();
+			if (FAILED(hr)) {
+				logger::error("Failed to create GBufferCopy pixel shader");
+			} else {
+				logger::info("Successfully created GBufferCopy shader for debug display");
+			}
+		}
+
+		// Compile EmissiveDebugPS (for Emissive visualization with amplification)
+		hr = D3DCompile(g_EmissiveDebugPSCode, strlen(g_EmissiveDebugPSCode), "EmissiveDebugPS", nullptr, nullptr,
+			"main", "ps_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
+		if (FAILED(hr)) {
+			if (errorBlob) {
+				logger::error("Failed to compile EmissiveDebugPS: {}", (char*)errorBlob->GetBufferPointer());
+				errorBlob->Release();
+			}
+			// Non-fatal
+		} else {
+			if (errorBlob) errorBlob->Release();
+			hr = device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_EmissiveDebugPS);
+			blob->Release();
+			if (FAILED(hr)) {
+				logger::error("Failed to create EmissiveDebug pixel shader");
+			} else {
+				logger::info("Successfully created EmissiveDebug shader for debug display");
+			}
+		}
+
+		// Compile HalfResMergePS (for half-resolution RT merge with UV*2 stencil sampling)
+		hr = D3DCompile(g_HalfResMergePSCode, strlen(g_HalfResMergePSCode), "HalfResMergePS", nullptr, nullptr,
+			"main", "ps_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
+		if (FAILED(hr)) {
+			if (errorBlob) {
+				logger::error("Failed to compile HalfResMergePS: {}", (char*)errorBlob->GetBufferPointer());
+				errorBlob->Release();
+			}
+			// Non-fatal
+		} else {
+			if (errorBlob) errorBlob->Release();
+			hr = device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &RenderUtilities::s_HalfResMergePS);
+			blob->Release();
+			if (FAILED(hr)) {
+				logger::error("Failed to create HalfResMerge pixel shader");
+			} else {
+				logger::info("Successfully created HalfResMerge shader for half-res RT merge");
+			}
+		}
+
+		logger::info("Successfully created all shaders (FullscreenVS, MVDebugPS, MVCopyPS, MVBlendPS, WhiteOutputPS, GBufferCopyPS, EmissiveDebugPS, HalfResMergePS)");
 		return true;
 	}
 
@@ -462,6 +598,81 @@ namespace ThroughScope
 			}
 		}
 
+		// ========== GBuffer Backup Textures (RT_20 Normal, RT_22 Albedo) ==========
+		// Create backup textures matching the actual GBuffer formats from the engine
+		
+		// RT_20: Normal GBuffer (typically DXGI_FORMAT_R10G10B10A2_UNORM or R8G8B8A8)
+		if (rendererData && rendererData->renderTargets[20].texture) {
+			ID3D11Texture2D* normalTex = (ID3D11Texture2D*)rendererData->renderTargets[20].texture;
+			D3D11_TEXTURE2D_DESC normalDesc;
+			normalTex->GetDesc(&normalDesc);
+			
+			// Create backup texture with SRV bind flag
+			D3D11_TEXTURE2D_DESC backupDesc = normalDesc;
+			backupDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+			backupDesc.Usage = D3D11_USAGE_DEFAULT;
+			backupDesc.CPUAccessFlags = 0;
+			backupDesc.MiscFlags = 0;
+			
+			hr = device->CreateTexture2D(&backupDesc, nullptr, &s_GBufferNormalBackup);
+			if (FAILED(hr)) {
+				logger::error("Failed to create GBuffer Normal backup texture. HRESULT: 0x{:X}", hr);
+			} else {
+				D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+				ZeroMemory(&srvDesc, sizeof(srvDesc));
+				srvDesc.Format = normalDesc.Format;
+				srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+				srvDesc.Texture2D.MostDetailedMip = 0;
+				srvDesc.Texture2D.MipLevels = 1;
+				
+				hr = device->CreateShaderResourceView(s_GBufferNormalBackup, &srvDesc, &s_FirstPassGBNormalSRV);
+				if (FAILED(hr)) {
+					logger::error("Failed to create GBuffer Normal backup SRV. HRESULT: 0x{:X}", hr);
+					s_GBufferNormalBackup->Release();
+					s_GBufferNormalBackup = nullptr;
+				} else {
+					logger::info("GBuffer Normal backup (RT_20) created for merge ({}x{}, format: {:X})", 
+						normalDesc.Width, normalDesc.Height, (UINT)normalDesc.Format);
+				}
+			}
+		}
+		
+		// RT_22: Albedo GBuffer (typically DXGI_FORMAT_R8G8B8A8_UNORM)
+		if (rendererData && rendererData->renderTargets[22].texture) {
+			ID3D11Texture2D* albedoTex = (ID3D11Texture2D*)rendererData->renderTargets[22].texture;
+			D3D11_TEXTURE2D_DESC albedoDesc;
+			albedoTex->GetDesc(&albedoDesc);
+			
+			// Create backup texture with SRV bind flag
+			D3D11_TEXTURE2D_DESC backupDesc = albedoDesc;
+			backupDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+			backupDesc.Usage = D3D11_USAGE_DEFAULT;
+			backupDesc.CPUAccessFlags = 0;
+			backupDesc.MiscFlags = 0;
+			
+			hr = device->CreateTexture2D(&backupDesc, nullptr, &s_GBufferAlbedoBackup);
+			if (FAILED(hr)) {
+				logger::error("Failed to create GBuffer Albedo backup texture. HRESULT: 0x{:X}", hr);
+			} else {
+				D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+				ZeroMemory(&srvDesc, sizeof(srvDesc));
+				srvDesc.Format = albedoDesc.Format;
+				srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+				srvDesc.Texture2D.MostDetailedMip = 0;
+				srvDesc.Texture2D.MipLevels = 1;
+				
+				hr = device->CreateShaderResourceView(s_GBufferAlbedoBackup, &srvDesc, &s_FirstPassGBAlbedoSRV);
+				if (FAILED(hr)) {
+					logger::error("Failed to create GBuffer Albedo backup SRV. HRESULT: 0x{:X}", hr);
+					s_GBufferAlbedoBackup->Release();
+					s_GBufferAlbedoBackup = nullptr;
+				} else {
+					logger::info("GBuffer Albedo backup (RT_22) created for merge ({}x{}, format: {:X})", 
+						albedoDesc.Width, albedoDesc.Height, (UINT)albedoDesc.Format);
+				}
+			}
+		}
+
         logger::info("Temporary textures created successfully");
         return true;
     }
@@ -492,9 +703,9 @@ namespace ThroughScope
 			s_FirstPassMVSRV->Release();
 			s_FirstPassMVSRV = nullptr;
 		}
-		if (s_ScopeMVVS) {
-			s_ScopeMVVS->Release();
-			s_ScopeMVVS = nullptr;
+		if (s_FullscreenVS) {
+			s_FullscreenVS->Release();
+			s_FullscreenVS = nullptr;
 		}
 		if (s_MVDebugPS) {
 			s_MVDebugPS->Release();
@@ -508,6 +719,18 @@ namespace ThroughScope
 			s_MVBlendPS->Release();
 			s_MVBlendPS = nullptr;
 		}
+		if (s_GBufferCopyPS) {
+			s_GBufferCopyPS->Release();
+			s_GBufferCopyPS = nullptr;
+		}
+		if (s_EmissiveDebugPS) {
+			s_EmissiveDebugPS->Release();
+			s_EmissiveDebugPS = nullptr;
+		}
+		if (s_HalfResMergePS) {
+			s_HalfResMergePS->Release();
+			s_HalfResMergePS = nullptr;
+		}
 		if (s_TempMVTexture) {
 			s_TempMVTexture->Release();
 			s_TempMVTexture = nullptr;
@@ -519,6 +742,31 @@ namespace ThroughScope
 		if (s_StencilSRV) {
 			s_StencilSRV->Release();
 			s_StencilSRV = nullptr;
+		}
+		// GBuffer backup resources
+		if (s_GBufferNormalBackup) {
+			s_GBufferNormalBackup->Release();
+			s_GBufferNormalBackup = nullptr;
+		}
+		if (s_FirstPassGBNormalSRV) {
+			s_FirstPassGBNormalSRV->Release();
+			s_FirstPassGBNormalSRV = nullptr;
+		}
+		if (s_GBufferAlbedoBackup) {
+			s_GBufferAlbedoBackup->Release();
+			s_GBufferAlbedoBackup = nullptr;
+		}
+		if (s_FirstPassGBAlbedoSRV) {
+			s_FirstPassGBAlbedoSRV->Release();
+			s_FirstPassGBAlbedoSRV = nullptr;
+		}
+		if (s_TempGBufferTexture) {
+			s_TempGBufferTexture->Release();
+			s_TempGBufferTexture = nullptr;
+		}
+		if (s_TempGBufferSRV) {
+			s_TempGBufferSRV->Release();
+			s_TempGBufferSRV = nullptr;
 		}
     }
 }

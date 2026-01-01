@@ -148,14 +148,16 @@ namespace ThroughScope
 
 	public:
 		void ApplyMotionVectorMask();  // 在scope区域清零motion vector
+		void ApplyGBufferMask();       // 合并第一次和第二次渲染的 GBuffer (RT_20, RT_22)
 		
-		// Write white pixels to fo4test's interpolation skip mask texture
+		// Write white pixels to fo4test's MV region override mask texture
 		// This marks the scope region so Frame Generation will NOT interpolate those pixels
-		void WriteToFGInterpolationMask(ID3D11RenderTargetView* maskRTV);
+		void WriteToMVRegionOverrideMask(ID3D11RenderTargetView* maskRTV);
 
-		// MV 调试可视化 - 在屏幕角落显示 RT_29 内容
+		// MV/GBuffer 调试可视化 - 在屏幕角落显示纹理内容
 		static void RenderMVDebugOverlay();
-		static bool s_ShowMVDebug;  // 是否显示 MV 调试
+		static bool s_ShowMVDebug;  // 是否显示调试 overlay
+		static int s_DebugGBufferIndex;  // 要显示的 GBuffer 索引 (20=Normal, 22=Albedo, 23=Emissive, 24=Material, 29=MotionVector)
 
 	private:
 		Microsoft::WRL::ComPtr<ID3D11VertexShader> m_mvMaskVS;

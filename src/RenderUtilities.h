@@ -54,7 +54,7 @@ namespace ThroughScope
 		static float GetScreenHeight() { return s_ScreenHeight; }
 
 		// Shader management - Fullscreen VS with UV
-		static ID3D11VertexShader* GetScopeMVVS() { return s_ScopeMVVS; }
+		static ID3D11VertexShader* GetFullscreenVS() { return s_FullscreenVS; }
 
 		// MV Debug visualization shader
 		static ID3D11PixelShader* GetMVDebugPS() { return s_MVDebugPS; }
@@ -79,6 +79,26 @@ namespace ThroughScope
 		// White output shader for writing to FG interpolation skip mask
 		static ID3D11PixelShader* GetWhiteOutputPS() { return s_WhiteOutputPS; }
 
+		// ========== GBuffer Backup (for stencil-based merge) ==========
+		// First pass GBuffer backup for merge after scope rendering
+		static ID3D11Texture2D* GetFirstPassGBufferNormal() { return s_GBufferNormalBackup; }
+		static ID3D11ShaderResourceView* GetFirstPassGBufferNormalSRV() { return s_FirstPassGBNormalSRV; }
+		static ID3D11Texture2D* GetFirstPassGBufferAlbedo() { return s_GBufferAlbedoBackup; }
+		static ID3D11ShaderResourceView* GetFirstPassGBufferAlbedoSRV() { return s_FirstPassGBAlbedoSRV; }
+		
+		// Temporary GBuffer texture for blend operation (copy of current RT)
+		static ID3D11Texture2D* GetTempGBufferTexture() { return s_TempGBufferTexture; }
+		static ID3D11ShaderResourceView* GetTempGBufferSRV() { return s_TempGBufferSRV; }
+		
+		// GBuffer copy shader for float4 textures (used for debug display and stencil-masked copy)
+		static ID3D11PixelShader* GetGBufferCopyPS() { return s_GBufferCopyPS; }
+		
+		// Emissive debug shader with amplification for visibility
+		static ID3D11PixelShader* GetEmissiveDebugPS() { return s_EmissiveDebugPS; }
+		
+		// Half-resolution RT merge shader with UV*2 stencil sampling
+		static ID3D11PixelShader* GetHalfResMergePS() { return s_HalfResMergePS; }
+
     private:
         static ID3D11Texture2D* s_FirstPassColorTexture;
         static ID3D11Texture2D* s_FirstPassDepthTexture;
@@ -98,14 +118,27 @@ namespace ThroughScope
 
 		// Stencil SRV for reading stencil in shader
 		static ID3D11ShaderResourceView* s_StencilSRV;
+
+		// GBuffer backup for stencil-based merge (RT_20 Normal, RT_22 Albedo)
+		static ID3D11Texture2D* s_GBufferNormalBackup;
+		static ID3D11ShaderResourceView* s_FirstPassGBNormalSRV;
+		static ID3D11Texture2D* s_GBufferAlbedoBackup;
+		static ID3D11ShaderResourceView* s_FirstPassGBAlbedoSRV;
+		
+		// Temporary GBuffer texture for blend operation
+		static ID3D11Texture2D* s_TempGBufferTexture;
+		static ID3D11ShaderResourceView* s_TempGBufferSRV;
 		
 		// Utility Shaders
 	public:
-		static ID3D11VertexShader* s_ScopeMVVS;      // Fullscreen triangle VS with UV
+		static ID3D11VertexShader* s_FullscreenVS;      // Fullscreen triangle VS with UV
 		static ID3D11PixelShader* s_MVDebugPS;       // MV 可视化 shader
 		static ID3D11PixelShader* s_MVCopyPS;        // MV 复制 shader (stencil-masked)
 		static ID3D11PixelShader* s_MVBlendPS;       // MV 混合 shader (edge feathering)
 		static ID3D11PixelShader* s_WhiteOutputPS;   // White output shader for FG skip mask
+		static ID3D11PixelShader* s_GBufferCopyPS;   // GBuffer 复制 shader (float4 output)
+		static ID3D11PixelShader* s_EmissiveDebugPS; // Emissive 调试 shader (50x amplification)
+		static ID3D11PixelShader* s_HalfResMergePS;  // 半分辨率 RT 合并 shader (UV*2 stencil sampling)
 
 	private:
         // Scope textures

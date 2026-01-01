@@ -8,6 +8,7 @@
 #include "rendering/LightBackupSystem.h"
 #include "rendering/ScopeRenderingManager.h"
 #include "rendering/SecondPassRenderer.h"
+#include "rendering/RenderTargetMerger.h"
 #include "rendering/RenderStateManager.h"
 #include "ENBIntegration.h"
 #include <d3d9.h>  // for D3DPERF_BeginEvent / D3DPERF_EndEvent
@@ -614,16 +615,17 @@ namespace ThroughScope
 					if (!renderer.ExecuteSecondPass()) {
 						logger::warn("[RenderEffectRange Hook] SecondPassRenderer failed");
 					}
-					// 渲染后立即清除瞄具区域的 Motion Vectors，防止 TAA 鬼影
-					renderer.ApplyMotionVectorMask();
+					
+					// 使用 RenderTargetMerger 合并所有 render targets (MV, GBuffer, 等)
+					RenderTargetMerger::GetInstance().MergeRenderTargets(context, device);
 
 					// Write to FG interpolation skip mask if API available
 					// This marks the scope region so FG will NOT interpolate those pixels
 					if (FGInterop::IsMaskAPIAvailable()) {
 						ID3D11RenderTargetView* maskRTV = FGInterop::GetMaskRTV();
 						if (maskRTV) {
-							D3DPERF_BeginEvent(0xFFFF8800, L"WriteToFGInterpolationMask");
-							renderer.WriteToFGInterpolationMask(maskRTV);
+							D3DPERF_BeginEvent(0xFFFF8800, L"WriteToMVRegionOverrideMask");
+							renderer.WriteToMVRegionOverrideMask(maskRTV);
 							D3DPERF_EndEvent();
 						}
 					}

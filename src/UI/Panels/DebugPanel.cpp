@@ -158,6 +158,64 @@ namespace ThroughScope
 			return;
 		}
 
+		// ========== GBuffer Debug Overlay Controls ==========
+		ImGui::Text("Render Target Debug Overlay");
+		
+		// Enable/Disable checkbox
+		ImGui::Checkbox("Show Debug Overlay", &SecondPassRenderer::s_ShowMVDebug);
+		RenderHelpTooltip("Display a render target texture in the top-right corner of the screen");
+		
+		if (SecondPassRenderer::s_ShowMVDebug) {
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(180);
+			
+			// Dropdown for all managed RTs (matches RenderTargetMerger)
+			const char* rtOptions[] = {
+				"RT_09 SSR_BlurredExtra",
+				"RT_20 GBuffer_Normal",
+				"RT_22 GBuffer_Albedo", 
+				"RT_23 GBuffer_Emissive",
+				"RT_24 GBuffer_Material",
+				"RT_28 SSAO",
+				"RT_29 MotionVectors",
+				"RT_39 DepthMips",
+				"RT_57 Mask",
+				"RT_58 DeferredDiffuse",
+				"RT_59 DeferredSpecular"
+			};
+			static int selectedRTIndex = 1;  // Default to GBuffer_Normal
+			static const int rtIndices[] = { 9, 20, 22, 23, 24, 28, 29, 39, 57, 58, 59 };
+			constexpr int numRTs = sizeof(rtIndices) / sizeof(rtIndices[0]);
+			
+			// Find current selection based on s_DebugGBufferIndex
+			for (int i = 0; i < numRTs; i++) {
+				if (rtIndices[i] == SecondPassRenderer::s_DebugGBufferIndex) {
+					selectedRTIndex = i;
+					break;
+				}
+			}
+			
+			if (ImGui::Combo("##RTSelect", &selectedRTIndex, rtOptions, IM_ARRAYSIZE(rtOptions))) {
+				SecondPassRenderer::s_DebugGBufferIndex = rtIndices[selectedRTIndex];
+			}
+			RenderHelpTooltip("Select which render target to display:\n"
+				"- SSR_BlurredExtra: Screen-space reflections (half-res)\n"
+				"- GBuffer_Normal: Surface normals\n"
+				"- GBuffer_Albedo: Base color\n"
+				"- GBuffer_Emissive: Self-illumination (amplified)\n"
+				"- GBuffer_Material: Material properties\n"
+				"- SSAO: Ambient occlusion (half-res)\n"
+				"- MotionVectors: Per-pixel motion (amplified)\n"
+				"- DepthMips: Hierarchical depth\n"
+				"- Mask: Unknown mask buffer\n"
+				"- DeferredDiffuse: SSS diffuse lighting\n"
+				"- DeferredSpecular: SSS specular lighting");
+		}
+		
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::Spacing();
+
 		auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 
 		ImGui::Text(LOC("debug.weapon_information"));

@@ -22,6 +22,7 @@
 #include "ImGuiManager.h"
 #include "rendering/RenderStateManager.h"
 #include "rendering/ScopeRenderingManager.h"
+#include "rendering/RenderTargetMerger.h"
 #include "ENBIntegration.h"
 
 using namespace RE;
@@ -185,6 +186,11 @@ DWORD WINAPI InitThread(HMODULE hModule)
 
 	bool scopeReady = ThroughScope::ScopeCamera::Initialize();
 	bool renderReady = ThroughScope::RenderUtilities::Initialize();
+	
+	// Initialize RenderTargetMerger for centralized RT backup/merge
+	if (renderReady) {
+		ThroughScope::RenderTargetMerger::GetInstance().Initialize();
+	}
 
 	// Update render state manager
 	g_renderStateMgr->SetScopeReady(scopeReady);

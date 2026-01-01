@@ -4,6 +4,7 @@
 #include "ThermalVision.h"
 #include "HDRStateCache.h"
 #include "ScopePostProcess.h"
+#include "RenderTargetMerger.h"
 #include "RE/Bethesda/ImageSpaceManager.hpp"
 #include <winternl.h>
 #include <DirectXMath.h>
@@ -394,13 +395,8 @@ namespace ThroughScope
 					mainDSDesc.Width, mainDSDesc.Height);
 			}
 
-			// [Plan A] Backup Motion Vectors (RT_29) for merge after scope rendering
-			if (RenderUtilities::GetFirstPassMVBackup()) {
-				auto mvTexture = (ID3D11Texture2D*)rendererData->renderTargets[29].texture;
-				if (mvTexture) {
-					m_context->CopyResource(RenderUtilities::GetFirstPassMVBackup(), mvTexture);
-				}
-			}
+			// Use centralized RenderTargetMerger to backup all required render targets
+			RenderTargetMerger::GetInstance().BackupRenderTargets(m_context);
 
 			RenderUtilities::SetFirstPassComplete(true);
 		} else {
@@ -1745,7 +1741,7 @@ namespace ThroughScope
 				
 				m_context->OMSetRenderTargets(1, &mvRTV, stencilDSV);
 				m_context->OMSetDepthStencilState(stencilTestDSS.Get(), 127);
-				m_context->VSSetShader(RenderUtilities::GetScopeMVVS(), nullptr, 0);
+				m_context->VSSetShader(RenderUtilities::GetFullscreenVS(), nullptr, 0);
 				m_context->PSSetShader(RenderUtilities::GetMVCopyPS(), nullptr, 0);
 				m_context->PSSetShaderResources(0, 1, &firstPassMVSRV);
 			} else {
@@ -1775,7 +1771,7 @@ namespace ThroughScope
 				m_context->OMSetDepthStencilState(noStencilDSS.Get(), 0);
 				
 				// Step 4: 设置 Shaders
-				m_context->VSSetShader(RenderUtilities::GetScopeMVVS(), nullptr, 0);
+				m_context->VSSetShader(RenderUtilities::GetFullscreenVS(), nullptr, 0);
 				m_context->PSSetShader(mvBlendPS, nullptr, 0);
 				
 				// Step 5: 绑定 3 个输入纹理
@@ -1922,14 +1918,211 @@ namespace ThroughScope
 		D3DPERF_EndEvent();
 	}
 
-	// ========== WriteToFGInterpolationMask ==========
+	// ========== ApplyGBufferMask ==========
+	// Merges first pass GBuffers with second pass GBuffers using stencil test
+	// Outside scope region (stencil != 127): restore first pass GBuffer
+	// Inside scope region (stencil == 127): keep second pass GBuffer
+	void SecondPassRenderer::ApplyGBufferMask()
+	{
+		if (!m_context || !m_device) return;
+
+		// Check if GBuffer backups are available
+		ID3D11ShaderResourceView* firstPassNormalSRV = RenderUtilities::GetFirstPassGBufferNormalSRV();
+		ID3D11ShaderResourceView* firstPassAlbedoSRV = RenderUtilities::GetFirstPassGBufferAlbedoSRV();
+		
+		if (!firstPassNormalSRV && !firstPassAlbedoSRV) {
+			return; // No GBuffer backups available
+		}
+
+		D3DPERF_BeginEvent(0xFF00FF00, L"ApplyGBufferMask_StencilBased");
+
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		
+		// Get stencil DSV
+		ID3D11DepthStencilView* stencilDSV = nullptr;
+		if (rendererData && rendererData->depthStencilTargets[2].dsView[0]) {
+			stencilDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
+		}
+		if (!stencilDSV) {
+			D3DPERF_EndEvent();
+			return;
+		}
+
+		// Backup current state
+		Microsoft::WRL::ComPtr<ID3D11RenderTargetView> oldRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT];
+		Microsoft::WRL::ComPtr<ID3D11DepthStencilView> oldDSV;
+		m_context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, oldRTVs[0].GetAddressOf(), oldDSV.GetAddressOf());
+		
+		Microsoft::WRL::ComPtr<ID3D11DepthStencilState> oldDSS;
+		UINT oldStencilRef;
+		m_context->OMGetDepthStencilState(oldDSS.GetAddressOf(), &oldStencilRef);
+
+		D3D11_VIEWPORT oldViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+		UINT numViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+		m_context->RSGetViewports(&numViewports, oldViewports);
+
+		Microsoft::WRL::ComPtr<ID3D11RasterizerState> oldRS;
+		m_context->RSGetState(oldRS.GetAddressOf());
+
+		Microsoft::WRL::ComPtr<ID3D11BlendState> oldBS;
+		float oldBlendFactor[4];
+		UINT oldSampleMask;
+		m_context->OMGetBlendState(oldBS.GetAddressOf(), oldBlendFactor, &oldSampleMask);
+
+		Microsoft::WRL::ComPtr<ID3D11VertexShader> oldVS;
+		m_context->VSGetShader(oldVS.GetAddressOf(), nullptr, nullptr);
+		Microsoft::WRL::ComPtr<ID3D11PixelShader> oldPS;
+		m_context->PSGetShader(oldPS.GetAddressOf(), nullptr, nullptr);
+		D3D11_PRIMITIVE_TOPOLOGY oldTopology;
+		m_context->IAGetPrimitiveTopology(&oldTopology);
+		Microsoft::WRL::ComPtr<ID3D11InputLayout> oldInputLayout;
+		m_context->IAGetInputLayout(oldInputLayout.GetAddressOf());
+
+		try {
+			// Configure Stencil Test: only write where stencil != 127 (outside scope)
+			D3D11_DEPTH_STENCIL_DESC dssDesc;
+			ZeroMemory(&dssDesc, sizeof(dssDesc));
+			dssDesc.DepthEnable = FALSE;
+			dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+			dssDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+			dssDesc.StencilEnable = TRUE;
+			dssDesc.StencilReadMask = 0xFF;
+			dssDesc.StencilWriteMask = 0x00;
+			dssDesc.FrontFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
+			dssDesc.FrontFace.StencilDepthFailOp = D3D11_STENCIL_OP_KEEP;
+			dssDesc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
+			dssDesc.FrontFace.StencilFunc = D3D11_COMPARISON_NOT_EQUAL;  // Pass where stencil != 127
+			dssDesc.BackFace = dssDesc.FrontFace;
+
+			Microsoft::WRL::ComPtr<ID3D11DepthStencilState> stencilTestDSS;
+			m_device->CreateDepthStencilState(&dssDesc, &stencilTestDSS);
+
+			// Setup common rendering state
+			D3D11_RASTERIZER_DESC rsDesc;
+			ZeroMemory(&rsDesc, sizeof(rsDesc));
+			rsDesc.FillMode = D3D11_FILL_SOLID;
+			rsDesc.CullMode = D3D11_CULL_NONE;
+			rsDesc.DepthClipEnable = TRUE;
+
+			Microsoft::WRL::ComPtr<ID3D11RasterizerState> rsState;
+			m_device->CreateRasterizerState(&rsDesc, &rsState);
+			m_context->RSSetState(rsState.Get());
+
+			D3D11_SAMPLER_DESC sampDesc;
+			ZeroMemory(&sampDesc, sizeof(sampDesc));
+			sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+			sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+			sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+			sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+			Microsoft::WRL::ComPtr<ID3D11SamplerState> pointSampler;
+			m_device->CreateSamplerState(&sampDesc, &pointSampler);
+			m_context->PSSetSamplers(0, 1, pointSampler.GetAddressOf());
+
+			m_context->IASetInputLayout(nullptr);
+			m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+			D3D11_BLEND_DESC blendDesc;
+			ZeroMemory(&blendDesc, sizeof(blendDesc));
+			blendDesc.RenderTarget[0].BlendEnable = FALSE;
+			blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+			Microsoft::WRL::ComPtr<ID3D11BlendState> blendState;
+			m_device->CreateBlendState(&blendDesc, &blendState);
+			float blendFactor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			m_context->OMSetBlendState(blendState.Get(), blendFactor, 0xFFFFFFFF);
+
+			m_context->VSSetShader(RenderUtilities::GetFullscreenVS(), nullptr, 0);
+			m_context->PSSetShader(RenderUtilities::GetMVCopyPS(), nullptr, 0);  // Reuse copy PS
+
+			// Process RT_20 (Normal GBuffer)
+			if (firstPassNormalSRV && rendererData->renderTargets[20].rtView) {
+				D3DPERF_BeginEvent(0xFF00FF00, L"RestoreGBuffer_Normal_RT20");
+				
+				ID3D11RenderTargetView* normalRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[20].rtView;
+				
+				// Get dimensions for viewport
+				ID3D11Texture2D* normalTex = (ID3D11Texture2D*)rendererData->renderTargets[20].texture;
+				D3D11_TEXTURE2D_DESC texDesc;
+				normalTex->GetDesc(&texDesc);
+
+				D3D11_VIEWPORT vp;
+				vp.Width = (float)texDesc.Width;
+				vp.Height = (float)texDesc.Height;
+				vp.MinDepth = 0.0f;
+				vp.MaxDepth = 1.0f;
+				vp.TopLeftX = 0;
+				vp.TopLeftY = 0;
+				m_context->RSSetViewports(1, &vp);
+
+				m_context->OMSetRenderTargets(1, &normalRTV, stencilDSV);
+				m_context->OMSetDepthStencilState(stencilTestDSS.Get(), 127);
+				m_context->PSSetShaderResources(0, 1, &firstPassNormalSRV);
+
+				m_context->Draw(3, 0);
+
+				ID3D11ShaderResourceView* nullSRV = nullptr;
+				m_context->PSSetShaderResources(0, 1, &nullSRV);
+				
+				D3DPERF_EndEvent();
+			}
+
+			// Process RT_22 (Albedo GBuffer)
+			if (firstPassAlbedoSRV && rendererData->renderTargets[22].rtView) {
+				D3DPERF_BeginEvent(0xFF00FF00, L"RestoreGBuffer_Albedo_RT22");
+				
+				ID3D11RenderTargetView* albedoRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[22].rtView;
+				
+				// Get dimensions for viewport
+				ID3D11Texture2D* albedoTex = (ID3D11Texture2D*)rendererData->renderTargets[22].texture;
+				D3D11_TEXTURE2D_DESC texDesc;
+				albedoTex->GetDesc(&texDesc);
+
+				D3D11_VIEWPORT vp;
+				vp.Width = (float)texDesc.Width;
+				vp.Height = (float)texDesc.Height;
+				vp.MinDepth = 0.0f;
+				vp.MaxDepth = 1.0f;
+				vp.TopLeftX = 0;
+				vp.TopLeftY = 0;
+				m_context->RSSetViewports(1, &vp);
+
+				m_context->OMSetRenderTargets(1, &albedoRTV, stencilDSV);
+				m_context->OMSetDepthStencilState(stencilTestDSS.Get(), 127);
+				m_context->PSSetShaderResources(0, 1, &firstPassAlbedoSRV);
+
+				m_context->Draw(3, 0);
+
+				ID3D11ShaderResourceView* nullSRV = nullptr;
+				m_context->PSSetShaderResources(0, 1, &nullSRV);
+				
+				D3DPERF_EndEvent();
+			}
+
+		} catch (...) {
+			logger::warn("ApplyGBufferMask: Exception");
+		}
+
+		// Restore state
+		m_context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, oldRTVs[0].GetAddressOf(), oldDSV.Get());
+		m_context->OMSetDepthStencilState(oldDSS.Get(), oldStencilRef);
+		m_context->RSSetState(oldRS.Get());
+		m_context->RSSetViewports(numViewports, oldViewports);
+		m_context->OMSetBlendState(oldBS.Get(), oldBlendFactor, oldSampleMask);
+		m_context->VSSetShader(oldVS.Get(), nullptr, 0);
+		m_context->PSSetShader(oldPS.Get(), nullptr, 0);
+		m_context->IASetPrimitiveTopology(oldTopology);
+		m_context->IASetInputLayout(oldInputLayout.Get());
+
+		D3DPERF_EndEvent();
+	}
+
+	// ========== WriteToMVRegionOverrideMask ==========
 	// Writes white pixels to fo4test's interpolation skip mask in the scope region
 	// Uses the same stencil test as ApplyMotionVectorMask to identify scope pixels
-	void SecondPassRenderer::WriteToFGInterpolationMask(ID3D11RenderTargetView* maskRTV)
+	void SecondPassRenderer::WriteToMVRegionOverrideMask(ID3D11RenderTargetView* maskRTV)
 	{
 		if (!m_context || !m_device || !maskRTV) return;
 
-		D3DPERF_BeginEvent(0xFFFF8800, L"WriteToFGInterpolationMask");
+		D3DPERF_BeginEvent(0xFFFF8800, L"WriteToMVRegionOverrideMask");
 
 		// Get stencil DSV
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
@@ -1943,7 +2136,7 @@ namespace ThroughScope
 		}
 
 		ID3D11PixelShader* whitePS = RenderUtilities::GetWhiteOutputPS();
-		ID3D11VertexShader* scopeVS = RenderUtilities::GetScopeMVVS();
+		ID3D11VertexShader* scopeVS = RenderUtilities::GetFullscreenVS();
 		if (!whitePS || !scopeVS) {
 			D3DPERF_EndEvent();
 			return;
@@ -2023,7 +2216,7 @@ namespace ThroughScope
 			m_context->VSSetShader(nullptr, nullptr, 0);
 
 		} catch (...) {
-			logger::error("WriteToFGInterpolationMask: Exception during mask write");
+			logger::error("WriteToMVRegionOverrideMask: Exception during mask write");
 		}
 
 		// Restore state
@@ -2037,7 +2230,8 @@ namespace ThroughScope
 	}
 
 	// ========== MV Debug Overlay ==========
-	bool SecondPassRenderer::s_ShowMVDebug = true;  // 默认开启调试
+	bool SecondPassRenderer::s_ShowMVDebug = false;  // 默认关闭调试
+	int SecondPassRenderer::s_DebugGBufferIndex = 20;  // 默认显示 Normal GBuffer
 
 	void SecondPassRenderer::RenderMVDebugOverlay()
 	{
@@ -2050,12 +2244,12 @@ namespace ThroughScope
 		ID3D11Device* device = (ID3D11Device*)rendererData->device;
 		if (!context || !device) return;
 
-		D3DPERF_BeginEvent(0xFFFF0000, L"MV_Debug_Overlay");
+		D3DPERF_BeginEvent(0xFFFF0000, L"GBuffer_Debug_Overlay");
 
 		try {
-			// 获取 RT_29 Motion Vectors SRV
-			ID3D11ShaderResourceView* mvSRV = (ID3D11ShaderResourceView*)rendererData->renderTargets[29].srView;
-			if (!mvSRV) {
+			// 可以切换显示不同的纹理: 20=Normal, 22=Albedo, 23=Emissive, 24=Material, 29=MotionVector
+			ID3D11ShaderResourceView* gbufferSRV = (ID3D11ShaderResourceView*)rendererData->renderTargets[s_DebugGBufferIndex].srView;
+			if (!gbufferSRV) {
 				D3DPERF_EndEvent();
 				return;
 			}
@@ -2088,7 +2282,7 @@ namespace ThroughScope
 			context->IAGetPrimitiveTopology(&oldTopology);
 			context->IAGetInputLayout(oldInputLayout.GetAddressOf());
 
-			// 使用简单的全屏三角形 shader 渲染 MV 纹理
+			// 使用简单的全屏三角形 shader 渲染 GBuffer 纹理
 			// 这里我们直接绘制到一个小的 viewport
 
 			// 设置小的 viewport (右上角 1/4 屏幕)
@@ -2105,12 +2299,33 @@ namespace ThroughScope
 			debugViewport.MaxDepth = 1.0f;
 			context->RSSetViewports(1, &debugViewport);
 
-			// 设置 shader
-			context->VSSetShader(RenderUtilities::GetScopeMVVS(), nullptr, 0);
-			context->PSSetShader(RenderUtilities::GetMVDebugPS(), nullptr, 0);
+			// 设置 shader - 根据纹理类型选择合适的 shader
+			context->VSSetShader(RenderUtilities::GetFullscreenVS(), nullptr, 0);
+			
+			// 选择 Pixel Shader:
+			// - RT_29 MotionVector: 使用 MVDebugPS (10x amplification, color-coded)
+			// - RT_23 Emissive: 使用 EmissiveDebugPS (50x amplification, tone mapping)
+			// - 其他 (Normal, Albedo, Material): 使用 GBufferCopyPS (直接显示)
+			ID3D11PixelShader* debugPS = nullptr;
+			switch (s_DebugGBufferIndex) {
+				case 29:  // MotionVector
+					debugPS = RenderUtilities::GetMVDebugPS();
+					break;
+				case 23:  // Emissive
+					debugPS = RenderUtilities::GetEmissiveDebugPS();
+					break;
+				default:  // Normal (20), Albedo (22), Material (24), etc.
+					debugPS = RenderUtilities::GetGBufferCopyPS();
+					break;
+			}
+			
+			if (!debugPS) {
+				debugPS = RenderUtilities::GetGBufferCopyPS();  // Fallback
+			}
+			context->PSSetShader(debugPS, nullptr, 0);
 
-			// 绑定 MV 纹理
-			context->PSSetShaderResources(0, 1, &mvSRV);
+			// 绑定纹理
+			context->PSSetShaderResources(0, 1, &gbufferSRV);
 
 			// 创建 sampler (如果还没有)
 			static Microsoft::WRL::ComPtr<ID3D11SamplerState> mvDebugSampler;

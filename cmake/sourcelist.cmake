@@ -36,6 +36,7 @@ set(SOURCES
 	src/rendering/LUTPass.cpp
 	src/rendering/LuminancePass.cpp
 	src/rendering/ScopeRenderingManager.cpp
+	src/rendering/RenderTargetMerger.cpp
 	src/ImageSpaceDebugHook.cpp
 	src/HDRStateCache.cpp
 	src/ENBIntegration.cpp
