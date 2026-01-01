@@ -29,18 +29,22 @@ namespace ThroughScope
 
 	// ========== fo4test Frame Generation Interop ==========
 	// Motion Vector Deferral API - prevents FG ghosting by coordinating MV copy timing
-	// Interpolation Skip Mask API - marks scope region to skip FG interpolation
+	// MV Region Override API - marks scope region to skip FG interpolation
 	namespace FGInterop
 	{
 		typedef void (*FnNotifyComplete)();
 		typedef int (*FnRegister)();
 		typedef int (*FnUnregister)();
-		typedef ID3D11RenderTargetView* (*FnGetInterpolationMaskRTV)();
+		typedef ID3D11RenderTargetView* (*FnGetMVOverrideMaskRTV)();
+		typedef int (*FnRegisterMVRegionOverride)();
+		typedef int (*FnUnregisterMVRegionOverride)();
 		
 		static FnNotifyComplete NotifyComplete = nullptr;
 		static FnRegister Register = nullptr;
 		static FnUnregister Unregister = nullptr;
-		static FnGetInterpolationMaskRTV GetInterpolationMaskRTV = nullptr;
+		static FnGetMVOverrideMaskRTV GetMVOverrideMaskRTV = nullptr;
+		static FnRegisterMVRegionOverride RegisterMVRegionOverride = nullptr;
+		static FnUnregisterMVRegionOverride UnregisterMVRegionOverride = nullptr;
 		static bool g_Initialized = false;
 		static HMODULE g_Module = nullptr;
 		
@@ -54,17 +58,25 @@ namespace ThroughScope
 				return;
 			}
 			
+			// Motion Vector Deferral API
 			NotifyComplete = (FnNotifyComplete)GetProcAddress(g_Module, "AAAFG_NotifyMotionVectorUpdateComplete");
 			Register = (FnRegister)GetProcAddress(g_Module, "AAAFG_RegisterMotionVectorDeferral");
 			Unregister = (FnUnregister)GetProcAddress(g_Module, "AAAFG_UnregisterMotionVectorDeferral");
-			GetInterpolationMaskRTV = (FnGetInterpolationMaskRTV)GetProcAddress(g_Module, "AAAFG_GetInterpolationMaskRTV");
+			
+			// MV Region Override API
+			GetMVOverrideMaskRTV = (FnGetMVOverrideMaskRTV)GetProcAddress(g_Module, "AAAFG_GetMVOverrideMaskRTV");
+			RegisterMVRegionOverride = (FnRegisterMVRegionOverride)GetProcAddress(g_Module, "AAAFG_RegisterMVRegionOverride");
+			UnregisterMVRegionOverride = (FnUnregisterMVRegionOverride)GetProcAddress(g_Module, "AAAFG_UnregisterMVRegionOverride");
 			
 			if (NotifyComplete && Register && Unregister) {
 				int count = Register();
 				g_Initialized = true;
 				logger::info("[FGInterop] Registered for MV deferral, count: {}", count);
-				if (GetInterpolationMaskRTV) {
-					logger::info("[FGInterop] Interpolation skip mask API available");
+				
+				// Also register for MV region override to enable mask processing
+				if (RegisterMVRegionOverride && GetMVOverrideMaskRTV) {
+					int overrideCount = RegisterMVRegionOverride();
+					logger::info("[FGInterop] MV Region Override API available, registered count: {}", overrideCount);
 				}
 			} else {
 				logger::warn("[FGInterop] Failed to resolve API exports");
@@ -73,8 +85,13 @@ namespace ThroughScope
 		
 		void Shutdown()
 		{
-			if (g_Initialized && Unregister) {
-				Unregister();
+			if (g_Initialized) {
+				if (UnregisterMVRegionOverride) {
+					UnregisterMVRegionOverride();
+				}
+				if (Unregister) {
+					Unregister();
+				}
 				logger::info("[FGInterop] Unregistered");
 			}
 			g_Initialized = false;
@@ -88,18 +105,18 @@ namespace ThroughScope
 			}
 		}
 		
-		// Get the RTV for writing to the interpolation skip mask
+		// Get the RTV for writing to the MV override mask
 		// Returns nullptr if FG not active or API not available
 		ID3D11RenderTargetView* GetMaskRTV()
 		{
-			if (g_Initialized && GetInterpolationMaskRTV) {
-				return GetInterpolationMaskRTV();
+			if (g_Initialized && GetMVOverrideMaskRTV) {
+				return GetMVOverrideMaskRTV();
 			}
 			return nullptr;
 		}
 		
 		bool IsActive() { return g_Initialized; }
-		bool IsMaskAPIAvailable() { return g_Initialized && GetInterpolationMaskRTV != nullptr; }
+		bool IsMaskAPIAvailable() { return g_Initialized && GetMVOverrideMaskRTV != nullptr; }
 	}
 
 	// k1stPersonCullingGroup 地址，用于 O(1) 过滤第一人称几何体
