@@ -36,6 +36,40 @@ namespace ThroughScope
         bool IsUpscalingActive() const { return m_upscalingActive; }
         
         /**
+         * 检查玩家是否处于隐身效果状态
+         * 当此返回 true 时，应禁用所有 scope 渲染相关的 hooks 以避免 GPU 挂起
+         * 
+         * 崩溃原因：隐身效果（Chameleon、隐身小子）通过折射渲染第一人称模型，
+         * 与 scope 渲染的几何体过滤/渲染目标操作冲突，导致 DXGI_ERROR_DEVICE_HUNG
+         */
+        bool IsChameleonEffectActive() const { return m_chameleonEffectActive; }
+        
+        /**
+         * 更新隐身效果状态（每帧调用一次）
+         * 
+         * 通过 Invisibility ActorValue 精确检测隐身效果：
+         * - Chameleon perk: 蹲下时激活
+         * - Stealth Boy: 使用后激活
+         * - 其他隐身魔法/效果
+         * 
+         * 当 invisibility > 0 时禁用 scope 渲染以避免崩溃
+         */
+        void UpdateChameleonStatus()
+        {
+            auto player = RE::PlayerCharacter::GetSingleton();
+            if (!player) return;
+            
+            bool wasActive = m_chameleonEffectActive;
+            
+            // 获取 invisibility ActorValue 来精确检测隐身状态
+            auto actorValues = RE::ActorValue::GetSingleton();
+            if (actorValues && actorValues->invisibility) {
+                float invisibilityValue = player->GetActorValue(*actorValues->invisibility);
+                m_chameleonEffectActive = (invisibilityValue > 0.0f);
+            }
+        }
+
+        /**
          * 初始化管理器，检测 fo4test 模块
          */
         void Initialize()
@@ -166,8 +200,8 @@ namespace ThroughScope
         bool m_fo4testCompatEnabled = false;
         bool m_upscalingActive = false;  // Upscaling.dll replaces TAA entirely
         bool m_sceneRenderingCompleteThisFrame = false;
+        bool m_chameleonEffectActive = false;  // 隐身效果激活时阻止 scope 渲染
 
-        
         // 当前帧的渲染器实例
         std::unique_ptr<SecondPassRenderer> m_currentRenderer;
         

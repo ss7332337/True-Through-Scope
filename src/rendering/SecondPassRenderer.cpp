@@ -47,7 +47,7 @@ namespace ThroughScope
 
 			return false;
 		}
-		
+			
 		// 初始化相机指针
 		m_scopeCamera = ScopeCamera::GetScopeCamera();
 		m_playerCamera = *ptr_DrawWorldCamera;

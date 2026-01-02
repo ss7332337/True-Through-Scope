@@ -215,8 +215,12 @@ namespace ThroughScope
 		// - 跳过整个 Add1stPersonGeomToCuller 导致组未初始化 -> BSMTAManager 崩溃
 		// - 使用 DetachChild/AttachChild 导致竞态条件 -> DoBuildGeomArray 崩溃
 		// - 遍历父节点链过滤导致性能问题
+		//
+		// [FIX] Chameleon 效果兼容：当玩家处于隐身状态时，不过滤第一人称几何体
+		// 隐身效果通过折射渲染第一人称模型，如果过滤会导致 D3D11 设备丢失崩溃
 		if (ScopeCamera::IsRenderingForScope() && 
-			thisPtr == ptr_k1stPersonCullingGroup.get()) {
+			thisPtr == ptr_k1stPersonCullingGroup.get() &&
+			!g_scopeRenderMgr->IsChameleonEffectActive()) {
 			D3DPERF_EndEvent();
 			return;
 		}
@@ -412,8 +416,12 @@ namespace ThroughScope
 
 	void __fastcall hkPCUpdateMainThread(PlayerCharacter* pChar)
 	{
+		// [FIX] 每帧更新 Chameleon 隐身效果状态
+		// 当玩家处于隐身状态时，禁用 scope 渲染相关的几何体过滤以避免 D3D11 崩溃
+		g_scopeRenderMgr->UpdateChameleonStatus();
 
 		auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+
 		auto enbIntegration = ENBIntegration::GetSingleton();
 
 		if (!weaponInfo.currentConfig) {
@@ -454,9 +462,16 @@ namespace ThroughScope
 			enbIntegration->SetAiming(false);  // 通知 ENB 不在开镜
 		} else {
 			if (IsInADS(g_pchar)) {
-				D3DHooks::HandleFOVInput();
-				D3DHooks::SetEnableRender(true);
-				enbIntegration->SetAiming(true);  // 通知 ENB 正在开镜，禁用鬼影效果
+				// [FIX] 检查 Chameleon 透明效果是否激活
+				// 只在透明效果实际激活时禁用，允许蹲下但尚未透明时正常使用
+				if (g_scopeRenderMgr->IsChameleonEffectActive()) {
+					D3DHooks::SetEnableRender(false);
+					enbIntegration->SetAiming(false);
+				} else {
+					D3DHooks::HandleFOVInput();
+					D3DHooks::SetEnableRender(true);
+					enbIntegration->SetAiming(true);  // 通知 ENB 正在开镜，禁用鬼影效果
+				}
 			}
 		}
 
@@ -615,7 +630,7 @@ namespace ThroughScope
 					if (!renderer.ExecuteSecondPass()) {
 						logger::warn("[RenderEffectRange Hook] SecondPassRenderer failed");
 					}
-					
+
 					// 使用 RenderTargetMerger 合并所有 render targets (MV, GBuffer, 等)
 					RenderTargetMerger::GetInstance().MergeRenderTargets(context, device);
 
