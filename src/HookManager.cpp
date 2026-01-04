@@ -51,12 +51,27 @@ extern void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* 
 	extern void __fastcall hkDrawWorld_Render_UI(uint64_t thisPtr);
 	extern void __fastcall hkUI_BeginRender();
 	extern void __fastcall hkSetUseDynamicResolutionViewport(void* thisPtr, bool a_useDynamicResolution);
-	extern void __fastcall hkDrawWorld_Render_PostUI();
-	extern void __fastcall hkUI_ScreenSpace_RenderMenus(void* thisPtr);
+#include "RE/Bethesda/TaskQueueInterface.hpp"
+	
+	HookManager::FnWaitForJobs HookManager::g_WaitForThreads = nullptr;
+	HookManager::FnProcessQueues HookManager::g_ProcessQueues = nullptr;
 
 	void HookManager::RegisterAllHooks()
 	{
 		logger::info("Registering hooks...");
+
+		// REL::ID(790315) - JobListManager::WaitForThreads
+		REL::Relocation<FnWaitForJobs> WaitForThreads(REL::ID(790315));
+		g_WaitForThreads = WaitForThreads.get();
+		
+		// REL::ID(882638) - TaskQueueInterface::ProcessQueues
+		// Used to flush background tasks on the main thread to prevent race conditions during scene traversal
+		REL::Relocation<FnProcessQueues> ProcessQueues(REL::ID(882638));
+		g_ProcessQueues = ProcessQueues.get();
+		
+		logger::info("Locating sync functions...");
+		logger::info("  WaitForThreads: {:X}", (uintptr_t)g_WaitForThreads);
+		logger::info("  ProcessQueues: {:X}", (uintptr_t)g_ProcessQueues);
 
 		CreateAndEnableHook((LPVOID)DrawWorld_LightUpdate_Ori.address(), &hkDrawWorld_LightUpdate, reinterpret_cast<LPVOID*>(&g_DrawWorldLightUpdateOriginal), "DrawWorld_LightUpdate");
 
@@ -155,6 +170,18 @@ extern void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* 
 		RegisterImageSpaceDebugHooks();
 
 		logger::info("Hooks registered successfully");
+	}
+
+	void HookManager::FlushBackgroundTasks()
+	{
+		if (g_ProcessQueues) {
+			auto singleton = RE::TaskQueueInterface::GetSingleton();
+			if (singleton) {
+				// 0.0f = time delta (immediate), 8 = execution flag (likely kQueueUpdate)
+				// Mirrors usage in Main::UpdateNonRenderSafeAITasks
+				g_ProcessQueues(singleton, 0.0f, 8);
+			}
+		}
 	}
 
 	void HookManager::RegisterTAAHook()

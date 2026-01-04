@@ -577,6 +577,13 @@ namespace ThroughScope
 	void SecondPassRenderer::DrawScopeContent()
 	{
 
+
+		// [FIX] 同步背景任务
+		// 使用 ProcessQueues 处理 Pending 的任务 (如 Actor::SetParentCell)
+		// 这会在当前线程(主线程)立即执行这些任务，而不是等待后台线程
+		// 从而确保场景图在我们遍历前是稳定的，且不会造成死锁
+		HookManager::FlushBackgroundTasks();
+
 		// 设置性能标记
 		D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
 

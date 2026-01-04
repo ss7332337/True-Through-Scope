@@ -105,9 +105,12 @@ namespace ThroughScope
 		}
 
 		void RegisterAllHooks();
+		static void FlushBackgroundTasks();
 
 #pragma region Function Type Definitions
 		typedef void (*FnDrawWorldLightUpdate)(uint64_t);
+		typedef void (*FnProcessQueues)(void* thisPtr, float a1, uint32_t a2);
+		typedef void (*FnWaitForJobs)();
 		typedef void (*DoZPrePassOriginalFuncType)(uint64_t, NiCamera*, NiCamera*, float, float, float, float);
 		typedef void (*RenderZPrePassOriginalFuncType)(RendererShadowState*, ZPrePassDrawData*, unsigned __int64*, unsigned __int16*, unsigned __int16*);
 		typedef void (*RenderAlphaTestZPrePassOriginalFuncType)(RendererShadowState*, AlphaTestZPrePassDrawData*, unsigned __int64*, unsigned __int16*, unsigned __int16*, ID3D11SamplerState**);
@@ -211,6 +214,8 @@ namespace ThroughScope
 		FnDrawWorld_Render_PostUI g_DrawWorld_Render_PostUI = nullptr;  // Debug
 		FnUI_ScreenSpace_RenderMenus g_UI_ScreenSpace_RenderMenus = nullptr;  // Debug
 		FnBSShaderAccumulator_RegisterObject g_RegisterObjectOriginal = nullptr;  // Geometry validation
+		static FnWaitForJobs g_WaitForThreads;
+		static FnProcessQueues g_ProcessQueues;
 #pragma endregion
 
 	private:
