@@ -48,9 +48,14 @@ namespace ThroughScope
 		static FnUnregisterMVRegionOverride UnregisterMVRegionOverride = nullptr;
 		static bool g_Initialized = false;
 		static HMODULE g_Module = nullptr;
+		static bool g_TryInitFGInterop = false;
 		
 		void Initialize()
 		{
+			if (g_TryInitFGInterop) return;
+
+			g_TryInitFGInterop = true;
+
 			if (g_Initialized) return;
 			
 			g_Module = GetModuleHandleA("AAAFrameGeneration.dll");
