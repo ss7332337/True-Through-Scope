@@ -106,9 +106,13 @@ namespace ThroughScope
 		bool ssaoDisabled = m_enbAPI->SetParameter("enbseries.ini", "EFFECT", "EnableSSAO", &disableParam);
 		
 		// 禁用 SkyAmbientCalculation - 在 [EFFECT] 节
-		bool skyAmbientDisabled = m_enbAPI->SetParameter("enbseries.ini", "EFFECT", "EnableSkyAmbientCalculation", &disableParam);
+		//bool skyAmbientDisabled = m_enbAPI->SetParameter("enbseries.ini", "EFFECT", "EnableSkyAmbientCalculation", &disableParam);
 
-		if (ssaoDisabled || skyAmbientDisabled) {
+		/*if (ssaoDisabled || skyAmbientDisabled) {
+			m_effectsDisabled = true;
+		}*/
+
+		if (ssaoDisabled) {
 			m_effectsDisabled = true;
 		}
 	}
@@ -133,9 +137,9 @@ namespace ThroughScope
 		}
 
 		// 恢复 SkyAmbientCalculation（使用原始值）- 在 [EFFECT] 节
-		if (m_originalSkyAmbientEnabled) {
+		/*if (m_originalSkyAmbientEnabled) {
 			skyAmbientRestored = m_enbAPI->SetParameter("enbseries.ini", "EFFECT", "EnableSkyAmbientCalculation", &enableParam);
-		}
+		}*/
 
 		m_effectsDisabled = false;
 	}

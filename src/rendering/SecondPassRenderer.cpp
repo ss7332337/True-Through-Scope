@@ -13,6 +13,19 @@
 
 namespace ThroughScope
 {
+	// [SAFEGUARD] Helper function for SEH to avoid C2712
+	// Cannot use objects with destructors in a function with __try
+	void SafeShadowNodeUpdate(RE::NiNode* node, RE::NiUpdateData* ctx)
+	{
+		__try {
+			if (node && ctx) {
+				node->Update(*ctx);
+			}
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER) {
+			// Catch potential 0xC0000005 AV from background thread race
+		}
+	}
 	SecondPassRenderer::SecondPassRenderer(ID3D11DeviceContext* context, ID3D11Device* device, D3DHooks* d3dHooks) 
 		: m_context(context)
 		, m_device(device)
@@ -584,8 +597,45 @@ namespace ThroughScope
 		// 从而确保场景图在我们遍历前是稳定的，且不会造成死锁
 		HookManager::FlushBackgroundTasks();
 
+		// [FIX] NPC 闪烁修复 - 强制更新场景图
+		// 刷新任务(ProcessQueues)可能修改了场景图(例如移动了Actor)，导致变换矩阵和包围盒过时。
+		// 这会导致剔除系统(Culling)错误地剔除主要对象，表现为闪烁。
+		// 在这里强制更新整个 ShadowSceneNode (场景根节点) 的 WorldData 和 WorldBound。
+		// 注意：ShadowSceneNode 通常不包含所有物体(如UI)，但包含主要的3D世界对象。
+		if (ptr_DrawWorldShadowNode.get() && ptr_DrawWorldShadowNode.address()) {
+			D3DPERF_BeginEvent(0xffffffff, L"UpdateSceneGraph");
+			auto shadowNode = *ptr_DrawWorldShadowNode;
+			RE::NiUpdateData ctx{};
+			ctx.flags = 0; // 默认标志
+			ctx.time = 0.0f; // 假设不需要时间步进，只更新空间关系
+			
+			// [FIX] Update Optimization
+			// Instead of updating the entire ShadowSceneNode (which risks race conditions with background jobs),
+			// we only update the current Cell's 3D root. This contains the NPCs and local geometry causing flickering.
+			// This significantly reduces the scope of the update and the chance of collision.
+			RE::NiNode* updateTarget = shadowNode;
+			
+			// Try to get the player's current cell 3D
+			// 使用 g_pchar->Get3D(false) (World Reference) 的父节点作为 Cell Root
+			// 修复了之前使用 RE::TESObjectCELL::Get3D 的编译错误
+			if (g_pchar) {
+				auto player3D = g_pchar->Get3D(false);
+				if (player3D && player3D->parent) {
+					updateTarget = player3D->parent;
+				}
+			}
+
+			// [SAFEGUARD] 使用辅助函数调用 Update 以规避 C2712 错误
+			// 背景线程(JobListManager)可能同时在修改场景图(DoBuildGeomArray)，导致访问冲突(0xC0000005)。
+			// 如果发生冲突，我们跳过当帧更新(可能导致一帧闪烁)，但避免游戏崩溃。
+			SafeShadowNodeUpdate(updateTarget, &ctx);
+			D3DPERF_EndEvent();
+		}
+
 		// 设置性能标记
 		D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
+
+
 
 		// 配置DrawWorld系统使用瞄具相机
 		DrawWorld::SetCamera(m_scopeCamera);

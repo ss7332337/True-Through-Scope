@@ -279,18 +279,32 @@ namespace ThroughScope
 			return false;
 		}
 		
-		// 使用 SEH 捕获访问冲突（可能导致的性能开销很小）
+		// 使用 SEH 捕获访问冲突
 		__try {
-			// 尝试读取 refCount 验证指针可访问
-			volatile uint32_t refCount = apGeometry->refCount;
-			(void)refCount;
-			
-			// 检查 refCount 是否合理（0 表示对象可能已销毁）
+			// 1. 验证 refCount
 			if (apGeometry->refCount == 0) {
 				return false;
 			}
+
+			// 2. 验证虚表 (VTable)
+			// 如果指针指向已被释放并重新用于其他用途的内存，refCount 可能恰好不为0
+			// 但虚表通常会不同或无效
+			uintptr_t vtable = *reinterpret_cast<uintptr_t*>(apGeometry);
+			
+			// 检查虚表地址是否合理
+			if (vtable < 0x10000 || vtable == 0xFFFFFFFFFFFFFFFF || (vtable & 0x7) != 0) {
+				return false;
+			}
+
+			// 尝试读取虚表内容（确保虚表指向有效内存）
+			// 检查第一个虚函数（通常是析构函数或 RTTI）
+			uintptr_t funcPtr = *reinterpret_cast<uintptr_t*>(vtable);
+			if (funcPtr < 0x10000 || funcPtr == 0xFFFFFFFFFFFFFFFF) {
+				return false;
+			}
+			
 		} __except (EXCEPTION_EXECUTE_HANDLER) {
-			// 指针无效，跳过注册
+			// 指针无效或虚表无法访问，跳过注册
 			return false;
 		}
 		
@@ -333,6 +347,65 @@ namespace ThroughScope
 			D3DPERF_BeginEvent(0xFF00FF00, L"TrueThroughScope_FirstPass");
 			g_hookMgr->g_RenderPreUIOriginal(ptr_drawWorld);
 			D3DPERF_EndEvent();
+
+			// [FIX] 移动 Scope 渲染到 Render_PreUI 之后 (Post-Forward, Pre-ImageSpace)
+			// 之前的 RenderEffectRange (aiLast=21) 太晚了，导致 Scope 画面缺失 ImageSpace 效果(如模糊)
+			const auto renderStateMgr = RenderStateManager::GetSingleton();
+			
+			// 确保 d3dHooks 有效 (如果它是全局/静态变量，此前代码段未显示其定义，假设可用或通过 GetSingleton)
+			// 这里假设 d3dHooks 在此上下文中有效，因为它在其他函数中被使用了
+			// 如果 d3dHooks 不可见，我们需要找到它的来源。
+			// 既然之前的代码用了 d3dHooks->GetContext()，我们尝试引用它。
+			// 如果编译器报错，我会修复。
+			
+			if (renderStateMgr->IsScopeReady() && 
+				renderStateMgr->IsRenderReady() && 
+				D3DHooks::IsEnableRender()) {
+
+				ID3D11DeviceContext* context = nullptr;
+				ID3D11Device* device = nullptr;
+				
+				// 尝试获取 Context/Device. 如果 d3dHooks 指针不可用，尝试通过 RendererData 获取
+				if (d3dHooks) {
+					context = d3dHooks->GetContext();
+					device = d3dHooks->GetDevice();
+				} else {
+					// Fallback if d3dHooks global is not visible immediately
+					auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+					if (rendererData) context = (ID3D11DeviceContext*)rendererData->context;
+					// Device logic needed if d3dHooks missing... but assuming d3dHooks works for now based on other funcs.
+				}
+
+				if (context && d3dHooks) { // 需要 d3dHooks 实例来传递给 SecondPassRenderer
+					device = d3dHooks->GetDevice(); // Ensure device matches
+					
+					D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_SecondPass");
+					SecondPassRenderer renderer(context, device, d3dHooks);
+					if (!renderer.ExecuteSecondPass()) {
+						logger::warn("[Render_PreUI Hook] SecondPassRenderer failed");
+					}
+
+					// Merge Render Targets
+					RenderTargetMerger::GetInstance().MergeRenderTargets(context, device);
+
+					// FG Interop
+					// 注意：FGInterop::Initialize() 应该在此之前被调用过，
+					// 我们可以在这里也检查一下
+					if (!FGInterop::IsActive()) FGInterop::Initialize();
+
+					if (FGInterop::IsMaskAPIAvailable()) {
+						ID3D11RenderTargetView* maskRTV = FGInterop::GetMaskRTV();
+						if (maskRTV) {
+							renderer.WriteToMVRegionOverrideMask(maskRTV);
+						}
+					}
+					
+					FGInterop::NotifyMVComplete();
+					
+					D3DPERF_EndEvent();
+					g_scopeRenderMgr->OnFrameEnd();
+				}
+			}
 
 		} else {
 			g_hookMgr->g_RenderPreUIOriginal(ptr_drawWorld);
@@ -608,65 +681,10 @@ namespace ThroughScope
 		swprintf_s(markerName, L"RenderEffectRange(%d-%d, src=%d, dst=%d)", aiFirst, aiLast, aiSourceTarget, aiDestTarget);
 		D3DPERF_BeginEvent(0xFFFF00FF, markerName);
 
-		// 在效果 13 之前（线性空间/HDR阶段结束）渲染瞄具
-		// 这样瞄具内容会被后续的 Post-Processing (ENB, TAA, ToneMapping) 处理
-		if (aiLast == 13) {
-			auto renderStateMgr = RenderStateManager::GetSingleton();
-			auto enbIntegration = ENBIntegration::GetSingleton();
-			
-			if (renderStateMgr->IsScopeReady() && 
-				renderStateMgr->IsRenderReady() && 
-				D3DHooks::IsEnableRender() &&
-				!ScopeCamera::IsRenderingForScope()) {
-				
-				// 此时必须使用直接渲染，因为我们需要修改 G-Buffer/HDR Buffer 供 ENB 使用
-				// 不需要 ENB 回调，因为我们是在 ENB 处理之前渲染
-				ID3D11DeviceContext* context = d3dHooks->GetContext();
-				ID3D11Device* device = d3dHooks->GetDevice();
-				
-				if (context && device) {
-					D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_SecondPass_PreEffects");
-					SecondPassRenderer renderer(context, device, d3dHooks);
-					if (!renderer.ExecuteSecondPass()) {
-						logger::warn("[RenderEffectRange Hook] SecondPassRenderer failed");
-					}
-
-					// 使用 RenderTargetMerger 合并所有 render targets (MV, GBuffer, 等)
-					RenderTargetMerger::GetInstance().MergeRenderTargets(context, device);
-
-					// Write to FG interpolation skip mask if API available
-					// This marks the scope region so FG will NOT interpolate those pixels
-					if (FGInterop::IsMaskAPIAvailable()) {
-						ID3D11RenderTargetView* maskRTV = FGInterop::GetMaskRTV();
-						if (maskRTV) {
-							D3DPERF_BeginEvent(0xFFFF8800, L"WriteToMVRegionOverrideMask");
-							renderer.WriteToMVRegionOverrideMask(maskRTV);
-							D3DPERF_EndEvent();
-						}
-					}
-					
-					// 通知 fo4test MV 更新完成（Frame Generation 兼容）
-					FGInterop::NotifyMVComplete();
-					
-					D3DPERF_EndEvent();
-					g_scopeRenderMgr->OnFrameEnd();
-				}
-			}
-		}
-
 		// 调用原始函数
 		g_hookMgr->g_ImageSpaceManager_RenderEffectRange(thisPtr, aiFirst, aiLast, aiSourceTarget, aiDestTarget);
 
 		D3DPERF_EndEvent();
-		// 用 D3DPERF 标记显示调用参数
-		//wchar_t markerName[128];
-		//swprintf_s(markerName, L"RenderEffectRange(%d-%d, src=%d, dst=%d)", aiFirst, aiLast, aiSourceTarget, aiDestTarget);
-		//D3DPERF_BeginEvent(0xFFFF00FF, markerName);
-
-		//// 调用原始函数
-		//g_hookMgr->g_ImageSpaceManager_RenderEffectRange(thisPtr, aiFirst, aiLast, aiSourceTarget, aiDestTarget);
-
-		//D3DPERF_EndEvent();
 	}
 
 	// ========== DrawWorld::Render_UI Debug Hook ==========

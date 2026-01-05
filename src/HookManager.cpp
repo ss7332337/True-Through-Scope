@@ -177,9 +177,11 @@ extern void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* 
 		if (g_ProcessQueues) {
 			auto singleton = RE::TaskQueueInterface::GetSingleton();
 			if (singleton) {
-				// 0.0f = time delta (immediate), 8 = execution flag (likely kQueueUpdate)
-				// Mirrors usage in Main::UpdateNonRenderSafeAITasks
-				g_ProcessQueues(singleton, 0.0f, 8);
+				// [FIX] 使用 0xFFFFFFFF 处理所有类型的任务队列
+				// 之前使用 8 (kQueueUpdate) 可能只处理了部分任务(如 Detach)，导致 Attach 未执行，
+				// 从而使 NPC 在那一帧处于"消失"状态(闪烁)。
+				// 处理所有队列应该能保证操作的原子性(Detach + Attach 都执行)。
+				g_ProcessQueues(singleton, 0.0f, 0xFFFFFFFF);
 			}
 		}
 	}
