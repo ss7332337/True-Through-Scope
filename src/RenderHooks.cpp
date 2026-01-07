@@ -125,11 +125,51 @@ namespace ThroughScope
 		bool IsMaskAPIAvailable() { return g_Initialized && GetMVOverrideMaskRTV != nullptr; }
 	}
 
-	// k1stPersonCullingGroup 地址，用于 O(1) 过滤第一人称几何体
+	// k1stPersonCullingGroup 地址
+	// 注意：k1stPersonCullingGroup 是一个 BSCullingGroup 对象，不是指针
+	// REL::ID(731482) 返回的是这个对象的地址，使用 .get() 获取地址进行比较
 	static REL::Relocation<BSCullingGroup*> ptr_k1stPersonCullingGroup{ REL::ID(731482) };
+	
+	// 调试计数器
+	static int g_DebugFilterCount = 0;
 
-	// ========== 激光节点识别 ==========
+	// ========== 激光节点识别和添加 ==========
 
+	// 检查是否是 AutoBeam 激光节点名称
+	inline bool IsAutoBeamLaserName(const char* name)
+	{
+		if (!name || name[0] == '\0') return false;
+		// AutoBeam 会将激光重命名为 "_LaserBeam" 或 "_LaserDot"
+		return (strcmp(name, "_LaserBeam") == 0 || strcmp(name, "_LaserDot") == 0);
+	}
+
+	// 递归遍历场景树，查找并添加激光节点到裁剪组
+	void AddLaserNodesToCullingGroup(NiAVObject* node, BSCullingGroup* cullingGroup)
+	{
+		if (!node || !cullingGroup) return;
+
+		// 检查当前节点是否是激光
+		const char* nodeName = node->name.c_str();
+		if (IsAutoBeamLaserName(nodeName)) {
+			// 找到激光节点，添加到裁剪组
+			// 使用节点的 worldBound 成员
+			g_hookMgr->g_BSCullingGroupAdd(cullingGroup, node, &node->worldBound, 0);
+			return; // 激光节点不需要继续遍历子节点
+		}
+
+		// 如果是节点（有子对象），递归遍历子节点
+		if (node->IsNode()) {
+			NiNode* niNode = static_cast<NiNode*>(node);
+			for (uint32_t i = 0; i < niNode->children.size(); ++i) {
+				auto child = niNode->children[i].get();
+				if (child) {
+					AddLaserNodesToCullingGroup(child, cullingGroup);
+				}
+			}
+		}
+	}
+
+	// 通用激光名称检查（保留用于其他用途）
 	inline bool IsLaserNodeName(const char* name)
 	{
 		if (!name || name[0] == '\0') return false;
@@ -205,6 +245,20 @@ namespace ThroughScope
 		return (funcPtr != 0 && funcPtr != 0xFFFFFFFFFFFFFFFF);
 	}
 
+	
+	void __fastcall hkRenderer_DoZPrePass(uint64_t thisPtr, NiCamera* apFirstPersonCamera, NiCamera* apWorldCamera, float afFPNear, float afFPFar, float afNear, float afFar)
+	{
+		// [必需] 跳过第一人称深度预处理
+		// 这是手型洞修复的必要前置条件，配合 hkBSShaderAccumulator_RenderBatches 的 Forward-stage 过滤
+		// 详见 docs/手型洞修复方案.md
+		if (ScopeCamera::IsRenderingForScope()) {
+			*FPZPrePassDrawDataCount = 0;
+			*FPAlphaTestZPrePassDrawDataCount = 0;
+		}
+		D3DEventNode(g_hookMgr->g_pDoZPrePassOriginal(thisPtr, apFirstPersonCamera, apWorldCamera, afFPNear, afFPFar, afNear, afFar), L"hkRenderer_DoZPrePass");
+	}
+
+
 	void hkBSCullingGroupAdd(BSCullingGroup* thisPtr,
 		NiAVObject* apObj,
 		const NiBound* aBound,
@@ -214,22 +268,12 @@ namespace ThroughScope
 			return;
 		}
 
-		// O(1) 过滤：在 scope 渲染时跳过第一人称裁剪组的所有 Add 调用
-		// 这允许 StartAdding 正常执行（初始化组），但阻止几何体被添加
-		// 解决了之前的问题：
-		// - 跳过整个 Add1stPersonGeomToCuller 导致组未初始化 -> BSMTAManager 崩溃
-		// - 使用 DetachChild/AttachChild 导致竞态条件 -> DoBuildGeomArray 崩溃
-		// - 遍历父节点链过滤导致性能问题
-		//
-		// [FIX] Chameleon 效果兼容：当玩家处于隐身状态时，不过滤第一人称几何体
-		// 隐身效果通过折射渲染第一人称模型，如果过滤会导致 D3D11 设备丢失崩溃
-		if (ScopeCamera::IsRenderingForScope() && 
-			thisPtr == ptr_k1stPersonCullingGroup.get() &&
-			!g_scopeRenderMgr->IsChameleonEffectActive()) {
-			D3DPERF_EndEvent();
-			return;
-		}
-
+		// [NOTE] 第一人称裁剪组过滤已移至 hkBSShaderAccumulator_RenderBatches
+		// 使用 Forward-stage aware 过滤实现：
+		// - Deferred 阶段跳过第一人称累加器（阻止手部渲染）
+		// - Forward 阶段允许第一人称累加器（保留激光渲染）
+		// 详见 docs/手型洞修复方案.md
+		
 		g_hookMgr->g_BSCullingGroupAdd(thisPtr, apObj, aBound, aFlags);
 	}
 
@@ -244,14 +288,12 @@ namespace ThroughScope
 	 * - 工作线程 (JobListManager::ServingThread) 在 BSFadeNode::ComputeGeomArray 中遍历场景图
 	 * - 当镜头移动较快时，两者同时操作导致 DoBuildGeomArray::Recurse 访问 null 指针
 	 *
-	 * 现在改为在 hkBSCullingGroupAdd 中过滤非激光几何体，不修改场景图结构。
 	 */
 	void __fastcall hkAdd1stPersonGeomToCuller(uint64_t thisPtr)
 	{
 		D3DPERF_BeginEvent(0xffffffff, L"Add1stPersonGeomToCuller");
-		// 始终调用原函数：
-		// - StartAdding 会正常执行，初始化 k1stPersonCullingGroup
-		// - Add 调用会被 hkBSCullingGroupAdd 中的 O(1) 过滤拦截
+		// 始终调用原函数
+		// 第一人称过滤通过 hkRenderer_DoZPrePass + hkBSCullingGroupAdd 实现
 		g_hookMgr->g_Add1stPersonGeomToCullerOriginal(thisPtr);
 		D3DPERF_EndEvent();
 	}
@@ -455,19 +497,29 @@ namespace ThroughScope
 		D3DPERF_EndEvent();
 	}
 
-	void __fastcall hkRenderer_DoZPrePass(uint64_t thisPtr, NiCamera* apFirstPersonCamera, NiCamera* apWorldCamera, float afFPNear, float afFPFar, float afNear, float afFar)
-	{
-		if (ScopeCamera::IsRenderingForScope()) {
-			*FPZPrePassDrawDataCount = 0;
-			*FPAlphaTestZPrePassDrawDataCount = 0;
-		}
-		D3DEventNode(g_hookMgr->g_pDoZPrePassOriginal(thisPtr, apFirstPersonCamera, apWorldCamera, afFPNear, afFPFar, afNear, afFar), L"hkRenderer_DoZPrePass");
-	}
-
-
 	void __fastcall hkBSShaderAccumulator_RenderBatches(
 		BSShaderAccumulator* thisPtr, int aiShader, bool abAlphaPass, int aeGroup)
 	{
+		// [FIX] Forward-stage aware 第一人称过滤
+		// RenderDoc 分析显示：
+		// - 手部在 Deferred 阶段渲染 (GBuffer 填充, Event ~8917)
+		// - 激光在 Forward 阶段渲染 (透明/发光效果, Event ~25243)
+		// 
+		// 策略：
+		// - Deferred 阶段：跳过第一人称累加器（阻止手部渲染）
+		// - Forward 阶段：允许第一人称累加器（保留激光渲染）
+		if (ScopeCamera::IsRenderingForScope()) {
+			auto firstPersonAccum = *ptr_Draw1stPersonAccum;
+			if (thisPtr == firstPersonAccum) {
+				// 只在 Forward 阶段允许第一人称渲染（激光在这里）
+				if (!D3DHooks::GetForwardStage()) {
+					// Deferred 阶段 - 跳过第一人称（阻止手部）
+					return;
+				}
+				// Forward 阶段 - 允许第一人称（保留激光）
+			}
+		}
+		
 		g_hookMgr->g_BSShaderAccumulatorRenderBatches(thisPtr, aiShader, abAlphaPass, aeGroup);
 	}
 
