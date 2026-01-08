@@ -196,6 +196,15 @@ namespace ThroughScope {
 			int enableChromaticAberration = 0;
 			float brightnessBoost = 1.0f;
 			float ambientOffset = 0.0f;
+			float parallaxStrength = 0;
+			float parallaxSmoothing = 0;
+			float exitPupilRadius = 0;
+			float exitPupilSoftness = 0;
+			float vignetteStrength = 0;
+			float vignetteRadius = 0;
+			float vignetteSoftness = 0;
+			float eyeReliefDistance = 0;
+			int enableParallax = 0;
 			
 			bool NeedsUpdate(const ScopeConstantBuffer& newData) const {
 				return screenWidth != newData.screenWidth ||
@@ -213,7 +222,16 @@ namespace ThroughScope {
 					   enableSphericalDistortion != newData.enableSphericalDistortion ||
 					   enableChromaticAberration != newData.enableChromaticAberration ||
 					   brightnessBoost != newData.brightnessBoost ||
-					   ambientOffset != newData.ambientOffset;
+					   ambientOffset != newData.ambientOffset ||
+					   parallaxStrength != newData.parallaxStrength ||
+					   parallaxSmoothing != newData.parallaxSmoothing ||
+					   exitPupilRadius != newData.exitPupilRadius ||
+					   exitPupilSoftness != newData.exitPupilSoftness ||
+					   vignetteStrength != newData.vignetteStrength ||
+					   vignetteRadius != newData.vignetteRadius ||
+					   vignetteSoftness != newData.vignetteSoftness ||
+					   eyeReliefDistance != newData.eyeReliefDistance ||
+					   enableParallax != newData.enableParallax;
 			}
 			
 			void UpdateFrom(const ScopeConstantBuffer& newData) {
@@ -233,6 +251,16 @@ namespace ThroughScope {
 				enableChromaticAberration = newData.enableChromaticAberration;
 				brightnessBoost = newData.brightnessBoost;
 				ambientOffset = newData.ambientOffset;
+				
+				parallaxStrength = newData.parallaxStrength;
+				parallaxSmoothing = newData.parallaxSmoothing;
+				exitPupilRadius = newData.exitPupilRadius;
+				exitPupilSoftness = newData.exitPupilSoftness;
+				vignetteStrength = newData.vignetteStrength;
+				vignetteRadius = newData.vignetteRadius;
+				vignetteSoftness = newData.vignetteSoftness;
+				eyeReliefDistance = newData.eyeReliefDistance;
+				enableParallax = newData.enableParallax;
 			}
 		};
 
@@ -270,13 +298,13 @@ namespace ThroughScope {
 		static void ForceConstantBufferUpdate(); // 强制更新常量缓冲区
 		static void SetReticleScale(float scale)
 		{
-			s_ReticleScale = std::clamp(scale, 0.1f, 32.0f);
+			s_ReticleScale = std::clamp(scale, 0.001f, 32.0f);
 		}
 
 		static void SetReticleOffset(float offsetX, float offsetY)
 		{
-			s_ReticleOffsetX = std::clamp(offsetX, 0.0f, 1.0f);
-			s_ReticleOffsetY = std::clamp(offsetY, 0.0f, 1.0f);
+			s_ReticleOffsetX = std::clamp(offsetX, -1.0f, 1.0f);
+			s_ReticleOffsetY = std::clamp(offsetY, -1.0f, 1.0f);
 		}
 
 		static void UpdateReticleSettings(float scale, float offsetX, float offsetY)

@@ -107,71 +107,83 @@ float2 clampLength(float2 v, float maxLen)
 
 // 计算眼睛相对于瞄镜光轴的偏移
 // 返回归一化的2D偏移量，表示眼睛在垂直于瞄镜光轴平面上的位置
-float2 calculateEyeOffset(float3 camPos, float3 scopePos, float3 lastCamPos, float3 lastScopePos, float4x4 camRot)
+// 
+// 真实瞄镜视差原理：
+// 1. 瞄镜有一个"光轴"（理想观察方向）
+// 2. 当眼睛不在光轴正后方时，观察到的远景会相对于准星产生偏移
+// 3. 偏移方向：眼睛向左移动 → 远景相对准星向右偏移
+//
+// 实现方式：
+// - 使用 CameraRotation（瞄镜的世界旋转矩阵的转置）将世界空间向量转换到瞄镜局部空间
+// - 在瞄镜局部空间中，Z轴是光轴前方，X是右，Y是上
+// - 相机相对于瞄镜的X/Y分量就是眼睛偏离光轴的横向偏移
+float2 calculateEyeOffset(float3 camPos, float3 scopePos, float3 lastCamPos, float3 lastScopePos, float4x4 scopeRotInv)
 {
-    // 计算当前和上一帧的瞄镜方向
-    float3 currentDir = scopePos - camPos;
-    float3 lastDir = lastScopePos - lastCamPos;
-
-    // 安全归一化
-    float currentLen = length(currentDir);
-    float lastLen = length(lastDir);
-
-    if (currentLen < 0.001 || lastLen < 0.001) {
+    // 计算从瞄镜指向相机的向量（世界空间）
+    // 这表示眼睛相对于瞄镜的位置
+    float3 scopeToEye = camPos - scopePos;
+    
+    // 计算瞄镜到眼睛的距离（用于归一化）
+    float eyeDistance = length(scopeToEye);
+    if (eyeDistance < 0.001) {
         return float2(0, 0);
     }
-
-    currentDir /= currentLen;
-    lastDir /= lastLen;
-
-    // 计算方向变化（表示眼睛相对移动）
-    float3 deltaDir = currentDir - lastDir;
-
-    // 转换到相机局部坐标系
-    float4 localDelta = mul(float4(deltaDir, 0), camRot);
-
-    return localDelta.xy;
+    
+    // 将"瞄镜到眼睛"向量转换到瞄镜的局部坐标系
+    // scopeRotInv 是瞄镜世界旋转矩阵的转置（逆），用于将世界向量转换为局部向量
+    // 在瞄镜局部坐标系中：
+    //   - Y轴通常是前方向 (Bethesda/NIF Convention)
+    //   - X轴是右方向
+    //   - Z轴是上方向
+    float4 localEyeDir = mul(float4(scopeToEye, 0), scopeRotInv);
+    
+    // 归一化：将偏移量除以眼距 (Y轴分量近似为距离)
+    // 使用 X (Right) 和 Z (Up) 作为横向偏移分量
+    float2 eyeOffset;
+    eyeOffset.x = localEyeDir.x / eyeDistance; // Horizontal offset
+    eyeOffset.y = localEyeDir.z / eyeDistance; // Vertical offset
+    
+    return eyeOffset;
 }
 
-// 视差纹理偏移计算
-// 当眼睛偏移时，瞄镜内看到的画面应该向相反方向移动
-float2 calculateParallaxOffset(float2 eyeOffset, float strength, float eyeRelief)
+// FTS 风格的视差计算函数
+float getparallax(float d, float2 ds, float radius, float sway, float fogRadius)
 {
-    // 眼距影响：距离越远，视差效果越明显
-    float reliefFactor = 1.0 + eyeRelief * 0.5;
-
-    // 视差偏移方向与眼睛移动方向相反
-    return -eyeOffset * strength * reliefFactor;
+    // ds.y 在 FTS 中通常是 1.0 (来自 float2(1,1))
+    // rcp(radius * ds.y) -> 1/radius
+    // fogRadius * d * ds.y -> fogRadius * d
+    // abs(...) -> abs((fogRadius/radius) * d)
+    // 1 - pow(...) -> 边缘衰减
+    // clamp(..., 0, 1) -> 截断
+    
+    // 为了防止除零，radius 应该 > 0
+    float safeRadius = max(radius, 0.001);
+    
+    // 计算暗角因子
+    float factor = abs((fogRadius / safeRadius) * d);
+    
+    // 应用指数衰减 (sway amount)
+    // FTS 中 sway 也是作为指数
+    float vignette = 1.0 - pow(factor, sway);
+    
+    return clamp(vignette, 0.0, 1.0);
 }
 
-// 出瞳效应计算
-// 真实瞄镜有一个"出瞳"区域，眼睛必须在此区域内才能看到完整画面
-// 当眼睛偏离出瞳中心时，边缘会逐渐变黑
-float calculateExitPupilMask(float2 uv, float2 parallaxOffset, float radius, float softness)
+// 组合所有视差效果 (FTS 移植版 + 增强)
+
+// 宽高比校正函数 (将UV转换为以中心为原点，且修正了长宽比的坐标)
+float2 aspect_ratio_correction(float2 uv)
 {
-    // 出瞳中心会随着眼睛偏移而移动
-    float2 pupilCenter = float2(0.5, 0.5) - parallaxOffset * 0.5;
-
-    // 计算到出瞳中心的距离（应用宽高比校正，确保是圆形而非椭圆形）
-    float2 centered = uv - pupilCenter;
-    centered.x *= screenWidth / screenHeight;  // 宽高比校正
-    float dist = length(centered);
-
-    // 创建平滑的出瞳遮罩
-    // 在 radius 范围内完全可见，超出后逐渐变暗
-    float innerEdge = radius - softness;
-    float outerEdge = radius + softness;
-
-    return 1.0 - smoothstep(innerEdge, outerEdge, dist);
+    float2 centered = uv - 0.5;
+    centered.x *= screenWidth / screenHeight;
+    return centered;
 }
 
 // 边缘晕影效果
-// 模拟真实光学系统的自然暗角
 float calculateVignette(float2 uv, float strength, float radius, float softness)
 {
-    // 计算到中心的距离（应用宽高比校正，确保是圆形而非椭圆形）
-    float2 centered = uv - float2(0.5, 0.5);
-    centered.x *= screenWidth / screenHeight;  // 宽高比校正
+    // 计算到中心的距离（应用宽高比校正）
+    float2 centered = aspect_ratio_correction(uv);
     float dist = length(centered);
 
     // 平滑的晕影过渡
@@ -181,11 +193,10 @@ float calculateVignette(float2 uv, float strength, float radius, float softness)
     return 1.0 - vignette * strength;
 }
 
-// 组合所有视差效果
 struct ParallaxResult
 {
-    float2 textureOffset;   // 纹理采样偏移
-    float  brightnessMask;  // 亮度遮罩 (出瞳 + 晕影)
+    float2 textureOffset;   // 纹理采样偏移 (现在只用于微量修正或置为0)
+    float3 brightnessMask;  // 亮度遮罩 (RGB 分离，用于色散)
     float2 reticleOffset;   // 准星偏移
 };
 
@@ -203,52 +214,100 @@ ParallaxResult computeParallax(
 {
     ParallaxResult result;
     result.textureOffset = float2(0, 0);
-    result.brightnessMask = 1.0;
+    result.brightnessMask = float3(1, 1, 1);
     result.reticleOffset = float2(0, 0);
 
     if (enabled == 0) {
-        // 仅应用晕影（即使视差禁用）
-        result.brightnessMask = calculateVignette(uv, vignetteStrength, vignetteRadius, vignetteSoftness);
+        // 仅应用普通晕影
+        float v = calculateVignette(uv, vignetteStrength, vignetteRadius, vignetteSoftness);
+        result.brightnessMask = float3(v, v, v);
         return result;
     }
 
-    // 限制眼睛偏移量，防止极端值
-    float2 clampedEyeOffset = clampLength(eyeOffset, 0.5);
-
-    // 计算视差纹理偏移
-    result.textureOffset = calculateParallaxOffset(clampedEyeOffset, strength, eyeRelief);
-
-    // 计算出瞳遮罩
-    float exitPupilMask = calculateExitPupilMask(uv, result.textureOffset, exitPupilRadius, exitPupilSoftness);
-
-    // 计算边缘晕影
-    float vignetteMask = calculateVignette(uv, vignetteStrength, vignetteRadius, vignetteSoftness);
-
-    // 组合亮度遮罩（乘法混合）
-    result.brightnessMask = exitPupilMask * vignetteMask;
-
-    // 准星偏移应该与纹理偏移方向相同但幅度更小（模拟准星在不同焦平面）
-    result.reticleOffset = result.textureOffset * 0.3;
+    // 1. 动态出瞳 (Dynamic Exit Pupil)
+    // ----------------------------------------------------
+    // 计算遮罩中心
+    // FTS 逻辑: 0.5 + x, 0.5 - y.
+    // 我们: x = Cam-Scope (Right+). y = Cam-Scope (Up+).
+    // Eye Right -> Mask Left (Negative Offset).
+    // Eye Up -> Mask Down (Negative Offset). -> 这样才能露出一部分"下面"的视野?
+    // 验证: Look Up -> See "Floor" of tube -> Bright Spot moves Down relative to Near Rim. YES.
+    
+    float sensitivity = 1.0 + eyeRelief; 
+    float2 maskCenterOffset = -eyeOffset * strength * sensitivity; // 反向移动
+    float2 maskCenter = float2(0.5, 0.5) + maskCenterOffset;
+    
+    // 计算当前像素到遮罩中心的距离 (宽高比校正)
+    float2 correctedUV = aspect_ratio_correction(uv);
+    float2 correctedCenter = aspect_ratio_correction(maskCenter);
+    float distToCenter = distance(correctedUV, correctedCenter);
+    
+    // 2. 出瞳边缘色散 (Chromatic Aberration at Edge)
+    // ----------------------------------------------------
+    float edgeExponent = 5.0 * (1.1 - clamp(exitPupilSoftness, 0.1, 1.0)); 
+    float caShift = 0.015 * strength * 20.0; 
+    
+    float radiusR = exitPupilRadius * (1.0 - caShift);
+    float radiusG = exitPupilRadius;
+    float radiusB = exitPupilRadius * (1.0 + caShift);
+    
+    float maskR = getparallax(distToCenter, float2(1,1), radiusR, edgeExponent, 1.0);
+    float maskG = getparallax(distToCenter, float2(1,1), radiusG, edgeExponent, 1.0);
+    float maskB = getparallax(distToCenter, float2(1,1), radiusB, edgeExponent, 1.0);
+    
+    // 3. 基础晕影叠加
+    float staticVignette = calculateVignette(uv, vignetteStrength, vignetteRadius, vignetteSoftness);
+    
+    result.brightnessMask = float3(maskR, maskG, maskB) * staticVignette;
+    
+    // 4. 准星视差 (Reticle Parallax)
+    // 准星与眼睛同向微动，制造悬浮感
+    result.reticleOffset = eyeOffset * strength * 0.5;
 
     return result;
 }
 
 // ============================================================================
 
-float2 aspect_ratio_correction(float2 tc)
+float2 transform_reticle_coords(float2 uv)
 {
-    tc.x -= 0.5f;
-    tc.x *= screenWidth * rcp(screenHeight);
-    tc.x += 0.5f;
-    return tc;
-}
-
-float2 transform_reticle_coords(float2 tc)
-{
-    tc -= float2(0.5, 0.5);
-    tc /= reticleScale;
-    tc += float2(reticleOffsetX, reticleOffsetY);
-    return tc;
+    // Input: uv is in [0, 1] range, where (0.5, 0.5) is screen center.
+    // Output: Should return texture sample coordinates for the reticle.
+    //
+    // Goal:
+    //   - Offset (0, 0) -> Reticle centered on screen.
+    //   - Offset X > 0 -> Reticle moves RIGHT.
+    //   - Offset Y > 0 -> Reticle moves UP.
+    //   - Scale > 1 -> Larger reticle. Scale < 1 -> Smaller reticle.
+    
+    // 1. Center UV to [-0.5, 0.5]
+    float2 centered = uv - 0.5;
+    
+    // 2. Aspect ratio correction
+    // Screen is typically wider than tall (e.g., 16:9).
+    // To maintain reticle proportions, scale X to match Y's physical distance.
+    float aspectRatio = screenWidth / screenHeight;
+    centered.x *= aspectRatio;
+    
+    // 3. Apply scale: DIVIDE so larger scale = larger reticle on screen
+    // (When we divide by a larger number, the sampling coords are smaller,
+    //  meaning we sample a smaller area of texture, making the texture appear bigger)
+    float safeScale = max(reticleScale, 0.01); // Prevent division by zero
+    centered /= safeScale;
+    
+    // 4. Apply offset
+    // X > 0 -> Reticle moves RIGHT -> subtract from sample X
+    // Y > 0 -> Reticle moves UP -> add to sample Y (because UV Y is inverted from screen Y)
+    centered.x -= reticleOffsetX;
+    centered.y += reticleOffsetY;
+    
+    // 5. Undo aspect ratio correction before texture sampling
+    centered.x /= aspectRatio;
+    
+    // 6. Return to [0, 1] range for sampling
+    float2 texCoord = centered + 0.5;
+    
+    return texCoord;
 }
 
 // 生成随机噪点
@@ -510,10 +569,11 @@ float4 main(PS_INPUT input) : SV_TARGET
     // 准星处理 - 考虑视差偏移
     // ========================================================================
 
-    // 准星坐标也应用视差偏移（但幅度较小）
-    float2 reticleAspectTex = aspect_ratio_correction(texCoord + parallax.reticleOffset);
-    float2 reticleTexCoord = transform_reticle_coords(reticleAspectTex);
-    reticleTexCoord = float2(1.0 - reticleTexCoord.x, reticleTexCoord.y);
+    // 准星坐标 - 直接使用屏幕UV（加上视差偏移）
+    // 不需要 aspect_ratio_correction，因为准星纹理本身是方形的
+    float2 reticleInputUV = texCoord + parallax.reticleOffset;
+    float2 reticleTexCoord = transform_reticle_coords(reticleInputUV);
+    // 注意：不再进行 X 翻转，因为现在 transform_reticle_coords 已正确处理坐标
     float4 reticleColor = reticleTexture.Sample(scopeSampler, reticleTexCoord);
 
     // ========================================================================
