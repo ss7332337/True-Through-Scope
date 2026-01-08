@@ -915,31 +915,59 @@ namespace ThroughScope {
 			viewportHeight = firstPassViewport.Height;
 		}
 
-		// 获取玩家摄像头位置
-		auto playerCamera = RE::PlayerCharacter::GetSingleton()->Get3D(true)->GetObjectByName("Camera");
+		// 获取视差所需的数据
+		// 视差效果应该基于瞄具朝向的帧间变化（模拟呼吸/晃动）
+		// 静止时变化量为0，所以视差为0；晃动时产生动态视差
+		
 		RE::NiPoint3 cameraPos(0, 0, 0);
 		RE::NiPoint3 lastCameraPos(0, 0, 0);
-
-		if (playerCamera) {
-			cameraPos = playerCamera->world.translate;
-			lastCameraPos = playerCamera->previousWorld.translate;
-		}
-
-		// 获取ScopeNode位置
 		RE::NiPoint3 scopePos(0, 0, 0);
 		RE::NiPoint3 lastScopePos(0, 0, 0);
-		auto playerCharacter = RE::PlayerCharacter::GetSingleton();
-		if (playerCharacter && playerCharacter->Get3D()) {
-			auto weaponNode = playerCharacter->Get3D()->GetObjectByName("Weapon");
-			if (weaponNode && weaponNode->IsNode()) {
-				auto weaponNiNode = static_cast<RE::NiNode*>(weaponNode);
-				auto scopeNode = weaponNiNode->GetObjectByName("TTSNode");
-
-				if (scopeNode) {
-					scopePos = scopeNode->world.translate;
-					lastScopePos = scopeNode->previousWorld.translate;
-				}
+		
+		auto scopeCamera = ScopeCamera::GetScopeCamera();
+		
+		if (scopeCamera) {
+			// 使用瞄具摄像机的位置作为参考中心
+			scopePos = scopeCamera->world.translate;
+			lastScopePos = scopeCamera->previousWorld.translate;
+			
+			// 获取瞄具摄像机当前和上一帧的前方向（Y轴 in NIF convention）
+			auto& currentRot = scopeCamera->world.rotate;
+			auto& lastRot = scopeCamera->previousWorld.rotate;
+			
+			// 当前帧的前方向
+			RE::NiPoint3 currentForward(currentRot.entry[1].x, currentRot.entry[1].y, currentRot.entry[1].z);
+			// 上一帧的前方向
+			RE::NiPoint3 lastForward(lastRot.entry[1].x, lastRot.entry[1].y, lastRot.entry[1].z);
+			
+			// 计算帧间朝向变化（这就是"晃动"量）
+			RE::NiPoint3 forwardDelta = currentForward - lastForward;
+			
+			// 将朝向变化放大并转换为"位置偏移"
+			// 使用累积效果：每帧的变化会平滑累积
+			static RE::NiPoint3 accumulatedOffset(0, 0, 0);
+			static float decayFactor = 0.95f;  // 衰减系数，控制偏移的持续时间
+			
+			// 累积新的偏移（放大因子控制灵敏度）
+			float sensitivityFactor = 500.0f;  // 朝向变化非常小，需要放大
+			accumulatedOffset = accumulatedOffset * decayFactor + forwardDelta * sensitivityFactor;
+			
+			// 限制最大偏移量
+			float maxOffset = 50.0f;
+			float offsetLen = std::sqrt(accumulatedOffset.x * accumulatedOffset.x + 
+			                           accumulatedOffset.y * accumulatedOffset.y + 
+			                           accumulatedOffset.z * accumulatedOffset.z);
+			if (offsetLen > maxOffset) {
+				float scale = maxOffset / offsetLen;
+				accumulatedOffset.x *= scale;
+				accumulatedOffset.y *= scale;
+				accumulatedOffset.z *= scale;
 			}
+			
+			// cameraPos = scopePos + 累积偏移
+			// 这样 HLSL 中 (cameraPos - scopePos) = accumulatedOffset
+			cameraPos = scopePos + accumulatedOffset;
+			lastCameraPos = lastScopePos;  // 上一帧相对位置接近0
 		}
 
 		// 获取纹理描述
@@ -1188,10 +1216,13 @@ namespace ThroughScope {
 				// 使用瞄具摄像机的旋转矩阵的逆转置
 				auto& scopeRot = scopeCamera->world.rotate;
 
-				// 构建正确的视图变换矩阵
-				rotationMatrix._11 = scopeRot.entry[0].x; rotationMatrix._12 = scopeRot.entry[1].x; rotationMatrix._13 = scopeRot.entry[2].x; rotationMatrix._14 = 0.0f;
-				rotationMatrix._21 = scopeRot.entry[0].y; rotationMatrix._22 = scopeRot.entry[1].y; rotationMatrix._23 = scopeRot.entry[2].y; rotationMatrix._24 = 0.0f;
-				rotationMatrix._31 = scopeRot.entry[0].z; rotationMatrix._32 = scopeRot.entry[1].z; rotationMatrix._33 = scopeRot.entry[2].z; rotationMatrix._34 = 0.0f;
+				// 构建视图变换矩阵
+				// NiMatrix3 是行主序，XMFLOAT4X4 也是行主序
+				// 直接复制即可，HLSL 中的 mul(vector, matrix) 会正确处理
+				// 对于正交旋转矩阵，这样可以将世界空间向量转换为局部空间
+				rotationMatrix._11 = scopeRot.entry[0].x; rotationMatrix._12 = scopeRot.entry[0].y; rotationMatrix._13 = scopeRot.entry[0].z; rotationMatrix._14 = 0.0f;
+				rotationMatrix._21 = scopeRot.entry[1].x; rotationMatrix._22 = scopeRot.entry[1].y; rotationMatrix._23 = scopeRot.entry[1].z; rotationMatrix._24 = 0.0f;
+				rotationMatrix._31 = scopeRot.entry[2].x; rotationMatrix._32 = scopeRot.entry[2].y; rotationMatrix._33 = scopeRot.entry[2].z; rotationMatrix._34 = 0.0f;
 				rotationMatrix._41 = 0.0f; rotationMatrix._42 = 0.0f; rotationMatrix._43 = 0.0f; rotationMatrix._44 = 1.0f;
 			} else {
 				// 备用：使用单位矩阵(禁用视差效果)

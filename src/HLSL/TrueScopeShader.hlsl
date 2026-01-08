@@ -105,22 +105,10 @@ float2 clampLength(float2 v, float maxLen)
     return len > maxLen ? v * (maxLen / len) : v;
 }
 
-// 计算眼睛相对于瞄镜光轴的偏移
-// 返回归一化的2D偏移量，表示眼睛在垂直于瞄镜光轴平面上的位置
-// 
-// 真实瞄镜视差原理：
-// 1. 瞄镜有一个"光轴"（理想观察方向）
-// 2. 当眼睛不在光轴正后方时，观察到的远景会相对于准星产生偏移
-// 3. 偏移方向：眼睛向左移动 → 远景相对准星向右偏移
-//
-// 实现方式：
-// - 使用 CameraRotation（瞄镜的世界旋转矩阵的转置）将世界空间向量转换到瞄镜局部空间
-// - 在瞄镜局部空间中，Z轴是光轴前方，X是右，Y是上
-// - 相机相对于瞄镜的X/Y分量就是眼睛偏离光轴的横向偏移
+
 float2 calculateEyeOffset(float3 camPos, float3 scopePos, float3 lastCamPos, float3 lastScopePos, float4x4 scopeRotInv)
 {
-    // 计算从瞄镜指向相机的向量（世界空间）
-    // 这表示眼睛相对于瞄镜的位置
+
     float3 scopeToEye = camPos - scopePos;
     
     // 计算瞄镜到眼睛的距离（用于归一化）
@@ -129,12 +117,6 @@ float2 calculateEyeOffset(float3 camPos, float3 scopePos, float3 lastCamPos, flo
         return float2(0, 0);
     }
     
-    // 将"瞄镜到眼睛"向量转换到瞄镜的局部坐标系
-    // scopeRotInv 是瞄镜世界旋转矩阵的转置（逆），用于将世界向量转换为局部向量
-    // 在瞄镜局部坐标系中：
-    //   - Y轴通常是前方向 (Bethesda/NIF Convention)
-    //   - X轴是右方向
-    //   - Z轴是上方向
     float4 localEyeDir = mul(float4(scopeToEye, 0), scopeRotInv);
     
     // 归一化：将偏移量除以眼距 (Y轴分量近似为距离)
@@ -149,13 +131,6 @@ float2 calculateEyeOffset(float3 camPos, float3 scopePos, float3 lastCamPos, flo
 // FTS 风格的视差计算函数
 float getparallax(float d, float2 ds, float radius, float sway, float fogRadius)
 {
-    // ds.y 在 FTS 中通常是 1.0 (来自 float2(1,1))
-    // rcp(radius * ds.y) -> 1/radius
-    // fogRadius * d * ds.y -> fogRadius * d
-    // abs(...) -> abs((fogRadius/radius) * d)
-    // 1 - pow(...) -> 边缘衰减
-    // clamp(..., 0, 1) -> 截断
-    
     // 为了防止除零，radius 应该 > 0
     float safeRadius = max(radius, 0.001);
     
@@ -169,9 +144,7 @@ float getparallax(float d, float2 ds, float radius, float sway, float fogRadius)
     return clamp(vignette, 0.0, 1.0);
 }
 
-// 组合所有视差效果 (FTS 移植版 + 增强)
 
-// 宽高比校正函数 (将UV转换为以中心为原点，且修正了长宽比的坐标)
 float2 aspect_ratio_correction(float2 uv)
 {
     float2 centered = uv - 0.5;
@@ -225,14 +198,6 @@ ParallaxResult computeParallax(
     }
 
     // 1. 动态出瞳 (Dynamic Exit Pupil)
-    // ----------------------------------------------------
-    // 计算遮罩中心
-    // FTS 逻辑: 0.5 + x, 0.5 - y.
-    // 我们: x = Cam-Scope (Right+). y = Cam-Scope (Up+).
-    // Eye Right -> Mask Left (Negative Offset).
-    // Eye Up -> Mask Down (Negative Offset). -> 这样才能露出一部分"下面"的视野?
-    // 验证: Look Up -> See "Floor" of tube -> Bright Spot moves Down relative to Near Rim. YES.
-    
     float sensitivity = 1.0 + eyeRelief; 
     float2 maskCenterOffset = -eyeOffset * strength * sensitivity; // 反向移动
     float2 maskCenter = float2(0.5, 0.5) + maskCenterOffset;
@@ -243,7 +208,6 @@ ParallaxResult computeParallax(
     float distToCenter = distance(correctedUV, correctedCenter);
     
     // 2. 出瞳边缘色散 (Chromatic Aberration at Edge)
-    // ----------------------------------------------------
     float edgeExponent = 5.0 * (1.1 - clamp(exitPupilSoftness, 0.1, 1.0)); 
     float caShift = 0.015 * strength * 20.0; 
     
@@ -267,44 +231,16 @@ ParallaxResult computeParallax(
     return result;
 }
 
-// ============================================================================
-
 float2 transform_reticle_coords(float2 uv)
 {
-    // Input: uv is in [0, 1] range, where (0.5, 0.5) is screen center.
-    // Output: Should return texture sample coordinates for the reticle.
-    //
-    // Goal:
-    //   - Offset (0, 0) -> Reticle centered on screen.
-    //   - Offset X > 0 -> Reticle moves RIGHT.
-    //   - Offset Y > 0 -> Reticle moves UP.
-    //   - Scale > 1 -> Larger reticle. Scale < 1 -> Smaller reticle.
-    
-    // 1. Center UV to [-0.5, 0.5]
     float2 centered = uv - 0.5;
-    
-    // 2. Aspect ratio correction
-    // Screen is typically wider than tall (e.g., 16:9).
-    // To maintain reticle proportions, scale X to match Y's physical distance.
     float aspectRatio = screenWidth / screenHeight;
     centered.x *= aspectRatio;
-    
-    // 3. Apply scale: DIVIDE so larger scale = larger reticle on screen
-    // (When we divide by a larger number, the sampling coords are smaller,
-    //  meaning we sample a smaller area of texture, making the texture appear bigger)
-    float safeScale = max(reticleScale, 0.01); // Prevent division by zero
+    float safeScale = max(reticleScale, 0.01);
     centered /= safeScale;
-    
-    // 4. Apply offset
-    // X > 0 -> Reticle moves RIGHT -> subtract from sample X
-    // Y > 0 -> Reticle moves UP -> add to sample Y (because UV Y is inverted from screen Y)
-    centered.x -= reticleOffsetX;
+    centered.x -= reticleOffsetX * aspectRatio;  // X偏移也需要考虑宽高比
     centered.y += reticleOffsetY;
-    
-    // 5. Undo aspect ratio correction before texture sampling
-    centered.x /= aspectRatio;
-    
-    // 6. Return to [0, 1] range for sampling
+    // 注意：不需要撤销宽高比校正，因为我们就是要让采样范围不对称
     float2 texCoord = centered + 0.5;
     
     return texCoord;
@@ -510,10 +446,6 @@ float4 main(PS_INPUT input) : SV_TARGET
 {
     float2 texCoord = input.position.xy / float2(viewportWidth, viewportHeight);
     float2 aspectCorrectTex = aspect_ratio_correction(texCoord);
-
-    // ========================================================================
-    // 新的视差系统
-    // ========================================================================
 
     // 计算眼睛相对于瞄镜的偏移
     float2 eyeOffset = calculateEyeOffset(
