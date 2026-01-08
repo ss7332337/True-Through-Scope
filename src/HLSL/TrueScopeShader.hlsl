@@ -371,7 +371,8 @@ float2 applySphericalDistortion(float2 texcoord)
     float distortionFactor = 1.0 + sphericalDistortionStrength * distance * distance;
     
     // 限制畸变作用的半径范围
-    float radiusMask = smoothstep(sphericalDistortionRadius, sphericalDistortionRadius * 0.8, distance);
+    // radiusMask: 0 在中心区域（应用完整畸变），1 在边缘外（无畸变）
+    float radiusMask = smoothstep(sphericalDistortionRadius * 0.8, sphericalDistortionRadius, distance);
     distortionFactor = lerp(distortionFactor, 1.0, radiusMask);
     
     // 应用畸变
@@ -393,13 +394,16 @@ float4 sampleWithSphericalDistortionAndChromatic(Texture2D tex, SamplerState sam
     uv.x *= screenWidth / screenHeight;
     
     float distance = length(uv);
-    float edgeFade = smoothstep(sphericalDistortionRadius, sphericalDistortionRadius * 0.9, distance);
+    // edgeFade: 1 在中心区域（应用完整畸变），0 在边缘外（无畸变）
+    float edgeFade = 1.0 - smoothstep(sphericalDistortionRadius * 0.9, sphericalDistortionRadius, distance);
     
     // Chromatic aberration: different distortion per channel
-    float distortionR = 1.0 + sphericalDistortionStrength * 1.02 * distance * distance;
+    // 增强色散差异系数，使效果更明显
+    float distortionR = 1.0 + sphericalDistortionStrength * 1.05 * distance * distance;
     float distortionG = 1.0 + sphericalDistortionStrength * distance * distance;
-    float distortionB = 1.0 + sphericalDistortionStrength * 0.98 * distance * distance;
+    float distortionB = 1.0 + sphericalDistortionStrength * 0.95 * distance * distance;
     
+    // edgeFade=1 时应用完整畸变，edgeFade=0 时无畸变
     distortionR = lerp(1.0, distortionR, edgeFade);
     distortionG = lerp(1.0, distortionG, edgeFade);
     distortionB = lerp(1.0, distortionB, edgeFade);
