@@ -10,7 +10,6 @@
 #include "CameraAdjustmentPanel.h"
 #include "DebugPanel.h"
 #include "ModelSwitcherPanel.h"
-#include "PostProcessPanel.h"
 #include "ReticlePanel.h"
 #include "SettingsPanel.h"
 #include "ZoomDataPanel.h"
@@ -83,7 +82,6 @@ namespace ThroughScope
 		std::unique_ptr<ModelSwitcherPanel> m_ModelSwitcherPanel;
 		std::unique_ptr<ReticlePanel> m_ReticlePanel;
 		std::unique_ptr<DebugPanel> m_DebugPanel;
-		std::unique_ptr<PostProcessPanel> m_PostProcessPanel;
 		std::unique_ptr<SettingsPanel> m_SettingsPanel;
 		std::unique_ptr<ZoomDataPanel> m_ZoomDataPanel;
 

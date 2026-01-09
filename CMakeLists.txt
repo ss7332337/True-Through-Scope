@@ -183,19 +183,9 @@ macro(set_hlsl_properties HLSL_FILE SHADER_TYPE ENTRY_POINT)
 endmacro()
 
 set_hlsl_properties(src/HLSL/TrueScopeShader.hlsl Pixel main)
-set_hlsl_properties(src/HLSL/ThermalVision_CS.hlsl Compute main)
 set_hlsl_properties(src/HLSL/ThermalVision_PS.hlsl Pixel main)
-set_hlsl_properties(src/HLSL/ScopeHDR_VS.hlsl Vertex main)
-set_hlsl_properties(src/HLSL/ScopeHDR_PS.hlsl Pixel main)
-set_hlsl_properties(src/HLSL/BloomAccumulate_PS.hlsl Pixel main)
-set_hlsl_properties(src/HLSL/GaussianBlur_PS.hlsl Pixel main)
-set_hlsl_properties(src/HLSL/DOFBlend_PS.hlsl Pixel main)
-set_hlsl_properties(src/HLSL/LUT_PS.hlsl Pixel main)
-set_hlsl_properties(src/HLSL/LuminanceDownsample_CS.hlsl Compute main)
-set_hlsl_properties(src/HLSL/LuminanceFinal_CS.hlsl Compute main)
 set_hlsl_properties(src/HLSL/ScopeMV_PS.hlsl Pixel main)
 set_hlsl_properties(src/HLSL/ScopeMV_VS.hlsl Vertex main)
-#set_hlsl_properties(src/HLSL/ZeroScopeMotionVector_PS.hlsl Pixel main)
 
 
 target_include_directories(

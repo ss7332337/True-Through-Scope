@@ -114,7 +114,13 @@ namespace ThroughScope::Utilities
 
 	inline bool IsInADS(RE::Actor* a)
 	{
-		return ((a->gunState == RE::GUN_STATE::kSighted || a->gunState == RE::GUN_STATE::kFireSighted) && !RE::UI::GetSingleton()->GetMenuOpen("ScopeMenu"));
+		return a && ((a->gunState == RE::GUN_STATE::kSighted || a->gunState == RE::GUN_STATE::kFireSighted) && !RE::UI::GetSingleton()->GetMenuOpen("ScopeMenu"));
+	}
+
+	inline bool IsPlayerInADS()
+	{
+		auto player = RE::PlayerCharacter::GetSingleton();
+		return player && ((player->gunState == RE::GUN_STATE::kSighted || player->gunState == RE::GUN_STATE::kFireSighted) && !RE::UI::GetSingleton()->GetMenuOpen("ScopeMenu"));
 	}
 
 

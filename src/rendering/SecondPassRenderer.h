@@ -6,9 +6,7 @@
 #include "RenderUtilities.h"
 #include "LightBackupSystem.h"
 #include "RenderStateManager.h"
-#include "ScopeHDR.h"
-#include "ScopePostProcess.h"
-#include "LuminancePass.h"
+
 
 namespace ThroughScope
 {
@@ -67,8 +65,7 @@ namespace ThroughScope
          * 执行第二次渲染,生成瞄具内容
          */
         void DrawScopeContent();
-        void ApplyEngineHDREffect();  // 应用引擎的 HDR 后处理（包括 Color Grading）- 已弃用
-        void ApplyCustomHDREffect();  // 应用自定义 HDR 后处理（推荐）
+
         void ApplyThermalVisionEffect(); // 应用热成像效果
         void RestoreFirstPass();
         void CleanupResources();
@@ -123,21 +120,9 @@ namespace ThroughScope
         ID3D11RenderTargetView* m_thermalRTV = nullptr;
         ID3D11ShaderResourceView* m_thermalSRV = nullptr;
         
-        // ========== HDR 资源 ==========
-        ScopeHDR* m_scopeHDR = nullptr;                   // 自定义 HDR 效果（旧版）
-        ScopePostProcess* m_postProcess = nullptr;        // 新版后处理管线
-        LuminancePass* m_luminancePass = nullptr;         // 独立亮度计算
-        ID3D11Texture2D* m_hdrTempTexture = nullptr;      // t1 替换：Scope 场景纹理
-        ID3D11ShaderResourceView* m_hdrTempSRV = nullptr;
+
         
-        // HDR 替换纹理（用于替换 t0, t2, t3）
-        ID3D11Texture2D* m_hdrBloomTexture = nullptr;     // t0 替换：黑色 bloom 纹理 (480x270)
-        ID3D11ShaderResourceView* m_hdrBloomSRV = nullptr;
-        ID3D11Texture2D* m_hdrLuminanceTexture = nullptr; // t2 替换：固定亮度纹理 (1x1)
-        ID3D11ShaderResourceView* m_hdrLuminanceSRV = nullptr;
-        ID3D11Texture2D* m_hdrMaskTexture = nullptr;      // t3 替换：全零材质遮罩 (1920x1080)
-        ID3D11ShaderResourceView* m_hdrMaskSRV = nullptr;
-        bool m_hdrDefaultTexturesCreated = false;
+
 
         // ========== 错误处理 ==========
         mutable std::string m_lastError;

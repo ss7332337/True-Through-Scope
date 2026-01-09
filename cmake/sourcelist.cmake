@@ -11,7 +11,6 @@ set(SOURCES
 	src/UI/Panels/SettingsPanel.cpp
 	src/UI/Panels/ReticlePanel.cpp
 	src/UI/Panels/ZoomDataPanel.cpp
-	src/UI/Panels/PostProcessPanel.cpp
 	#src/UI/Panels/PerformancePanel.cpp
 	src/UI/Localization/LocalizationManager.cpp
 	src/EventHandler.cpp
@@ -29,12 +28,6 @@ set(SOURCES
 	src/rendering/ThermalVisionControl.cpp
 	src/rendering/ThermalVision.cpp
 	src/rendering/TemperatureDetection.cpp
-	src/rendering/ScopeHDR.cpp
-	src/rendering/BloomPass.cpp
-	src/rendering/DOFPass.cpp
-	src/rendering/ScopePostProcess.cpp
-	src/rendering/LUTPass.cpp
-	src/rendering/LuminancePass.cpp
 	src/rendering/ScopeRenderingManager.cpp
 	src/rendering/RenderTargetMerger.cpp
 	src/ImageSpaceDebugHook.cpp

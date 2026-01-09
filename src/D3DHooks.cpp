@@ -611,7 +611,7 @@ namespace ThroughScope {
 			
 			D3DPERF_EndEvent();
 			
-			if (ImGuiManager::GetSingleton()->IsMenuOpen()) {
+			if (ImGuiManager::GetSingleton()->IsMenuOpen() && !Utilities::IsPlayerInADS()) {
 				return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 			}
 			
