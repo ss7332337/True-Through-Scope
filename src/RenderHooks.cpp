@@ -11,6 +11,7 @@
 #include "rendering/RenderTargetMerger.h"
 #include "rendering/RenderStateManager.h"
 #include "ENBIntegration.h"
+#include "FGCompatibility.h"
 #include <d3d9.h>  // for D3DPERF_BeginEvent / D3DPERF_EndEvent
 #include <DirectXMath.h>
 #include <chrono>
@@ -29,10 +30,18 @@ namespace ThroughScope
 	static ScopeRenderingManager* g_scopeRenderMgr = ScopeRenderingManager::GetSingleton();
 
 	// ========== fo4test Frame Generation Interop ==========
-	// Motion Vector Deferral API - prevents FG ghosting by coordinating MV copy timing
-	// MV Region Override API - marks scope region to skip FG interpolation
+	// Supports two modes:
+	// 1. XifeiliAPI: Uses exported functions from fo4test_xifeili (preferred)
+	// 2. VanillaHook: Uses FGCompatibility for vanilla fo4test (Hook-based)
 	namespace FGInterop
 	{
+		enum class Mode {
+			None,           // FG not detected
+			XifeiliAPI,     // fo4test_xifeili with exported API
+			VanillaHook     // vanilla fo4test with hook-based FGCompatibility
+		};
+		
+		// Function pointers for xifeili API
 		typedef void (*FnNotifyComplete)();
 		typedef int (*FnRegister)();
 		typedef int (*FnUnregister)();
@@ -49,6 +58,7 @@ namespace ThroughScope
 		static bool g_Initialized = false;
 		static HMODULE g_Module = nullptr;
 		static bool g_TryInitFGInterop = false;
+		static Mode g_Mode = Mode::None;
 		
 		void Initialize()
 		{
@@ -61,69 +71,124 @@ namespace ThroughScope
 			g_Module = GetModuleHandleA("AAAFrameGeneration.dll");
 			if (!g_Module) {
 				logger::info("[FGInterop] AAAFrameGeneration.dll not loaded");
+				g_Mode = Mode::None;
 				return;
 			}
 			
-			// Motion Vector Deferral API
+			// Try to resolve fo4test_xifeili API first
 			NotifyComplete = (FnNotifyComplete)GetProcAddress(g_Module, "AAAFG_NotifyMotionVectorUpdateComplete");
 			Register = (FnRegister)GetProcAddress(g_Module, "AAAFG_RegisterMotionVectorDeferral");
 			Unregister = (FnUnregister)GetProcAddress(g_Module, "AAAFG_UnregisterMotionVectorDeferral");
 			
-			// MV Region Override API
 			GetMVOverrideMaskRTV = (FnGetMVOverrideMaskRTV)GetProcAddress(g_Module, "AAAFG_GetMVOverrideMaskRTV");
 			RegisterMVRegionOverride = (FnRegisterMVRegionOverride)GetProcAddress(g_Module, "AAAFG_RegisterMVRegionOverride");
 			UnregisterMVRegionOverride = (FnUnregisterMVRegionOverride)GetProcAddress(g_Module, "AAAFG_UnregisterMVRegionOverride");
 			
 			if (NotifyComplete && Register && Unregister) {
+				// fo4test_xifeili detected - use its API
 				int count = Register();
 				g_Initialized = true;
-				logger::info("[FGInterop] Registered for MV deferral, count: {}", count);
+				g_Mode = Mode::XifeiliAPI;
+				logger::info("[FGInterop] Using XifeiliAPI mode, registered count: {}", count);
 				
-				// Also register for MV region override to enable mask processing
 				if (RegisterMVRegionOverride && GetMVOverrideMaskRTV) {
 					int overrideCount = RegisterMVRegionOverride();
 					logger::info("[FGInterop] MV Region Override API available, registered count: {}", overrideCount);
 				}
 			} else {
-				logger::warn("[FGInterop] Failed to resolve API exports");
+				// Vanilla fo4test detected - use FGCompatibility hook
+				logger::info("[FGInterop] Xifeili API not available, using VanillaHook mode with FGCompatibility");
+				
+				auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+				if (rendererData && rendererData->context) {
+					auto context = (ID3D11DeviceContext*)rendererData->context;
+					if (FGCompatibility::Initialize(context)) {
+						g_Initialized = true;
+						g_Mode = Mode::VanillaHook;
+						logger::info("[FGInterop] VanillaHook mode initialized successfully");
+					} else {
+						logger::warn("[FGInterop] Failed to initialize VanillaHook mode");
+						g_Mode = Mode::None;
+					}
+				}
 			}
 		}
 		
 		void Shutdown()
 		{
 			if (g_Initialized) {
-				if (UnregisterMVRegionOverride) {
-					UnregisterMVRegionOverride();
-				}
-				if (Unregister) {
-					Unregister();
+				if (g_Mode == Mode::XifeiliAPI) {
+					if (UnregisterMVRegionOverride) {
+						UnregisterMVRegionOverride();
+					}
+					if (Unregister) {
+						Unregister();
+					}
+				} else if (g_Mode == Mode::VanillaHook) {
+					FGCompatibility::Shutdown();
 				}
 				logger::info("[FGInterop] Unregistered");
 			}
 			g_Initialized = false;
+			g_Mode = Mode::None;
 		}
 		
-		// Call after ApplyMotionVectorMask each frame
+		// Notify that motion vector updates are complete for this frame
+		// For VanillaHook mode, this triggers the MV copy with mask
 		void NotifyMVComplete()
 		{
-			if (g_Initialized && NotifyComplete) {
+			if (!g_Initialized) return;
+			
+			if (g_Mode == Mode::XifeiliAPI && NotifyComplete) {
 				NotifyComplete();
+			} else if (g_Mode == Mode::VanillaHook) {
+				// For VanillaHook mode, execute the MV copy with mask
+				auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+				if (rendererData && rendererData->context) {
+					auto context = (ID3D11DeviceContext*)rendererData->context;
+					FGCompatibility::ExecuteMVCopyWithMask(context);
+				}
 			}
 		}
 		
 		// Get the RTV for writing to the MV override mask
-		// Returns nullptr if FG not active or API not available
 		ID3D11RenderTargetView* GetMaskRTV()
 		{
-			if (g_Initialized && GetMVOverrideMaskRTV) {
+			if (!g_Initialized) return nullptr;
+			
+			if (g_Mode == Mode::XifeiliAPI && GetMVOverrideMaskRTV) {
 				return GetMVOverrideMaskRTV();
+			} else if (g_Mode == Mode::VanillaHook) {
+				return FGCompatibility::GetMaskRTV();
 			}
 			return nullptr;
 		}
 		
+		// Clear the mask at the start of each frame (VanillaHook mode only)
+		void ClearMask()
+		{
+			if (!g_Initialized) return;
+			
+			if (g_Mode == Mode::VanillaHook) {
+				auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+				if (rendererData && rendererData->context) {
+					auto context = (ID3D11DeviceContext*)rendererData->context;
+					FGCompatibility::ClearMask(context);
+				}
+			}
+			// XifeiliAPI mode: mask is cleared by fo4test automatically
+		}
+		
 		bool IsActive() { return g_Initialized; }
-		bool IsMaskAPIAvailable() { return g_Initialized && GetMVOverrideMaskRTV != nullptr; }
+		bool IsMaskAPIAvailable() { 
+			if (!g_Initialized) return false;
+			if (g_Mode == Mode::XifeiliAPI) return GetMVOverrideMaskRTV != nullptr;
+			if (g_Mode == Mode::VanillaHook) return FGCompatibility::IsMaskAPIAvailable();
+			return false;
+		}
+		Mode GetCurrentMode() { return g_Mode; }
 	}
+
 
 	// k1stPersonCullingGroup 地址
 	// 注意：k1stPersonCullingGroup 是一个 BSCullingGroup 对象，不是指针
@@ -392,6 +457,10 @@ namespace ThroughScope
 			}
 
 			D3DPERF_BeginEvent(0xFF00FF00, L"TrueThroughScope_FirstPass");
+			
+			// Clear the FG interpolation mask at the start of each frame (VanillaHook mode only)
+			FGInterop::ClearMask();
+			
 			g_hookMgr->g_RenderPreUIOriginal(ptr_drawWorld);
 			D3DPERF_EndEvent();
 

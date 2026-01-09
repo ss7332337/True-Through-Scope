@@ -40,6 +40,7 @@ set(SOURCES
 	src/ImageSpaceDebugHook.cpp
 	src/HDRStateCache.cpp
 	src/ENBIntegration.cpp
+	src/FGCompatibility.cpp
 )
 	
 	
