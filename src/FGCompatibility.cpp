@@ -2,6 +2,7 @@
 #include "RE/Bethesda/BSGraphics.hpp"
 #include <d3d9.h>  // for D3DPERF_BeginEvent / D3DPERF_EndEvent
 #include <d3dcompiler.h>
+#include "D3DHooks.h"
 #include <filesystem>
 
 namespace ThroughScope
@@ -39,44 +40,22 @@ namespace FGCompatibility
         if (g_ApplyMaskToMVCS) return true;  // 已编译
 
         const wchar_t* shaderPath = L"Data\\Shaders\\ApplyMaskToMVCS.hlsl";
-        
-        if (!std::filesystem::exists(shaderPath)) {
-            logger::error("[FGCompat] Shader file not found: Data\\Shaders\\ApplyMaskToMVCS.hlsl");
-            return false;
-        }
+        const wchar_t* csoPath = L"Data\\Shaders\\ApplyMaskToMVCS.cso";
 
         ID3DBlob* shaderBlob = nullptr;
-        ID3DBlob* errorBlob = nullptr;
         
-        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
-        
-        HRESULT hr = D3DCompileFromFile(
+        // 使用 D3DHooks::CreateShaderFromFile 自动处理 CSO 缓存
+        HRESULT hr = D3DHooks::CreateShaderFromFile(
+            csoPath,
             shaderPath,
-            nullptr,
-            D3D_COMPILE_STANDARD_FILE_INCLUDE,
             "main",
             "cs_5_0",
-            flags,
-            0,
-            &shaderBlob,
-            &errorBlob
+            &shaderBlob
         );
         
         if (FAILED(hr)) {
-            if (errorBlob) {
-                logger::error("[FGCompat] Shader compilation failed: {}", 
-                    static_cast<char*>(errorBlob->GetBufferPointer()));
-                errorBlob->Release();
-            } else {
-                logger::error("[FGCompat] Shader compilation failed with HRESULT: {:X}", hr);
-            }
+            logger::error("[FGCompat] Shader compilation/loading failed with HRESULT: {:X}", hr);
             return false;
-        }
-        
-        if (errorBlob) {
-            logger::debug("[FGCompat] Shader warnings: {}", 
-                static_cast<char*>(errorBlob->GetBufferPointer()));
-            errorBlob->Release();
         }
         
         hr = device->CreateComputeShader(
@@ -86,14 +65,16 @@ namespace FGCompatibility
             g_ApplyMaskToMVCS.ReleaseAndGetAddressOf()
         );
         
-        shaderBlob->Release();
+        if (shaderBlob) {
+            shaderBlob->Release();
+        }
         
         if (FAILED(hr)) {
             logger::error("[FGCompat] Failed to create compute shader: {:X}", hr);
             return false;
         }
         
-        logger::info("[FGCompat] ApplyMaskToMVCS shader compiled successfully");
+        logger::info("[FGCompat] ApplyMaskToMVCS shader loaded successfully");
         return true;
     }
 

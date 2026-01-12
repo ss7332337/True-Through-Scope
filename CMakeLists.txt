@@ -186,6 +186,7 @@ set_hlsl_properties(src/HLSL/TrueScopeShader.hlsl Pixel main)
 set_hlsl_properties(src/HLSL/ThermalVision_PS.hlsl Pixel main)
 set_hlsl_properties(src/HLSL/ScopeMV_PS.hlsl Pixel main)
 set_hlsl_properties(src/HLSL/ScopeMV_VS.hlsl Vertex main)
+set_hlsl_properties(src/HLSL/ApplyMaskToMVCS.hlsl Compute main)
 
 
 target_include_directories(
