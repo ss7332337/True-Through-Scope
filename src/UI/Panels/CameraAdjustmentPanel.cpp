@@ -191,7 +191,7 @@ namespace ThroughScope
 
 			comboLabel = fmt::format(fmt::runtime(LOC("camera.config.modification")), createOption, editorIdStr);
 		} else {
-			comboLabel = "Invalid Selection";
+			comboLabel = LOC("camera.invalid_selection");
 			createOption = 0;  // Force reset to base weapon
 		}
 
@@ -328,7 +328,7 @@ namespace ThroughScope
 
 		if (!canCreateConfig) {
 			ImGui::EndDisabled();
-			ImGui::TextColored(m_WarningColor, "Please select a model file to create configuration");
+			ImGui::TextColored(m_WarningColor, LOC("camera.select_model_warning"));
 		}
 	}
 
@@ -513,70 +513,70 @@ namespace ThroughScope
 
 	void CameraAdjustmentPanel::RenderSphericalDistortionSettings()
 	{
-		if (ImGui::CollapsingHeader("球形畸变设置", ImGuiTreeNodeFlags_DefaultOpen))
+		if (ImGui::CollapsingHeader(LOC("camera.distortion_settings"), ImGuiTreeNodeFlags_DefaultOpen))
 		{
-			ImGui::Checkbox("启用球形畸变", &m_EnableSphericalDistortion);
+			ImGui::Checkbox(LOC("camera.enable_distortion"), &m_EnableSphericalDistortion);
 			ImGui::SameLine();
-			ImGui::Text("(模拟真实镜头的光学畸变)");
+			ImGui::Text(LOC("camera.distortion_tooltip"));
 			
 			ImGui::PushID("SphericalDistortion");
 			if (m_EnableSphericalDistortion)
 			{
-				ImGui::SliderFloat("畸变强度", &m_SphericalDistortionStrength, -0.5f, 0.5f, "%.3f");
-				ImGui::Text("正值=桶形畸变，负值=枕形畸变");
+				ImGui::SliderFloat(LOC("camera.distortion_strength"), &m_SphericalDistortionStrength, -0.5f, 0.5f, "%.3f");
+				ImGui::Text(LOC("camera.distortion_strength_desc"));
 				
-				ImGui::SliderFloat("畸变半径", &m_SphericalDistortionRadius, 0.1f, 1.0f, "%.2f");
-				ImGui::Text("控制畸变作用的范围");
+				ImGui::SliderFloat(LOC("camera.distortion_radius"), &m_SphericalDistortionRadius, 0.1f, 1.0f, "%.2f");
+				ImGui::Text(LOC("camera.distortion_control_range"));
 				
-				ImGui::Text("畸变中心偏移:");
-				ImGui::SliderFloat("X偏移", &m_SphericalDistortionCenterX, -0.5f, 0.5f, "%.3f");
-				ImGui::SliderFloat("Y偏移", &m_SphericalDistortionCenterY, -0.5f, 0.5f, "%.3f");
+				ImGui::Text(LOC("camera.center_offset"));
+				ImGui::SliderFloat(LOC("camera.offset_x"), &m_SphericalDistortionCenterX, -0.5f, 0.5f, "%.3f");
+				ImGui::SliderFloat(LOC("camera.offset_y"), &m_SphericalDistortionCenterY, -0.5f, 0.5f, "%.3f");
 				
 				ImGui::Separator();
-				ImGui::Checkbox("启用色散效果", &m_EnableChromaticAberration);
+				ImGui::Checkbox(LOC("camera.enable_chromatic"), &m_EnableChromaticAberration);
 				ImGui::SameLine();
-				ImGui::Text("(高质量畸变，模拟RGB分离)");
+				ImGui::Text(LOC("camera.chromatic_tooltip"));
 				
 				ImGui::Separator();
-				ImGui::Text("快速预设:");
+				ImGui::Text(LOC("camera.presets"));
 				
-				// 预设按钮
-				if (ImGui::Button("轻微桶形")) {
+				// Preset Buttons
+				if (ImGui::Button(LOC("camera.preset_barrel_slight"))) {
 					m_SphericalDistortionStrength = 0.1f;
 					m_SphericalDistortionRadius = 0.8f;
 					m_SphericalDistortionCenterX = 0.0f;
 					m_SphericalDistortionCenterY = 0.0f;
 				}
 				ImGui::SameLine();
-				if (ImGui::Button("中等桶形")) {
+				if (ImGui::Button(LOC("camera.preset_barrel_medium"))) {
 					m_SphericalDistortionStrength = 0.2f;
 					m_SphericalDistortionRadius = 0.9f;
 					m_SphericalDistortionCenterX = 0.0f;
 					m_SphericalDistortionCenterY = 0.0f;
 				}
 				ImGui::SameLine();
-				if (ImGui::Button("强烈桶形")) {
+				if (ImGui::Button(LOC("camera.preset_barrel_strong"))) {
 					m_SphericalDistortionStrength = 0.3f;
 					m_SphericalDistortionRadius = 1.0f;
 					m_SphericalDistortionCenterX = 0.0f;
 					m_SphericalDistortionCenterY = 0.0f;
 				}
 				
-				if (ImGui::Button("轻微枕形")) {
+				if (ImGui::Button(LOC("camera.preset_pincushion_slight"))) {
 					m_SphericalDistortionStrength = -0.1f;
 					m_SphericalDistortionRadius = 0.8f;
 					m_SphericalDistortionCenterX = 0.0f;
 					m_SphericalDistortionCenterY = 0.0f;
 				}
 				ImGui::SameLine();
-				if (ImGui::Button("中等枕形")) {
+				if (ImGui::Button(LOC("camera.preset_pincushion_medium"))) {
 					m_SphericalDistortionStrength = -0.2f;
 					m_SphericalDistortionRadius = 0.9f;
 					m_SphericalDistortionCenterX = 0.0f;
 					m_SphericalDistortionCenterY = 0.0f;
 				}
 				ImGui::SameLine();
-				if (ImGui::Button("重置畸变")) {
+				if (ImGui::Button(LOC("camera.reset_distortion"))) {
 					m_SphericalDistortionStrength = 0.0f;
 					m_SphericalDistortionRadius = 0.8f;
 					m_SphericalDistortionCenterX = 0.0f;

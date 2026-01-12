@@ -17,6 +17,7 @@ namespace ThroughScope
         void Update() override;
         bool Initialize() override;
         const char* GetPanelName() const override { return LOC("ui.menu.models"); }
+        const char* GetPanelID() const override { return "ModelSwitcher"; }
         bool ShouldShow() const override;
 		bool GetSaved() const override { return isSaved; }
 

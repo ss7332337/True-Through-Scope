@@ -18,6 +18,7 @@ namespace ThroughScope
         void Update() override;
         bool Initialize() override;
         const char* GetPanelName() const override { return LOC("ui.menu.zoom"); }
+        const char* GetPanelID() const override { return "ZoomData"; }
 		bool GetSaved() const override { return isSaved; }
 
         // Current values access

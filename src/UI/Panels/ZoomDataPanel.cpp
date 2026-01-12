@@ -20,7 +20,7 @@ namespace ThroughScope
         RenderWeaponInformation();
 
         if (!weaponInfo.currentConfig) {
-            ImGui::TextColored(m_WarningColor, "No configuration found for this weapon");
+            ImGui::TextColored(m_WarningColor, LOC("zoom.no_config_found"));
             return;
         }
 

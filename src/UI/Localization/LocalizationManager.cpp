@@ -11,8 +11,8 @@ namespace ThroughScope
     // 静态语言信息
     const LocalizationManager::LanguageInfo LocalizationManager::s_LanguageInfo[] = {
         { "English", "en" },
-        { "简体中文", "zh_CN" },
-        { "繁體中文", "zh_TW" },
+        { "简体中文", "zh_SC" },
+        { "繁體中文", "zh_TC" },
         { "日本語", "ja" },
         { "한국어", "ko" },
         { "Deutsch", "de" },
@@ -159,6 +159,17 @@ namespace ThroughScope
     bool LocalizationManager::LoadLanguageFromJSON(const std::string& filePath, Language language) 
     {
         try {
+            // 如果是英语，先加载默认值
+            if (language == Language::English) {
+                auto defaults = GetDefaultEnglishJSON();
+                auto& translations = m_Translations[language];
+                for (auto& [key, value] : defaults.items()) {
+                    if (value.is_string()) {
+                        translations[key] = value.get<std::string>();
+                    }
+                }
+            }
+
             std::ifstream file(filePath);
             if (!file.is_open()) {
                 // 如果文件不存在，为英语创建默认文件
@@ -167,7 +178,8 @@ namespace ThroughScope
                     file.open(filePath);
                 }
                 if (!file.is_open()) {
-                    return false;
+                    // 如果是英语，返回true（因为我们已经加载了默认值）
+                    return language == Language::English;
                 }
             }
 
@@ -193,8 +205,19 @@ namespace ThroughScope
 
     void LocalizationManager::CreateDefaultEnglishFile(const std::string& filePath) 
     {
-        nlohmann::json defaultTranslations = {
-            // 通用UI文本
+        nlohmann::json defaultTranslations = GetDefaultEnglishJSON();
+
+        std::ofstream file(filePath);
+        if (file.is_open()) {
+            file << defaultTranslations.dump(4);
+            file.close();
+        }
+    }
+
+    nlohmann::json LocalizationManager::GetDefaultEnglishJSON()
+    {
+        return {
+            // General UI
             {"ui.menu.settings", "Settings"},
             {"ui.menu.camera", "Camera Adjustment"},
             {"ui.menu.reticle", "Reticle"},
@@ -202,7 +225,7 @@ namespace ThroughScope
             {"ui.menu.models", "Model Switcher"},
             {"ui.menu.zoom", "Zoom Data"},
             
-            // 设置面板
+            // Settings Panel
             {"settings.tab.interface", "Interface"},
             {"settings.tab.performance", "Performance"},
             {"settings.tab.keybindings", "Key Bindings"},
@@ -225,7 +248,7 @@ namespace ThroughScope
             
             {"settings.advanced.warning", "Warning: These settings are for advanced users only!"},
             
-            // 按钮
+            // Buttons
             {"button.save", "Save"},
             {"button.reset", "Reset to Defaults"},
             {"button.cancel", "Cancel"},
@@ -235,13 +258,13 @@ namespace ThroughScope
             {"button.clear", "Clear"},
             {"button.refresh", "Refresh"},
             
-            // 状态
+            // Status
             {"status.unsaved_changes", "● Unsaved changes"},
             {"status.all_saved", "○ All saved"},
             {"status.night_vision_on", "Night Vision: ON"},
             {"status.night_vision_off", "Night Vision: OFF"},
             
-            // 相机调整面板
+            // Camera Adjustment Panel
             {"camera.config.target", "Configuration Target:"},
             {"camera.config.scope_shape", "Scope Shape (Model File):"},
             {"camera.config.no_config", "No configuration found for this weapon"},
@@ -250,17 +273,19 @@ namespace ThroughScope
             {"camera.config.base_weapon", "Base Weapon"},
             {"camera.config.modification", "Modification #{} - {}"},
             {"camera.config.select_model", "Select a model..."},
+            {"camera.select_model_warning", "Please select a model file to create configuration"},
+            {"camera.invalid_selection", "Invalid Selection"},
             
-            // 错误和警告
+            // Errors and Warnings
             {"error.reset_confirm", "Are you sure you want to reset ALL settings to defaults?"},
             {"error.cannot_undo", "This action cannot be undone."},
             {"warning.advanced_users", "Warning: These settings are for advanced users only!"},
             
-            // 工具提示
+            // Tooltips
             {"tooltip.base_weapon", "Create configuration for the base weapon"},
             {"tooltip.modification", "Create configuration specific to this modification"},
             
-            // 相机调整面板详细设置
+            // Camera Adjustment Panel Detailed Settings
             {"camera.position", "Position"},
             {"camera.rotation", "Rotation"},
             {"camera.scale", "Scale"},
@@ -270,7 +295,7 @@ namespace ThroughScope
             {"camera.reset_all", "Reset All Adjustments"},
             {"camera.apply_settings", "Apply Settings"},
             
-            // 准星面板
+            // Reticle Panel
             {"reticle.current", "Current Reticle"},
             {"reticle.texture_selection", "Texture Selection"},
             {"reticle.adjustments", "Adjustments"},
@@ -280,7 +305,7 @@ namespace ThroughScope
             {"reticle.preview", "Preview"},
             {"reticle.reset_defaults", "Reset to Defaults"},
             
-            // 调试面板
+            // Debug Panel
             {"debug.camera_info", "Camera Information"},
             {"debug.tts_node_info", "TTSNode Information"},
             {"debug.rendering_status", "Rendering Status"},
@@ -289,21 +314,21 @@ namespace ThroughScope
             {"debug.refresh_node", "Refresh TTSNode"},
             {"debug.copy_values", "Copy Values to Clipboard"},
             
-            // 模型切换器面板
+            // Model Switcher Panel
             {"models.current_model", "Current Model"},
             {"models.available_models", "Available Models"},
             {"models.switch_model", "Switch Model"},
             {"models.reload_current", "Reload Current Model"},
             {"models.remove_current", "Remove Current Model"},
             
-            // 变焦数据面板
+            // Zoom Data Panel
             {"zoom.fov_multiplier", "FOV Multiplier:"},
             {"zoom.offset_x", "Offset X:"},
             {"zoom.offset_y", "Offset Y:"},
             {"zoom.offset_z", "Offset Z:"},
             {"zoom.reset_settings", "Reset Settings"},
             
-            // 通用
+            // Common
             {"common.none", "None"},
             {"common.enabled", "Enabled"},
             {"common.disabled", "Disabled"},
@@ -314,7 +339,7 @@ namespace ThroughScope
             {"common.yes", "Yes"},
             {"common.no", "No"},
             
-            // Debug panel
+            // Debug panel extended
             {"debug.scope_camera_info", "Scope Camera Information"},
             {"debug.camera_not_available", "Camera not available"},
             {"debug.local_position", "Local Position"},
@@ -377,7 +402,7 @@ namespace ThroughScope
             {"tooltip.show_advanced_debug", "Show additional debug information and performance data"},
             {"tooltip.refresh_interval", "Debug information refresh interval"},
             
-            // 更多相机调整面板文本
+            // More Camera Adjustment Panel
             {"camera.weapon_info", "Current Weapon Information"},
             {"camera.no_weapon", "No valid weapon equipped"},
             {"camera.equip_weapon", "Please equip a weapon with scope capabilities to configure settings."},
@@ -398,7 +423,7 @@ namespace ThroughScope
             {"camera.thermal_vision_settings", "Thermal Vision Settings"},
             {"camera.enable_night_vision", "Enable Night Vision"},
             {"camera.enable_thermal_vision", "Enable Thermal Vision"},
-            {"camera.night_vision_Tips", "(Click the Save button to take effect)"},
+            {"camera.night_vision_Tips", "(Recommended)"},
             {"camera.intensity", "Intensity"},
             {"camera.noise_scale", "Noise Scale"},
             {"camera.noise_amount", "Noise Amount"},
@@ -411,7 +436,7 @@ namespace ThroughScope
             {"camera.reset_confirm_desc", "This will restore default position, rotation, and scale values."},
             {"camera.yes_reset", "Yes, Reset"},
             
-            // 新的视差设置
+            // Parallax Settings
             {"camera.enable_parallax", "Enable Parallax"},
             {"camera.parallax_offset", "Parallax Offset Settings"},
             {"camera.parallax_strength", "Parallax Strength"},
@@ -425,7 +450,7 @@ namespace ThroughScope
             {"camera.vignette_radius", "Vignette Radius"},
             {"camera.vignette_softness", "Softness"},
             
-            // 准星面板详细文本
+            // Reticle PAnel
             {"reticle.no_config", "No reticle configuration available"},
             {"reticle.equip_scope", "Please equip a weapon with a scope to configure reticle settings."},
             {"reticle.current_texture", "Current Texture: %s"},
@@ -438,7 +463,7 @@ namespace ThroughScope
             {"reticle.failed_apply", "Failed to apply reticle settings!"},
             {"reticle.click_save", "  (Click 'Save Settings' to persist)"},
             
-            // 调试面板详细文本
+            // Debug Panel extended
             {"debug.local_pos", "Local Position: [%.3f, %.3f, %.3f]"},
             {"debug.world_pos", "World Position: [%.3f, %.3f, %.3f]"},
             {"debug.local_rot", "Local Rotation: [%.1f°, %.1f°, %.1f°]"},
@@ -452,7 +477,7 @@ namespace ThroughScope
             {"debug.frame_time", "Frame Time: %.3f ms"},
             {"debug.frame_count", "Frame Count: %d"},
             
-            // 模型切换器面板详细文本
+            // Model Switcher extended
             {"models.no_config", "No model configuration available"},
             {"models.equip_scope", "Please equip a weapon with a scope to switch models."},
             {"models.current_model_label", "Current Model: %s"},
@@ -467,7 +492,7 @@ namespace ThroughScope
             {"models.remove_success", "Model removed successfully!"},
             {"models.remove_failed", "Failed to remove model!"},
             
-            // ModelSwitcherPanel详细文本
+            // ModelSwitcherPanel extended
             {"models.current_model_info", "Current Model Information"},
             {"models.no_config_available", "No configuration available"},
             {"models.status_loaded", "Status: ✓ Loaded and Active\nPosition: [%.2f, %.2f, %.2f]"},
@@ -491,13 +516,13 @@ namespace ThroughScope
             {"models.error_removing", "Error removing model: {}"},
             {"models.error_scanning", "Error scanning NIF files: {}"},
             
-            // ModelSwitcherPanel工具提示
+            // Tooltips ModelSwitcher
             {"tooltip.auto_load_config", "Load the model specified in the current configuration"},
             {"tooltip.click_to_switch", "Click to switch to this model\nFile: %s"},
             {"tooltip.reload_current", "Reload the current model from the configuration"},
             {"tooltip.remove_current", "Remove the currently loaded TTSNode"},
             
-            // 变焦数据面板详细文本
+            // Zoom Data Panel extended
             {"zoom.weapon_info", "Current Weapon Information"},
             {"zoom.no_config", "No zoom configuration available"},
             {"zoom.equip_scope", "Please equip a weapon with a scope to configure zoom settings."},
@@ -507,7 +532,7 @@ namespace ThroughScope
             {"zoom.settings_saved", "Zoom settings saved successfully!"},
             {"zoom.settings_failed", "Failed to save zoom settings!"},
             
-            // ZoomDataPanel详细文本
+            // ZoomDataPanel extended
             {"zoom.no_weapon", "No valid weapon equipped"},
             {"zoom.weapon_label", "Weapon: [%08X] %s"},
             {"zoom.config_source_mod", "Config Source: [%08X] %s (%s)"},
@@ -518,8 +543,9 @@ namespace ThroughScope
             {"zoom.fine_tuning", "Fine Tuning:"},
             {"zoom.settings_reset", "Zoom data settings reset to defaults!"},
             {"zoom.no_config_loaded", "No configuration loaded to apply zoom data settings."},
-            
-            // ReticlePanel详细文本
+            {"zoom.no_config_found", "No configuration found for this weapon"},
+
+            // ReticlePanel extended
             {"reticle.current_info", "Current Reticle Information"},
             {"reticle.no_config_available", "No configuration available"},
             {"reticle.current_texture", "Texture: %s"},
@@ -562,7 +588,7 @@ namespace ThroughScope
             {"reticle.error_scanning", "Error scanning texture files: {}"},
             {"reticle.current_suffix", "(Current)"},
             
-            // ZoomDataPanel和ReticlePanel工具提示
+            // Tooltips Zoom
             {"tooltip.fov_multiplier", "Multiplier applied to the field of view when zooming"},
             {"tooltip.reticle_scale", "Adjust the size of the reticle (0.1 = very small, 1 = very large)"},
             {"tooltip.horizontal_offset", "Horizontal position of the reticle (0.0 = left, 0.5 = center, 1.0 = right)"},
@@ -574,7 +600,7 @@ namespace ThroughScope
             {"tooltip.reset_defaults", "Hold Ctrl and click to reset all settings to defaults"},
             {"tooltip.show_preview", "Show texture preview and information"},
             
-            // 设置面板更多文本
+            // Settings Panel more
             {"settings.show_tooltips", "Show Help Tooltips"},
             {"settings.auto_save", "Auto-Save Changes"},
             {"settings.confirm_reset", "Confirm Before Reset"},
@@ -588,7 +614,7 @@ namespace ThroughScope
             {"settings.reset_all", "Reset All Settings"},
             {"settings.yes_reset_all", "Yes, Reset Everything"},
             
-            // 工具提示文本
+            // Tooltips
             {"tooltip.show_tooltips", "Show helpful tooltips when hovering over UI elements"},
             {"tooltip.auto_save", "Automatically save changes periodically"},
             {"tooltip.auto_save_interval", "How often to auto-save (in seconds)"},
@@ -602,12 +628,12 @@ namespace ThroughScope
             {"tooltip.reduced_animations", "Reduce UI animations to improve performance"},
             {"tooltip.select_language", "Select your preferred language"},
             
-            // 键位绑定工具提示
+            // Keys Tooltips
             {"tooltip.key_none", "Select 'None' to disable a key binding"},
             {"tooltip.key_combination", "For combination keys, choose both modifier and main key"},
             {"tooltip.key_immediate", "Changes are applied immediately"},
             
-            // 状态消息
+            // Status messages
             {"status.settings_saved", "Settings saved successfully!"},
             {"status.settings_failed", "Failed to save settings!"},
             {"status.changes_cancelled", "Changes cancelled"},
@@ -622,36 +648,41 @@ namespace ThroughScope
             {"status.adjustments_reset", "All adjustments reset!"},
             {"status.font_rebuilt", "Font rebuilt for language support"},
             
-            // 状态栏显示文本
+            // Status Bar
             {"status.WeaponLoaded", "✓ Weapon Loaded"},
             {"status.WeaponNotLoaded", "⚠ No Weapon"},
             {"status.TTSNodeReady", "✓ TTSNode Ready"},
             {"status.TTSNodeNotReady", "⚠ No TTSNode"},
             
-            // 备选状态文本（如果符号无法显示）
             {"status.WeaponLoaded_alt", "[OK] Weapon Loaded"},
             {"status.WeaponNotLoaded_alt", "[!] No Weapon"},
             {"status.TTSNodeReady_alt", "[OK] TTSNode Ready"},
             {"status.TTSNodeNotReady_alt", "[!] No TTSNode"},
 
-			{ "camera.enable_parallax", "Enable Parallax" },
-			{ "camera.parallax_offset", "Parallax Offset Settings" },
-			{ "camera.parallax_strength", "Parallax Strength" },
-			{ "camera.parallax_smoothing", "Smoothing" },
-			{ "camera.eye_relief", "Eye Relief" },
-			{ "camera.exit_pupil", "Exit Pupil Settings" },
-			{ "camera.exit_pupil_radius", "Exit Pupil Radius" },
-			{ "camera.exit_pupil_softness", "Edge Softness" },
-			{ "camera.vignette", "Vignette Settings" },
-			{ "camera.vignette_strength", "Vignette Strength" },
-			{ "camera.vignette_radius", "Vignette Radius" },
-			{ "camera.vignette_softness", "Softness" },
+            // Distortion
+            {"camera.relative_fog_radius", "Relative Fog Radius"},
+            {"camera.scope_sway_amount", "Scope Sway Amount"},
+            {"camera.max_travel", "Max Travel"},
+            {"camera.parallax_radius", "Parallax Radius"},
+            {"camera.distortion_settings", "Spherical Distortion Settings"},
+            {"camera.enable_distortion", "Enable Spherical Distortion"},
+            {"camera.distortion_tooltip", "(Simulates real lens optical distortion)"},
+            {"camera.distortion_strength", "Distortion Strength"},
+            {"camera.distortion_strength_desc", "Positive=Barrel, Negative=Pincushion"},
+            {"camera.distortion_radius", "Distortion Radius"},
+            {"camera.distortion_control_range", "Controls the range of distortion"},
+            {"camera.center_offset", "Distortion Center Offset:"},
+            {"camera.offset_x", "X Offset"},
+            {"camera.offset_y", "Y Offset"},
+            {"camera.enable_chromatic", "Enable Chromatic Aberration"},
+            {"camera.chromatic_tooltip", "(High quality distortion, simulates RGB separation)"},
+            {"camera.presets", "Quick Presets:"},
+            {"camera.preset_barrel_slight", "Slight Barrel"},
+            {"camera.preset_barrel_medium", "Medium Barrel"},
+            {"camera.preset_barrel_strong", "Strong Barrel"},
+            {"camera.preset_pincushion_slight", "Slight Pincushion"},
+            {"camera.preset_pincushion_medium", "Medium Pincushion"},
+            {"camera.reset_distortion", "Reset Distortion"}
         };
-
-        std::ofstream file(filePath);
-        if (file.is_open()) {
-            file << defaultTranslations.dump(4);
-            file.close();
-        }
     }
-} 
+}

@@ -19,6 +19,7 @@ namespace ThroughScope
         void Render() override;
         void Update() override;
         const char* GetPanelName() const override { return LOC("ui.menu.debug"); }
+        const char* GetPanelID() const override { return "Debug"; }
 		bool GetSaved() const override { return isSaved; }
         
         // 调试功能

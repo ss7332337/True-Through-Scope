@@ -19,6 +19,7 @@ namespace ThroughScope
         void Update() override;
         bool Initialize() override;
         const char* GetPanelName() const override { return LOC("ui.menu.camera"); }
+        const char* GetPanelID() const override { return "CameraAdjustment"; }
 		bool GetSaved() const override { return isSaved; }
         
         // 获取当前调整值

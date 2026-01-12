@@ -16,6 +16,7 @@ namespace ThroughScope
         void Update() override;
         void UpdateOutSideUI() override;
         const char* GetPanelName() const override { return LOC("ui.menu.settings"); }
+        const char* GetPanelID() const override { return "Settings"; }
 		bool GetSaved() const override { return isSaved; }
 
         // 设置管理

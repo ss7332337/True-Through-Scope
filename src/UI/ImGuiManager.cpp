@@ -328,7 +328,11 @@ namespace ThroughScope
 						continue;  // 跳过不应该显示的面板
 					}
 
-					if (ImGui::BeginTabItem(panel->GetPanelName())) {
+					// 使用面板ID作为稳定的标识符，格式：Localized Name###PanelID
+					char labelBuffer[256];
+					snprintf(labelBuffer, sizeof(labelBuffer), "%s###%s", panel->GetPanelName(), panel->GetPanelID());
+
+					if (ImGui::BeginTabItem(labelBuffer)) {
 						panel->Render();
 						ImGui::EndTabItem();
 					}

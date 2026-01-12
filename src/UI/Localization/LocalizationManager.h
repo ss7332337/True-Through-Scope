@@ -1,5 +1,6 @@
 #pragma once
 
+#include <nlohmann/json.hpp>
 
 namespace ThroughScope 
 {
@@ -22,7 +23,7 @@ namespace ThroughScope
     public:
         static LocalizationManager* GetSingleton();
         
-        // 初始化和清理
+        // 初始化和清理 
         bool Initialize();
         void Shutdown();
         
@@ -52,6 +53,7 @@ namespace ThroughScope
         bool LoadLanguageFile(Language language);
         bool LoadLanguageFromJSON(const std::string& filePath, Language language);
         void CreateDefaultEnglishFile(const std::string& filePath);
+        nlohmann::json GetDefaultEnglishJSON(); // Helper to retrieve default keys
         
         // 内部变量
         bool m_Initialized = false;

@@ -19,6 +19,7 @@ namespace ThroughScope
         void Update() override;
         bool Initialize() override;
         const char* GetPanelName() const override { return LOC("ui.menu.reticle"); }
+        const char* GetPanelID() const override { return "Reticle"; }
         bool ShouldShow() const override;
 		bool GetSaved() const override { return isSaved; }
         

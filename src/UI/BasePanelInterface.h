@@ -27,6 +27,9 @@ namespace ThroughScope
         // 获取面板名称
         virtual const char* GetPanelName() const = 0;
         
+        // 获取面板ID (用于ImGui标识)
+        virtual const char* GetPanelID() const = 0;
+        
         // 是否显示该面板
         virtual bool ShouldShow() const { return true; }
 
