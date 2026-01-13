@@ -140,144 +140,6 @@ namespace ThroughScope
 		return true;
 	}
 
-	// ========== fo4test 兼容：分阶段渲染 ==========
-	
-	bool SecondPassRenderer::ExecuteSceneRendering()
-	{
-		if (!CanExecuteSecondPass()) {
-			return false;
-		}
-		
-		// 初始化相机指针
-		m_scopeCamera = ScopeCamera::GetScopeCamera();
-		m_playerCamera = *ptr_DrawWorldCamera;
-
-		// 重置状态标志
-		m_texturesBackedUp = false;
-		m_cameraUpdated = false;
-		m_lightingSynced = false;
-		m_renderExecuted = false;
-		m_sceneRenderingComplete = false;
-
-		// 重置每帧的渲染标志
-		RenderUtilities::SetFirstPassComplete(false);
-		RenderUtilities::SetSecondPassComplete(false);
-
-		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-		if (!rendererData || !rendererData->context) {
-			logger::error("[FO4Test-Compat] ExecuteSceneRendering: Renderer data is null");
-			return false;
-		}
-
-		try {
-			// 1. 简化的备份 - 在 Forward 阶段不需要获取后缓冲
-			// 直接从 rendererData 获取主渲染目标
-			m_mainRTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
-			m_mainDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
-			m_mainRTTexture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
-			m_mainDSTexture = (ID3D11Texture2D*)rendererData->depthStencilTargets[2].texture;
-
-			if (!m_mainRTTexture || !m_mainDSTexture) {
-				logger::error("[FO4Test-Compat] ExecuteSceneRendering: Main render targets not available");
-				return false;
-			}
-
-			// 复制主渲染目标到我们的备份纹理
-			if (m_mainRTTexture) {
-				D3D11_TEXTURE2D_DESC firstPassColorDesc, mainRTDesc;
-				RenderUtilities::GetFirstPassColorTexture()->GetDesc(&firstPassColorDesc);
-				m_mainRTTexture->GetDesc(&mainRTDesc);
-
-				if (firstPassColorDesc.Width == mainRTDesc.Width && firstPassColorDesc.Height == mainRTDesc.Height) {
-					m_context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), m_mainRTTexture);
-				} else {
-
-				}
-			}
-
-			if (m_mainDSTexture) {
-				D3D11_TEXTURE2D_DESC firstPassDepthDesc, mainDSDesc;
-				RenderUtilities::GetFirstPassDepthTexture()->GetDesc(&firstPassDepthDesc);
-				m_mainDSTexture->GetDesc(&mainDSDesc);
-
-				if (firstPassDepthDesc.Width == mainDSDesc.Width && firstPassDepthDesc.Height == mainDSDesc.Height) {
-					m_context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), m_mainDSTexture);
-				} else {
-
-				}
-			}
-
-			RenderUtilities::SetFirstPassComplete(true);
-			m_texturesBackedUp = true;  // 标记为已备份，但不需要完整的 BackBuffer 恢复
-
-			// 2. 更新瞄具相机配置
-			if (!UpdateScopeCamera()) {
-				logger::error("[FO4Test-Compat] ExecuteSceneRendering: Failed to update scope camera");
-				return false;
-			}
-
-			// 3. 清理渲染目标
-			ClearRenderTargets();
-
-			// 4. 同步光照状态
-			if (!SyncLighting()) {
-				logger::error("[FO4Test-Compat] ExecuteSceneRendering: Failed to sync lighting");
-				return false;
-			}
-
-			// 5. 执行瞄具场景渲染
-			D3DPERF_BeginEvent(0xFF00FF00, L"TrueThroughScope_SceneRendering");
-			DrawScopeContent();
-			D3DPERF_EndEvent();
-			
-			m_renderExecuted = true;
-			m_sceneRenderingComplete = true;
-			
-
-			return true;
-
-		} catch (const std::exception& e) {
-			logger::error("[FO4Test-Compat] Exception during scene rendering: {}", e.what());
-			return false;
-		} catch (...) {
-			logger::error("[FO4Test-Compat] Unknown exception during scene rendering");
-			return false;
-		}
-	}
-	
-	bool SecondPassRenderer::ExecutePostProcessing()
-	{
-		// 检查场景渲染是否完成
-		if (!m_sceneRenderingComplete) {
-
-			return false;
-		}
-
-		try {
-			D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_PostProcessing");
-			
-
-
-
-			// 恢复第一次渲染状态
-			RestoreFirstPass();
-			
-			D3DPERF_EndEvent();
-			
-
-			return true;
-
-		} catch (const std::exception& e) {
-			logger::error("[FO4Test-Compat] Exception during post processing: {}", e.what());
-			RestoreFirstPass();
-			return false;
-		} catch (...) {
-			logger::error("[FO4Test-Compat] Unknown exception during post processing");
-			RestoreFirstPass();
-			return false;
-		}
-	}
-
 	bool SecondPassRenderer::BackupFirstPassTextures()
 	{
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
@@ -624,10 +486,8 @@ namespace ThroughScope
 		// 设置渲染标志
 		ScopeCamera::SetRenderingForScope(true);
 
-		// 备份原始相机指针
-		auto SpCam = *ptr_DrawWorldSpCamera;
-		auto DrawWorldCamera = *ptr_DrawWorldCamera;
-		auto DrawWorldVisCamera = *ptr_DrawWorldVisCamera;
+		// RAII: 备份原始相机指针，作用域结束时自动恢复
+		ScopedCameraBackup cameraGuard;
 
 		// 获取渲染状态
 		auto gState = RE::BSGraphics::State::GetSingleton();
@@ -676,13 +536,6 @@ namespace ThroughScope
 			if (contextPtr) {
 				auto context = (RE::BSGraphics::Context*)contextPtr;
 				auto viewProjMat = context->shadowState.CameraData.viewProjMat;
-				
-				// DEBUG: 诊断矩阵更新
-				static int matLogCounter = 0;
-				if (matLogCounter++ < 5) {
-					logger::info("DrawScopeContent: Matrix update - g_ScopeViewProjMatValid={}, setting g_ScopePreviousViewProjMatValid",
-						g_ScopeViewProjMatValid);
-				}
 
 				// 保存当前矩阵到 "上一帧" 供下一帧 MV 计算使用
 				if (g_ScopeViewProjMatValid) {
@@ -746,12 +599,7 @@ namespace ThroughScope
 				RE::BSGraphics::Renderer::GetSingleton().SetPosAdjust(&backupPosAdjust);
 			}
 
-			// 恢复相机指针
-			*ptr_DrawWorldCamera = DrawWorldCamera;
-			*ptr_DrawWorldVisCamera = DrawWorldVisCamera;
-
-			// 不要清除矩阵有效性标志 - 需要保留用于下一帧的 MV 计算
-			// g_ScopeViewProjMatValid = false;  // 已移除
+			// 相机指针由 ScopedCameraBackup 自动恢复
 
 			// 清除渲染标志
 			ScopeCamera::SetRenderingForScope(false);

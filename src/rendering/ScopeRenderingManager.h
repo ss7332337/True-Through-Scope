@@ -1,18 +1,14 @@
 #pragma once
 
 #include <memory>
-#include "rendering/SecondPassRenderer.h"
+#include <Windows.h>
 
 namespace ThroughScope
 {
     /**
      * 全局瞄具渲染管理器
      * 
-     * 用于协调分阶段渲染（fo4test 兼容模式）：
-     * - 场景渲染阶段在 DrawWorld_Forward 之前执行
-     * - 后处理阶段在 TAA 之后执行
-     * 
-     * 这确保瞄具内容被包含在 fo4test 的运动矢量捕获中
+     * 用于检测 fo4test 模块和协调瞄具渲染状态
      */
     class ScopeRenderingManager
     {
@@ -135,7 +131,6 @@ namespace ThroughScope
                 uintptr_t addr = func.address();
                 uint8_t* bytes = reinterpret_cast<uint8_t*>(addr);
                 
-                // 检查常见的 hook 模式
                 bool hooked = false;
                 const char* hookType = "NOT HOOKED";
                 
@@ -159,37 +154,10 @@ namespace ThroughScope
             }
         }
 
-        
         /**
-         * 执行场景渲染阶段（在 Forward 之前调用）
-         * @return true 如果成功渲染
+         * 帧结束时调用（用于重置每帧状态）
          */
-        bool ExecuteSceneRenderingPhase();
-        
-        /**
-         * 执行后处理阶段（在 TAA 之后调用）
-         * @return true 如果成功处理
-         */
-        bool ExecutePostProcessingPhase();
-        
-        /**
-         * 检查场景渲染是否已完成（本帧）
-         */
-        bool IsSceneRenderingCompleteThisFrame() const { return m_sceneRenderingCompleteThisFrame; }
-        
-        /**
-         * 帧结束时重置状态
-         */
-        void OnFrameEnd()
-        {
-            m_sceneRenderingCompleteThisFrame = false;
-            m_currentRenderer.reset();
-        }
-        
-        /**
-         * 设置当前帧要使用的渲染器资源
-         */
-        void SetCurrentFrameResources(ID3D11DeviceContext* context, ID3D11Device* device, D3DHooks* d3dHooks);
+        void OnFrameEnd() {}
 
     private:
         ScopeRenderingManager() = default;
@@ -198,16 +166,7 @@ namespace ThroughScope
         ScopeRenderingManager& operator=(const ScopeRenderingManager&) = delete;
         
         bool m_fo4testCompatEnabled = false;
-        bool m_upscalingActive = false;  // Upscaling.dll replaces TAA entirely
-        bool m_sceneRenderingCompleteThisFrame = false;
-        bool m_chameleonEffectActive = false;  // 隐身效果激活时阻止 scope 渲染
-
-        // 当前帧的渲染器实例
-        std::unique_ptr<SecondPassRenderer> m_currentRenderer;
-        
-        // 缓存的 D3D 资源指针
-        ID3D11DeviceContext* m_cachedContext = nullptr;
-        ID3D11Device* m_cachedDevice = nullptr;
-        D3DHooks* m_cachedD3DHooks = nullptr;
+        bool m_upscalingActive = false;
+        bool m_chameleonEffectActive = false;
     };
 }

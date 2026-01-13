@@ -27,26 +27,6 @@ namespace ThroughScope
 
         bool ExecuteSecondPass(); //主要的入口点
         bool CanExecuteSecondPass() const;
-        
-        // ========== 分阶段渲染 (fo4test 兼容) ==========
-        /**
-         * 执行瞄具场景渲染（应在 DrawWorld_Forward 之前调用）
-         * 这确保瞄具内容被包含在运动矢量生成中
-         * @return true 如果场景渲染成功完成
-         */
-        bool ExecuteSceneRendering();
-        
-        /**
-         * 执行后处理效果（应在 TAA 之后调用）
-         * 包括 HDR、热成像等效果
-         * @return true 如果后处理成功完成
-         */
-        bool ExecutePostProcessing();
-        
-        /**
-         * 检查场景渲染是否已完成（用于后处理阶段检查）
-         */
-        bool IsSceneRenderingComplete() const { return m_sceneRenderingComplete; }
 
     public:
 
@@ -108,15 +88,6 @@ namespace ThroughScope
         bool m_cameraUpdated = false;
         bool m_lightingSynced = false;
         bool m_renderExecuted = false;
-
-        bool m_sceneRenderingComplete = false;  // fo4test 兼容：场景渲染阶段是否完成
-
-
-
-        
-
-        
-
 
         // ========== 错误处理 ==========
         mutable std::string m_lastError;
