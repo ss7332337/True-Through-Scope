@@ -53,7 +53,7 @@ namespace ThroughScope
 		static bool hasFirstSpawnNode;
 		static bool isDelayStarted;
 		static bool isFirstScopeRender;
-		static int s_enableThermalVision;
+
 		static int s_enableNightVision;
 
 		// ZoomData管理

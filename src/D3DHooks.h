@@ -116,12 +116,12 @@ namespace ThroughScope {
 			float screenWidth;
 			float screenHeight;
 			int enableNightVision;
-			int enableThermalVision;
+
 
 			// Viewport dimensions for DLSS/FSR3 upscaling
 			float viewportWidth;
 			float viewportHeight;
-			float padding_viewport[2];
+			float padding_viewport[3];
 
 			float cameraPosition[3];
 			float padding2;  // 16字节对齐
@@ -158,11 +158,7 @@ namespace ThroughScope {
 			float nightVisionNoiseAmount;  // 噪点强度
 			float nightVisionGreenTint;    // 绿色色调强度
 
-			// 热成像效果参数
-			float thermalIntensity;    // 热成像强度
-			float thermalThreshold;    // 热成像阈值
-			float thermalContrast;     // 热成像对比度
-			float thermalNoiseAmount;  // 热成像噪点强度
+
 
 			// Color Grading LUT权重
 			float lutWeights[4];  // 4个LUT的混合权重
@@ -183,7 +179,7 @@ namespace ThroughScope {
 			float screenWidth = 0;
 			float screenHeight = 0;
 			int enableNightVision = -1;
-			int enableThermalVision = -1;
+
 			float cameraPosition[3] = {0, 0, 0};
 			float scopePosition[3] = {0, 0, 0};
 			float reticleScale = 0;
@@ -210,7 +206,7 @@ namespace ThroughScope {
 				return screenWidth != newData.screenWidth ||
 					   screenHeight != newData.screenHeight ||
 					   enableNightVision != newData.enableNightVision ||
-					   enableThermalVision != newData.enableThermalVision ||
+
 					   memcmp(cameraPosition, newData.cameraPosition, sizeof(cameraPosition)) != 0 ||
 					   memcmp(scopePosition, newData.scopePosition, sizeof(scopePosition)) != 0 ||
 					   reticleScale != newData.reticleScale ||
@@ -238,7 +234,7 @@ namespace ThroughScope {
 				screenWidth = newData.screenWidth;
 				screenHeight = newData.screenHeight;
 				enableNightVision = newData.enableNightVision;
-				enableThermalVision = newData.enableThermalVision;
+
 				memcpy(cameraPosition, newData.cameraPosition, sizeof(cameraPosition));
 				memcpy(scopePosition, newData.scopePosition, sizeof(scopePosition));
 				reticleScale = newData.reticleScale;
@@ -293,7 +289,7 @@ namespace ThroughScope {
 		static void UpdateScopeParallaxSettings(float parallaxStrength, float exitPupilRadius, float vignetteStrength, float vignetteRadius);
 		static void UpdateParallaxAdvancedSettings(float smoothing, float exitPupilSoftness, float vignetteSoftness, float eyeRelief, int enableParallax);
 		static void UpdateNightVisionSettings(float intensity, float noiseScale, float noiseAmount, float greenTint);
-		static void UpdateThermalVisionSettings(float intensity, float threshold, float contrast, float noiseAmount);
+
 		static void UpdateSphericalDistortionSettings(float strength, float radius, float centerX, float centerY);
 		static void ForceConstantBufferUpdate(); // 强制更新常量缓冲区
 		static void SetReticleScale(float scale)
@@ -420,11 +416,6 @@ namespace ThroughScope {
 		static float s_NightVisionGreenTint;
 		
 
-		// 热成像效果参数
-		static float s_ThermalIntensity;
-		static float s_ThermalThreshold;
-		static float s_ThermalContrast;
-		static float s_ThermalNoiseAmount;
 
 		// 球形畸变效果参数
 		static float s_SphericalDistortionStrength;
@@ -435,7 +426,7 @@ namespace ThroughScope {
 		static int s_EnableChromaticAberration;
 		
 	public:
-		static int s_EnableThermalVision;
+
 		static int s_EnableNightVision;
 		
 		// 夜视和热成像开关的安全setter
@@ -443,10 +434,7 @@ namespace ThroughScope {
 			s_EnableNightVision = enable ? 1 : 0; 
 			s_CachedConstantBufferData.screenWidth = -1.0f; // 强制更新
 		}
-		static void SetEnableThermalVision(bool enable) { 
-			s_EnableThermalVision = enable ? 1 : 0; 
-			s_CachedConstantBufferData.screenWidth = -1.0f; // 强制更新
-		}
+
 
 	private:
 		static bool s_EnableFOVAdjustment;

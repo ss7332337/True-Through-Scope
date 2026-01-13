@@ -55,9 +55,7 @@ namespace ThroughScope
 		nightVisionKeys.primaryKey = VKToImGuiKey(globalSettings.nightVisionKeyBindings[0]);
 		nightVisionKeys.modifier = VKToImGuiKey(globalSettings.nightVisionKeyBindings[1]);
 		
-		KeyBindingSettings::CombinationKeys thermalVisionKeys;
-		thermalVisionKeys.primaryKey = VKToImGuiKey(globalSettings.thermalVisionKeyBindings[0]);
-		thermalVisionKeys.modifier = VKToImGuiKey(globalSettings.thermalVisionKeyBindings[1]);
+
 		
 		if (weaponInfo.currentConfig->scopeSettings.nightVision)
 		{
@@ -71,16 +69,7 @@ namespace ThroughScope
 			lastNightVisionState = currentNightVisionState;
 		}
 		
-		if (weaponInfo.currentConfig->scopeSettings.thermalVision) {
-			static bool lastThermalVisionState = false;
-			bool currentThermalVisionState = CheckCombinationKeysAsync(thermalVisionKeys);
 
-			if (currentThermalVisionState && !lastThermalVisionState) {
-				D3DHooks::s_EnableThermalVision = !D3DHooks::s_EnableThermalVision;
-				m_Manager->SetDebugText(D3DHooks::s_EnableThermalVision ? "Thermal Vision: ON" : "Thermal Vision: OFF");
-			}
-			lastThermalVisionState = currentThermalVisionState;
-		}
 	}
 
 	void SettingsPanel::RenderInterfaceSettings()
@@ -194,26 +183,7 @@ namespace ThroughScope
 			}
 		}
 
-		ImGui::NextColumn();
-		ImGui::Text(LOC("settings.keys.thermal_vision"));
-		ImGui::NextColumn();
-		{
-			ImGui::Text(LOC("settings.keys.modifier"));
-			ImGui::SameLine();
-			int modifierIndex = findModifierIndex(m_KeyBindingSettings.thermalVisionKeys.modifier);
-			if (ImGui::Combo("##ThermalVisionModifier", &modifierIndex, modifierOptions, IM_ARRAYSIZE(modifierOptions))) {
-				m_KeyBindingSettings.thermalVisionKeys.modifier = modifierValues[modifierIndex];
-				MarkSettingsChanged();
-			}
-			
-			ImGui::Text(LOC("settings.keys.key"));
-			ImGui::SameLine();
-			int keyIndex = findKeyIndex(m_KeyBindingSettings.thermalVisionKeys.primaryKey);
-			if (ImGui::Combo("##ThermalVisionKey", &keyIndex, keyOptions, IM_ARRAYSIZE(keyOptions))) {
-				m_KeyBindingSettings.thermalVisionKeys.primaryKey = keyValues[keyIndex];
-				MarkSettingsChanged();
-			}
-		}
+
 
 		ImGui::Columns(1);
 		ImGui::Spacing();
@@ -295,13 +265,7 @@ namespace ThroughScope
 			m_KeyBindingSettings.nightVisionKeys.modifier = ImGuiKey_None;
 		}
 		
-		// ThermalVision (组合键)
-		m_KeyBindingSettings.thermalVisionKeys.primaryKey = VKToImGuiKey(globalSettings.thermalVisionKeyBindings[0]);
-		if (globalSettings.thermalVisionKeyBindings[1] != 0) {
-			m_KeyBindingSettings.thermalVisionKeys.modifier = VKToImGuiKey(globalSettings.thermalVisionKeyBindings[1]);
-		} else {
-			m_KeyBindingSettings.thermalVisionKeys.modifier = ImGuiKey_None;
-		}
+
 
 		m_SettingsChanged = false;
 		return true;
@@ -330,10 +294,7 @@ namespace ThroughScope
 			globalSettings.nightVisionKeyBindings[1] = ImGuiKeyToVK(m_KeyBindingSettings.nightVisionKeys.modifier);
 			globalSettings.nightVisionKeyBindings[2] = 0;  // 无第二修饰键
 			
-			// ThermalVision (组合键)
-			globalSettings.thermalVisionKeyBindings[0] = ImGuiKeyToVK(m_KeyBindingSettings.thermalVisionKeys.primaryKey);
-			globalSettings.thermalVisionKeyBindings[1] = ImGuiKeyToVK(m_KeyBindingSettings.thermalVisionKeys.modifier);
-			globalSettings.thermalVisionKeyBindings[2] = 0;  // 无第二修饰键
+
 			
 			// 保存到DataPersistence
 			dataPersistence->SetGlobalSettings(globalSettings);

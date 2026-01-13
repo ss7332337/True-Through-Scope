@@ -15,12 +15,12 @@ cbuffer ScopeConstants : register(b0)
     float screenWidth;
     float screenHeight;
     int enableNightVision;
-    int enableThermalVision;
+
 
     // Viewport dimensions for DLSS/FSR3 upscaling
     float viewportWidth;
     float viewportHeight;
-    float2 padding_viewport;
+    float3 padding_viewport;
 
     float3 cameraPosition;
     float padding2; // 16-byte alignment
@@ -58,11 +58,6 @@ cbuffer ScopeConstants : register(b0)
     float nightVisionNoiseAmount;  // 噪点强度
     float nightVisionGreenTint;    // 绿色色调强度
 
-    // 热成像效果参数
-    float thermalIntensity;        // 热成像强度
-    float thermalThreshold;        // 热成像阈值
-    float thermalContrast;         // 热成像对比度
-    float thermalNoiseAmount;      // 热成像噪点强度
 
     // Color Grading LUT权重
     float4 lutWeights;           // 4个LUT的混合权重
@@ -310,48 +305,7 @@ float4 applyNightVision(float4 color, float2 texcoord)
 }
 
 // 热成像效果处理
-float4 applyThermal(float4 color, float2 texcoord)
-{
-    // 转换为灰度
-    float luminance = dot(color.rgb, float3(0.299, 0.587, 0.114));
-    
-    // 归一化亮度值到 0-1 范围
-    luminance = saturate(luminance);
-    
-    // 使用step函数替代if判断，避免分支
-    float isHot = step(thermalThreshold, luminance);
-    
-    // 热区域计算 (luminance > thermalThreshold)
-    float hotT = saturate((luminance - thermalThreshold) / (1.0 - thermalThreshold));
-    float3 hotColor = lerp(float3(1.0, 0.0, 0.0), float3(1.0, 1.0, 0.0), hotT);
-    
-    // 白色混合计算 (t > 0.8)
-    float whiteBlend = saturate((hotT - 0.8) / 0.2);
-    hotColor = lerp(hotColor, float3(1.0, 1.0, 1.0), whiteBlend);
-    
-    // 冷区域计算 (luminance <= thermalThreshold)
-    float coldT = saturate(luminance / thermalThreshold);
-    float3 coldColor = lerp(float3(0.0, 0.0, 0.3), float3(0.0, 0.5, 1.0), coldT);
-    
-    // 根据isHot选择最终颜色，无分支混合
-    float3 thermalColor = lerp(coldColor, hotColor, isHot);
-    
-    // 添加细微的噪点效果
-    float2 noiseCoord = texcoord * 100.0;
-    float noise = (random(noiseCoord) - 0.5) * thermalNoiseAmount;
-    
-    // 应用对比度和强度
-    thermalColor = pow(abs(thermalColor), 1.0 / max(thermalContrast, 0.1));
-    thermalColor *= thermalIntensity;
-    
-    // 添加噪点
-    thermalColor += noise;
-    
-    // 确保颜色在合理范围内
-    thermalColor = saturate(thermalColor);
-    
-    return float4(thermalColor, color.a);
-}
+
 
 // 球形畸变函数
 float2 applySphericalDistortion(float2 texcoord)
@@ -518,10 +472,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 
     // 计算夜视和热成像效果
     float4 nightVisionColor = applyNightVision(color, texCoord);
-    float4 thermalColor = applyThermal(color, texCoord);
+
 
     color = lerp(color, nightVisionColor, float(enableNightVision));
-    color = lerp(color, thermalColor, float(enableThermalVision));
+
 
     // ========================================================================
     // 最终合成

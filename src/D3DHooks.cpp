@@ -8,7 +8,6 @@
 #include <ScopeCamera.h>
 #include <wrl/client.h>
 #include <d3dcompiler.h>
-#include "HDRStateCache.h"
 #include "RenderUtilities.h"
 #include "ScopeRenderingManager.h"
 
@@ -110,12 +109,7 @@ namespace ThroughScope {
 	float D3DHooks::s_NightVisionGreenTint = 1.2f;
 	int D3DHooks::s_EnableNightVision = 0;
 
-	// 热成像效果参数初始化
-	float D3DHooks::s_ThermalIntensity = 1.0f;
-	float D3DHooks::s_ThermalThreshold = 0.5f;
-	float D3DHooks::s_ThermalContrast = 1.2f;
-	float D3DHooks::s_ThermalNoiseAmount = 0.03f;
-	int D3DHooks::s_EnableThermalVision = 0;
+
 
 	// 球形畸变效果参数初始化
 	float D3DHooks::s_SphericalDistortionStrength = 0.0f;
@@ -220,16 +214,7 @@ namespace ThroughScope {
 		s_CachedConstantBufferData.screenWidth = -1.0f;
 	}
 
-	void D3DHooks::UpdateThermalVisionSettings(float intensity, float threshold, float contrast, float noiseAmount)
-	{
-		s_ThermalIntensity = intensity;
-		s_ThermalThreshold = threshold;
-		s_ThermalContrast = contrast;
-		s_ThermalNoiseAmount = noiseAmount;
-		
-		// 强制下次更新
-		s_CachedConstantBufferData.screenWidth = -1.0f;
-	}
+
 
 	void D3DHooks::UpdateSphericalDistortionSettings(float strength, float radius, float centerX, float centerY)
 	{
@@ -585,17 +570,6 @@ namespace ThroughScope {
 	{
 		if (isSelfDrawCall)
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
-
-		// 注意：HDR 状态捕获已移至 ImageSpaceDebugHook.cpp 中的 hkImageSpaceEffectHDR_Render
-		// 因为 HDR::Render 使用 Draw() 而非 DrawIndexed()，所以这里的捕获代码从未生效
-		// 保留此代码块作为备用，但 s_IsCapturingHDR 不再被设置为 true
-		if (s_IsCapturingHDR) {
-			// (已弃用) 原本期望在这里捕获 HDR 状态，但 HDR::Render 不使用 DrawIndexed
-			if (pContext) {
-				g_HDRStateCache.Capture(pContext);
-				s_HDRCapturedFrame = s_FrameNumber;
-			}
-		}
 
 		bool isScopeQuad = IsScopeQuadBeingDrawn(pContext, IndexCount);
 		//bool isScopeQuad = IsScopeQuadBeingDrawnShape(pContext, IndexCount);
@@ -1167,7 +1141,7 @@ namespace ThroughScope {
 		newCBData.reticleOffsetX = s_ReticleOffsetX;
 		newCBData.reticleOffsetY = s_ReticleOffsetY;
 		newCBData.enableNightVision = s_EnableNightVision;
-		newCBData.enableThermalVision = s_EnableThermalVision;
+
 		
 		// 添加球形畸变参数到变化检测中
 		newCBData.sphericalDistortionStrength = s_SphericalDistortionStrength;
@@ -1249,11 +1223,7 @@ namespace ThroughScope {
 				cbData->nightVisionNoiseAmount = s_NightVisionNoiseAmount;
 				cbData->nightVisionGreenTint = s_NightVisionGreenTint;
 
-				// 更新热成像效果参数
-				cbData->thermalIntensity = s_EnableThermalVision ? s_ThermalIntensity : 0.0f;
-				cbData->thermalThreshold = s_ThermalThreshold;
-				cbData->thermalContrast = s_ThermalContrast;
-				cbData->thermalNoiseAmount = s_ThermalNoiseAmount;
+
 
 				// 设置LUT权重
 				for (int i = 0; i < 4; i++) {

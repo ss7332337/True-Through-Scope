@@ -25,13 +25,11 @@ set(SOURCES
 	src/rendering/RenderStateManager.cpp
 	src/rendering/LightBackupSystem.cpp
 	src/rendering/SecondPassRenderer.cpp
-	src/rendering/ThermalVisionControl.cpp
-	src/rendering/ThermalVision.cpp
-	src/rendering/TemperatureDetection.cpp
+
 	src/rendering/ScopeRenderingManager.cpp
 	src/rendering/RenderTargetMerger.cpp
 	src/ImageSpaceDebugHook.cpp
-	src/HDRStateCache.cpp
+
 	src/ENBIntegration.cpp
 	src/FGCompatibility.cpp
 )

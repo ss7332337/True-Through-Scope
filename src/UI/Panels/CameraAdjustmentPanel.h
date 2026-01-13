@@ -49,11 +49,7 @@ namespace ThroughScope
 			float nightVisionGreenTint = 1.2f;
 			bool  enableNightVision = false;
 
-			float thermalIntensity = 1.0f;
-			float thermalThreshold = 0.5f;
-			float thermalContrast = 1.2f;
-			float thermalNoiseAmount = 0.03f;
-			bool enableThermalVision = false;
+
 
 			int minFov = 5;
 			int maxFov = 100;
@@ -112,12 +108,7 @@ namespace ThroughScope
         float m_NightVisionGreenTint = 1.2f;
         bool m_EnableNightVision = false;
 
-        // 热成像效果设置
-        float m_ThermalIntensity = 1.0f;
-        float m_ThermalThreshold = 0.5f;
-        float m_ThermalContrast = 1.2f;
-        float m_ThermalNoiseAmount = 0.03f;
-        bool m_EnableThermalVision = false;
+
 
         // 球形畸变效果设置
         float m_SphericalDistortionStrength = 0.0f;
@@ -134,7 +125,7 @@ namespace ThroughScope
         void RenderScopeSettings();
         void RenderParallaxSettings();
         void RenderNightVisionSettings();
-        void RenderThermalVisionSettings();
+
         void RenderSphericalDistortionSettings();
         void RenderActionButtons();
         

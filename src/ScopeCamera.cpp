@@ -44,8 +44,7 @@ namespace ThroughScope
 	bool ScopeCamera::isDelayStarted = false;
 	bool ScopeCamera::isFirstScopeRender = true;
 
-	int ScopeCamera::s_enableThermalVision = 0;
-	int ScopeCamera::s_enableNightVision = 0;
+
 
     bool ScopeCamera::Initialize()
     {
@@ -159,13 +158,7 @@ namespace ThroughScope
 			config->scopeSettings.nightVisionGreenTint
 		);
 
-		// 应用热成像效果设置
-		D3DHooks::UpdateThermalVisionSettings(
-			config->scopeSettings.thermalIntensity,
-			config->scopeSettings.thermalThreshold,
-			config->scopeSettings.thermalContrast,
-			config->scopeSettings.thermalNoiseAmount
-		);
+
 
 		D3DHooks::UpdateSphericalDistortionSettings(
 			config->scopeSettings.sphericalDistortionStrength,

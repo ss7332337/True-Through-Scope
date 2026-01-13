@@ -40,7 +40,7 @@ namespace ThroughScope
 		RenderScopeSettings();
 		RenderParallaxSettings();
 		RenderNightVisionSettings();
-		RenderThermalVisionSettings();
+
 		RenderSphericalDistortionSettings();
 		RenderActionButtons();
 	}
@@ -57,15 +57,12 @@ namespace ThroughScope
 
 		// 同步其他UI值
 		m_CurrentValues.enableNightVision = m_EnableNightVision;
-		m_CurrentValues.enableThermalVision = m_EnableThermalVision;
+
 		m_CurrentValues.nightVisionIntensity = m_NightVisionIntensity;
 		m_CurrentValues.nightVisionNoiseScale = m_NightVisionNoiseScale;
 		m_CurrentValues.nightVisionNoiseAmount = m_NightVisionNoiseAmount;
 		m_CurrentValues.nightVisionGreenTint = m_NightVisionGreenTint;
-		m_CurrentValues.thermalIntensity = m_ThermalIntensity;
-		m_CurrentValues.thermalThreshold = m_ThermalThreshold;
-		m_CurrentValues.thermalContrast = m_ThermalContrast;
-		m_CurrentValues.thermalNoiseAmount = m_ThermalNoiseAmount;
+
 
 		// 无论是否启用实时调整，都应用设置以确保D3DHooks获得最新参数
 		ApplySettings();
@@ -444,9 +441,7 @@ namespace ThroughScope
 				ImGui::Checkbox(LOC("camera.night_vision"), &m_EnableNightVision);
 				ImGui::SameLine();
 				ImGui::Text(LOC("camera.night_vision_Tips"));
-				ImGui::Checkbox(LOC("camera.thermal_vision"), &m_EnableThermalVision);
-				ImGui::SameLine();
-				ImGui::Text(LOC("camera.night_vision_Tips"));
+
 			}
 		}
 	}
@@ -494,22 +489,7 @@ namespace ThroughScope
 		}
 	}
 
-	void CameraAdjustmentPanel::RenderThermalVisionSettings()
-	{
-		if (ImGui::CollapsingHeader(LOC("camera.thermal_vision_settings"), ImGuiTreeNodeFlags_DefaultOpen))
-		{
-			ImGui::Checkbox(LOC("camera.enable_thermal_vision"), &m_EnableThermalVision);
-			ImGui::PushID("Thermal");
-			if (m_EnableThermalVision)
-			{
-				ImGui::SliderFloat(LOC("camera.intensity"), &m_ThermalIntensity, 1.0f, 10.0f, "%.2f");
-				ImGui::SliderFloat(LOC("camera.threshold"), &m_ThermalThreshold, 0.0f, 1.0f, "%.2f");
-				ImGui::SliderFloat(LOC("camera.contrast"), &m_ThermalContrast, 0.5f, 2.0f, "%.2f");
-				ImGui::SliderFloat(LOC("camera.noise_amount"), &m_ThermalNoiseAmount, 0.0f, 0.2f, "%.3f");
-			}
-			ImGui::PopID();
-		}
-	}
+
 
 	void CameraAdjustmentPanel::RenderSphericalDistortionSettings()
 	{
@@ -675,12 +655,7 @@ namespace ThroughScope
 		config.scopeSettings.nightVisionNoiseAmount = m_NightVisionNoiseAmount;
 		config.scopeSettings.nightVisionGreenTint = m_NightVisionGreenTint;
 
-		// 保存热成像设置
-		config.scopeSettings.thermalVision = m_EnableThermalVision;
-		config.scopeSettings.thermalIntensity = m_ThermalIntensity;
-		config.scopeSettings.thermalThreshold = m_ThermalThreshold;
-		config.scopeSettings.thermalContrast = m_ThermalContrast;
-		config.scopeSettings.thermalNoiseAmount = m_ThermalNoiseAmount;
+
 		config.scopeSettings.minFOV = m_MinFov;
 		config.scopeSettings.maxFOV = m_MaxFov;
 
@@ -724,12 +699,7 @@ namespace ThroughScope
 		m_NightVisionNoiseAmount = config->scopeSettings.nightVisionNoiseAmount;
 		m_NightVisionGreenTint = config->scopeSettings.nightVisionGreenTint;
 
-		// 加载热成像设置
-		m_EnableThermalVision = config->scopeSettings.thermalVision;
-		m_ThermalIntensity = config->scopeSettings.thermalIntensity;
-		m_ThermalThreshold = config->scopeSettings.thermalThreshold;
-		m_ThermalContrast = config->scopeSettings.thermalContrast;
-		m_ThermalNoiseAmount = config->scopeSettings.thermalNoiseAmount;
+
 
 		m_MinFov = config->scopeSettings.minFOV;
 		m_MaxFov = config->scopeSettings.maxFOV;
@@ -819,12 +789,7 @@ namespace ThroughScope
 		       std::abs(m_CurrentValues.nightVisionNoiseScale - m_PreviousValues.nightVisionNoiseScale) > epsilon ||
 		       std::abs(m_CurrentValues.nightVisionNoiseAmount - m_PreviousValues.nightVisionNoiseAmount) > epsilon ||
 		       std::abs(m_CurrentValues.nightVisionGreenTint - m_PreviousValues.nightVisionGreenTint) > epsilon ||
-		       std::abs(m_CurrentValues.thermalIntensity - m_PreviousValues.thermalIntensity) > epsilon ||
-		       std::abs(m_CurrentValues.thermalThreshold - m_PreviousValues.thermalThreshold) > epsilon ||
-		       std::abs(m_CurrentValues.thermalContrast - m_PreviousValues.thermalContrast) > epsilon ||
-		       std::abs(m_CurrentValues.thermalNoiseAmount - m_PreviousValues.thermalNoiseAmount) > epsilon ||
 		       m_CurrentValues.enableNightVision != m_PreviousValues.enableNightVision ||
-		       m_CurrentValues.enableThermalVision != m_PreviousValues.enableThermalVision ||
 
 		       // 球形畸变参数变化检测
 		       std::abs(m_CurrentValues.sphericalDistortionStrength - m_PreviousValues.sphericalDistortionStrength) > epsilon ||
@@ -1074,14 +1039,7 @@ namespace ThroughScope
 			m_NightVisionGreenTint
 		);
 
-		// 应用热成像设置
-		D3DHooks::SetEnableThermalVision(m_EnableThermalVision);
-		D3DHooks::UpdateThermalVisionSettings(
-			m_ThermalIntensity,
-			m_ThermalThreshold,
-			m_ThermalContrast,
-			m_ThermalNoiseAmount
-		);
+
 
 		// 应用球形畸变设置
 		D3DHooks::UpdateSphericalDistortionSettings(

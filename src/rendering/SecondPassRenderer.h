@@ -49,9 +49,7 @@ namespace ThroughScope
         bool IsSceneRenderingComplete() const { return m_sceneRenderingComplete; }
 
     public:
-        // 热成像模式控制
-        void SetThermalVisionEnabled(bool enabled) { m_thermalVisionEnabled = enabled; }
-        bool IsThermalVisionEnabled() const { return m_thermalVisionEnabled; }
+
 
 
     private:
@@ -66,7 +64,7 @@ namespace ThroughScope
          */
         void DrawScopeContent();
 
-        void ApplyThermalVisionEffect(); // 应用热成像效果
+
         void RestoreFirstPass();
         void CleanupResources();
         bool ValidateD3DResources() const;
@@ -110,15 +108,11 @@ namespace ThroughScope
         bool m_cameraUpdated = false;
         bool m_lightingSynced = false;
         bool m_renderExecuted = false;
-        bool m_thermalVisionEnabled = false;
+
         bool m_sceneRenderingComplete = false;  // fo4test 兼容：场景渲染阶段是否完成
 
 
-        // ========== 热成像资源 ==========
-        class ThermalVision* m_thermalVision = nullptr;
-        ID3D11Texture2D* m_thermalRenderTarget = nullptr;
-        ID3D11RenderTargetView* m_thermalRTV = nullptr;
-        ID3D11ShaderResourceView* m_thermalSRV = nullptr;
+
         
 
         

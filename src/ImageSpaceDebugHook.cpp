@@ -1,7 +1,7 @@
 #include "PCH.h"
 #include <d3d9.h>  // for D3DPERF_BeginEvent / D3DPERF_EndEvent
 #include "HookManager.h"
-#include "HDRStateCache.h"
+// #include "HDRStateCache.h"
 #include "ScopeCamera.h"
 #include "D3DHooks.h"
 #include "RE/Bethesda/ImageSpaceEffect.hpp"
@@ -41,8 +41,6 @@ namespace ThroughScope
              // 获取 D3D Context
              ID3D11DeviceContext* context = D3DHooks::GetSingleton()->GetContext();
              if (context) {
-                 // 直接捕获当前 HDR 状态（此时 HDR::Render 刚刚完成，所有状态已设置）
-                 g_HDRStateCache.Capture(context);
                  // 更新帧标记
                  D3DHooks::s_HDRCapturedFrame = D3DHooks::GetFrameNumber();
              } else {

@@ -208,7 +208,7 @@ namespace ThroughScope
 			config.scopeSettings.minFOV = getValue(scopeJson, "minFOV", 5);
 			config.scopeSettings.maxFOV = getValue(scopeJson, "maxFOV", 90);
 			config.scopeSettings.nightVision = getValue(scopeJson, "nightVision", false);
-			config.scopeSettings.thermalVision = getValue(scopeJson, "thermalVision", false);
+
 
 			// Load reticle settings with defaults
 			const auto& reticleJson = configJson.value("reticle", nlohmann::json::object());
@@ -233,11 +233,7 @@ namespace ThroughScope
 			config.scopeSettings.nightVisionNoiseAmount = getValue(scopeJson, "nightVisionNoiseAmount", 0.05f);
 			config.scopeSettings.nightVisionGreenTint = getValue(scopeJson, "nightVisionGreenTint", 1.2f);
 
-			// 加载热成像效果参数
-			config.scopeSettings.thermalIntensity = getValue(scopeJson, "thermalIntensity", 1.0f);
-			config.scopeSettings.thermalThreshold = getValue(scopeJson, "thermalThreshold", 0.5f);
-			config.scopeSettings.thermalContrast = getValue(scopeJson, "thermalContrast", 1.2f);
-			config.scopeSettings.thermalNoiseAmount = getValue(scopeJson, "thermalNoiseAmount", 0.03f);
+
 
 			// 加载球形畸变效果参数
 			config.scopeSettings.enableSphericalDistortion = getValue(scopeJson, "enableSphericalDistortion", false);
@@ -305,17 +301,12 @@ namespace ThroughScope
 				{ "minFOV", config.scopeSettings.minFOV },
 				{ "maxFOV", config.scopeSettings.maxFOV },
 				{ "nightVision", config.scopeSettings.nightVision },
-				{ "thermalVision", config.scopeSettings.thermalVision },
 				// 保存夜视效果参数
 				{ "nightVisionIntensity", config.scopeSettings.nightVisionIntensity },
 				{ "nightVisionNoiseScale", config.scopeSettings.nightVisionNoiseScale },
 				{ "nightVisionNoiseAmount", config.scopeSettings.nightVisionNoiseAmount },
 				{ "nightVisionGreenTint", config.scopeSettings.nightVisionGreenTint },
-				// 保存热成像效果参数
-				{ "thermalIntensity", config.scopeSettings.thermalIntensity },
-				{ "thermalThreshold", config.scopeSettings.thermalThreshold },
-				{ "thermalContrast", config.scopeSettings.thermalContrast },
-				{ "thermalNoiseAmount", config.scopeSettings.thermalNoiseAmount },
+
 				// 保存球形畸变效果参数
 				{ "enableSphericalDistortion", config.scopeSettings.enableSphericalDistortion },
 				{ "enableChromaticAberration", config.scopeSettings.enableChromaticAberration },
@@ -394,7 +385,6 @@ namespace ThroughScope
 		presetConfig.scopeSettings.minFOV = 5;
 		presetConfig.scopeSettings.maxFOV = 90;
 		presetConfig.scopeSettings.nightVision = false;
-		presetConfig.scopeSettings.thermalVision = false;
 
 		// 设置夜视效果默认参数
 		presetConfig.scopeSettings.nightVisionIntensity = 1.0f;
@@ -402,11 +392,7 @@ namespace ThroughScope
 		presetConfig.scopeSettings.nightVisionNoiseAmount = 0.05f;
 		presetConfig.scopeSettings.nightVisionGreenTint = 1.2f;
 
-		// 设置热成像效果默认参数
-		presetConfig.scopeSettings.thermalIntensity = 1.0f;
-		presetConfig.scopeSettings.thermalThreshold = 0.5f;
-		presetConfig.scopeSettings.thermalContrast = 1.2f;
-		presetConfig.scopeSettings.thermalNoiseAmount = 0.03f;
+
 
 		// 设置球形畸变效果默认参数
 		presetConfig.scopeSettings.enableSphericalDistortion = false;
@@ -454,7 +440,7 @@ namespace ThroughScope
 			nlohmann::json globalJson = {
 				{ "menuKeyBindings", m_GlobalSettings.menuKeyBindings },
 				{ "nightVisionKeyBindings", m_GlobalSettings.nightVisionKeyBindings },
-				{ "thermalVisionKeyBindings", m_GlobalSettings.thermalVisionKeyBindings },
+
 				{ "selectedLanguage", m_GlobalSettings.selectedLanguage }
 			};
 
@@ -485,7 +471,7 @@ namespace ThroughScope
 
 				m_GlobalSettings.menuKeyBindings = { 113, 0, 0 };          // F2
 				m_GlobalSettings.nightVisionKeyBindings = { 88, 16, 0 };    // LShift + X
-				m_GlobalSettings.thermalVisionKeyBindings = { 84, 0, 0 };  // LShift + T
+
 				m_GlobalSettings.selectedLanguage = 0;  // Default to English
 
 				return SaveGlobalConfig();
@@ -507,11 +493,7 @@ namespace ThroughScope
 				m_GlobalSettings.nightVisionKeyBindings = { 88, 16, 0 };
 			}
 
-			if (globalJson.contains("thermalVisionKeyBindings")) {
-				m_GlobalSettings.thermalVisionKeyBindings = globalJson["thermalVisionKeyBindings"].get<std::array<int, 3>>();
-			} else {
-				m_GlobalSettings.thermalVisionKeyBindings = { 84, 0, 0 }; 
-			}
+
 
 			// 加载语言设置
 			if (globalJson.contains("selectedLanguage")) {
@@ -527,7 +509,7 @@ namespace ThroughScope
 			// Set default key bindings
 			m_GlobalSettings.menuKeyBindings = { 113, 0, 0 };
 			m_GlobalSettings.nightVisionKeyBindings = { 88, 16, 0 };
-			m_GlobalSettings.thermalVisionKeyBindings = { 84, 16, 0 };
+
 			m_GlobalSettings.selectedLanguage = 0;  // Default to English
 
 			return SaveGlobalConfig();
