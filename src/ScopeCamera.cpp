@@ -110,7 +110,7 @@ namespace ThroughScope
 		}
 
 		// 清理D3D相关资源
-		ThroughScope::D3DHooks::CleanupStaticResources();
+		// ThroughScope::D3DHooks::CleanupStaticResources();
 
 	}
 

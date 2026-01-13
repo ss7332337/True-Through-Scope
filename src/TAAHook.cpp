@@ -28,12 +28,7 @@ namespace ThroughScope
 			return;
 		}
 
-		// 在执行TAA之前捕获LUT纹理
-		ID3D11DeviceContext* context = d3dHooks->GetContext();
-		if (context && D3DHooks::IsEnableRender()) {
-			// 捕获当前绑定的LUT纹理 (t3, t4, t5, t6)
-			D3DHooks::CaptureLUTTextures(context);
-		}
+
 
 		// 1. 先执行原本的TAA (添加调试标记)
 		D3DPERF_BeginEvent(0xFFFF0000, L"ImageSpaceEffect_TAA");

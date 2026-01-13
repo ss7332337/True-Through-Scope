@@ -3,6 +3,7 @@
 #include <d3d9.h>  // for D3DPERF_BeginEvent / D3DPERF_EndEvent
 #include <d3dcompiler.h>
 #include "D3DHooks.h"
+#include "rendering/D3DResourceManager.h"
 #include <filesystem>
 
 namespace ThroughScope
@@ -44,8 +45,8 @@ namespace FGCompatibility
 
         ID3DBlob* shaderBlob = nullptr;
         
-        // 使用 D3DHooks::CreateShaderFromFile 自动处理 CSO 缓存
-        HRESULT hr = D3DHooks::CreateShaderFromFile(
+        // 使用 D3DResourceManager::CreateShaderFromFile 自动处理 CSO 缓存
+        HRESULT hr = D3DResourceManager::GetSingleton()->CreateShaderFromFile(
             csoPath,
             shaderPath,
             "main",

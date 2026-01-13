@@ -44,7 +44,6 @@ D3D11Create m_D3D11CreateDeviceAndSwapChain_O;
 namespace ThroughScope {
     
 	using namespace Microsoft::WRL;
-    ID3D11ShaderResourceView* D3DHooks::s_ScopeTextureView = nullptr;
 	ComPtr<IDXGISwapChain> D3DHooks::s_SwapChain = nullptr;
 	WNDPROC D3DHooks::s_OriginalWndProc = nullptr;
 	HRESULT(WINAPI* D3DHooks::s_OriginalPresent)(IDXGISwapChain*, UINT, UINT) = nullptr;
@@ -65,20 +64,12 @@ namespace ThroughScope {
 	DWORD64 D3DHooks::s_LastGamepadInputTime = 0;
 
 	// 为瞄准镜创建和管理资源的静态变量
-	static ID3D11Texture2D* stagingTexture = nullptr;
-	static ID3D11ShaderResourceView* stagingSRV = nullptr;
-	static ID3D11PixelShader* scopePixelShader = nullptr;
-	static ID3D11SamplerState* samplerState = nullptr;
-	static ID3D11SamplerState* lutSamplerState = nullptr;
-	static ID3D11BlendState* blendState = nullptr;
-	static ID3D11Buffer* constantBuffer = nullptr;
+	// Resources allocated in D3DResourceManager
 	
 	// ScopeQuad draw parameters for stencil write
 	static UINT s_ScopeQuadIndexCount = 0;
 	static UINT s_ScopeQuadStartIndexLocation = 0;
 	static INT s_ScopeQuadBaseVertexLocation = 0;
-	Microsoft::WRL::ComPtr<ID3D11Texture2D> D3DHooks::s_ReticleTexture = nullptr;
-	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> D3DHooks::s_ReticleSRV = nullptr;
 
 	bool D3DHooks::s_EnableRender = false;
 	bool D3DHooks::s_InPresent = false;
@@ -119,10 +110,6 @@ namespace ThroughScope {
 	int D3DHooks::s_EnableSphericalDistortion = 0;
 	int D3DHooks::s_EnableChromaticAberration = 0;
 
-	// LUT纹理捕获相关
-	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> D3DHooks::s_CapturedLUTs[4] = { nullptr, nullptr, nullptr, nullptr };
-	float D3DHooks::s_LUTWeights[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-
 	static constexpr UINT TARGET_STRIDE = 28;
 	static constexpr UINT TARGET_INDEX_COUNT = 96;
 	static constexpr UINT TARGET_BUFFER_SIZE = 0x0000000008000000;
@@ -144,38 +131,6 @@ namespace ThroughScope {
 
 	ImGuiIO io;
 
-	HRESULT D3DHooks::CreateShaderFromFile(const WCHAR* csoFileNameInOut, const WCHAR* hlslFileName, LPCSTR entryPoint, LPCSTR shaderModel, ID3DBlob** ppBlobOut)
-	{
-		HRESULT hr = S_OK;
-
-		if (csoFileNameInOut && D3DReadFileToBlob(csoFileNameInOut, ppBlobOut) == S_OK) {
-			return hr;
-		} else {
-			DWORD dwShaderFlags = D3DCOMPILE_ENABLE_STRICTNESS;
-#ifdef _DEBUG
-
-			dwShaderFlags |= D3DCOMPILE_DEBUG;
-
-			dwShaderFlags |= D3DCOMPILE_SKIP_OPTIMIZATION;
-#endif
-			ID3DBlob* errorBlob = nullptr;
-			hr = D3DCompileFromFile(hlslFileName, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entryPoint, shaderModel,
-				dwShaderFlags, 0, ppBlobOut, &errorBlob);
-			if (FAILED(hr)) {
-				if (errorBlob != nullptr) {
-					OutputDebugStringA(reinterpret_cast<const char*>(errorBlob->GetBufferPointer()));
-				}
-				SAFE_RELEASE(errorBlob);
-				return hr;
-			}
-
-			if (csoFileNameInOut) {
-				return D3DWriteBlobToFile(*ppBlobOut, csoFileNameInOut, FALSE);
-			}
-		}
-
-		return hr;
-	}
 
 	void D3DHooks::UpdateScopeParallaxSettings(float parallaxStrength, float exitPupilRadius, float vignetteStrength, float vignetteRadius)
 	{
@@ -233,103 +188,6 @@ namespace ThroughScope {
 		s_CachedConstantBufferData.screenWidth = -1.0f;
 	}
 
-	void D3DHooks::CaptureLUTTextures(ID3D11DeviceContext* context)
-	{
-		if (!context) return;
-
-		// 先清理之前的LUT纹理
-		for (int i = 0; i < 4; i++) {
-			s_CapturedLUTs[i].Reset();
-		}
-
-		// 捕获绑定在 t3, t4, t5, t6 的 3D LUT 纹理
-		ID3D11ShaderResourceView* lutSRVs[4];
-		context->PSGetShaderResources(3, 4, lutSRVs);
-
-		for (int i = 0; i < 4; i++) {
-			if (lutSRVs[i]) {
-				s_CapturedLUTs[i] = lutSRVs[i];
-				// 注意：ComPtr会自动管理引用计数，不需要手动AddRef
-			}
-		}
-
-		// 从CB2获取LUT权重 - 使用临时缓冲区方法
-		ID3D11Buffer* constantBuffers[1];
-		context->PSGetConstantBuffers(2, 1, constantBuffers);
-
-		if (constantBuffers[0]) {
-			// 获取设备
-			ID3D11Device* device = nullptr;
-			context->GetDevice(&device);
-			
-			if (device) {
-				// 获取原始缓冲区描述
-				D3D11_BUFFER_DESC originalDesc;
-				constantBuffers[0]->GetDesc(&originalDesc);
-				
-				// 创建可读取的临时缓冲区
-				D3D11_BUFFER_DESC tempDesc = originalDesc;
-				tempDesc.Usage = D3D11_USAGE_STAGING;
-				tempDesc.BindFlags = 0;
-				tempDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-				tempDesc.MiscFlags = 0;
-				
-				ID3D11Buffer* tempBuffer = nullptr;
-				HRESULT hr = device->CreateBuffer(&tempDesc, nullptr, &tempBuffer);
-				
-				if (SUCCEEDED(hr)) {
-					// 复制数据到临时缓冲区
-					context->CopyResource(tempBuffer, constantBuffers[0]);
-					
-					// 映射并读取数据
-					D3D11_MAPPED_SUBRESOURCE mappedResource;
-					hr = context->Map(tempBuffer, 0, D3D11_MAP_READ, 0, &mappedResource);
-					
-					if (SUCCEEDED(hr)) {
-						// cb2_v1位于偏移16字节处，包含4个LUT权重
-						const float* weights = reinterpret_cast<const float*>(
-							reinterpret_cast<const char*>(mappedResource.pData) + 16);
-						
-						for (int i = 0; i < 4; i++) {
-							s_LUTWeights[i] = weights[i];
-						}
-
-						context->Unmap(tempBuffer, 0);
-					} else {
-						// 如果映射失败，使用从调试中观察到的默认权重
-						s_LUTWeights[0] = 0.13896f;
-						s_LUTWeights[1] = 0.86104f;
-						s_LUTWeights[2] = 0.0f;
-						s_LUTWeights[3] = 0.0f;
-						logger::warn("Failed to map LUT weights, using fallback values: {:.5f}, {:.5f}, {:.5f}, {:.5f}", 
-							s_LUTWeights[0], s_LUTWeights[1], s_LUTWeights[2], s_LUTWeights[3]);
-					}
-					
-					tempBuffer->Release();
-				}
-				
-				device->Release();
-			}
-			
-			constantBuffers[0]->Release();
-		} 
-		else {
-			// 如果没有获取到常量缓冲区，使用默认权重
-			s_LUTWeights[0] = 1;
-			s_LUTWeights[1] = 0.0f;
-			s_LUTWeights[2] = 0.0f;
-			s_LUTWeights[3] = 0.0f;
-			logger::warn("No constant buffer found, using default LUT weights: {:.5f}, {:.5f}, {:.5f}, {:.5f}", 
-				s_LUTWeights[0], s_LUTWeights[1], s_LUTWeights[2], s_LUTWeights[3]);
-		}
-
-		// 释放临时引用
-		for (int i = 0; i < 4; i++) {
-			if (lutSRVs[i]) {
-				lutSRVs[i]->Release();
-			}
-		}
-	}
 
 	D3DHooks* D3DHooks::GetSingleton()
 	{
@@ -370,6 +228,14 @@ namespace ThroughScope {
 		m_Device->GetImmediateContext(&m_Context);
 
 		GetSingleton()->HookAllContexts();
+		
+		// Initialize D3DResourceManager
+		if (!D3DResourceManager::GetSingleton()->Initialize(m_Device)) {
+			logger::error("Failed to initialize D3DResourceManager");
+		} else {
+			logger::info("D3DResourceManager initialized successfully");
+		}
+
 		logger::info("D3D hooks initialized");
 
 		return hr;
@@ -574,7 +440,7 @@ namespace ThroughScope {
 		bool isScopeQuad = IsScopeQuadBeingDrawn(pContext, IndexCount);
 		//bool isScopeQuad = IsScopeQuadBeingDrawnShape(pContext, IndexCount);
 		if (isScopeQuad) {
-			D3DPERF_BeginEvent(0xFFFF00FF, L"TTS_ScopeQuad_Detected");  // 紫色标记
+			D3DPERF_BeginEvent(0xFFFF00FF, L"TTS_ScopeQuad_Detected");
 
 			CacheAllStates();
 			
@@ -598,54 +464,15 @@ namespace ThroughScope {
 
 	bool D3DHooks::LoadAimTexture(const std::string& path)
 	{
-		if (path.empty())
-			return false;
-
-		const wchar_t* tempPath = Utilities::GetWC(path.c_str());
-		std::wstring defaultPath = L"Data/Textures/TTS/Reticle/Empty.dds";
-
-		D3DInstance->s_ReticleTexture.Reset();
-		HRESULT hr = CreateDDSTextureFromFile(
-			m_Device,
-			tempPath ? tempPath : defaultPath.c_str(),
-			nullptr,
-			D3DInstance->s_ReticleSRV.ReleaseAndGetAddressOf());
-
-		if (FAILED(hr)) {
-			logger::error("Failed to load reticle texture from path: {}", path);
-			return false;
-		}
-
-		if (tempPath)
-			::free((void*)tempPath);
-
-		return true;
+		return D3DResourceManager::GetSingleton()->LoadReticleTexture(m_Device, path);
 	}
 
 	ID3D11ShaderResourceView* D3DHooks::LoadAimSRV(const std::string& path)
 	{
-		if (path.empty())
-			return nullptr;
-
-		const wchar_t* tempPath = Utilities::GetWC(path.c_str());
-		std::wstring defaultPath = L"Data/Textures/TTS/Reticle/Empty.dds";
-
-		D3DInstance->s_ReticleTexture.Reset();
-		HRESULT hr = CreateDDSTextureFromFile(
-			m_Device,
-			tempPath ? tempPath : defaultPath.c_str(),
-			nullptr,
-			D3DInstance->s_ReticleSRV.ReleaseAndGetAddressOf());
-
-		if (FAILED(hr)) {
-			logger::error("Failed to load reticle texture from path: {}", path);
-			return nullptr;
+		if (D3DResourceManager::GetSingleton()->LoadReticleTexture(m_Device, path)) {
+			return D3DResourceManager::GetSingleton()->GetReticleSRV();
 		}
-
-		if (tempPath)
-			::free((void*)tempPath);
-
-		return s_ReticleSRV.Get();
+		return nullptr;
 	}
 
 	void D3DHooks::CacheAllStates()
@@ -775,10 +602,7 @@ namespace ThroughScope {
 
 		if (IsTargetDrawCall(vertexInfo[0], indexInfo, IndexCount))
 		{
-			Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> DrawIndexedSRV;
-			pContext->PSGetShaderResources(0, 1, DrawIndexedSRV.GetAddressOf());
-
-			if (!DrawIndexedSRV.Get() || DrawIndexedSRV.Get() == stagingSRV)
+			// Just trust geometry match.
 			return true;
 		}
 
@@ -948,170 +772,15 @@ namespace ThroughScope {
 		D3D11_TEXTURE2D_DESC srcTexDesc;
 		RenderUtilities::GetSecondPassColorTexture()->GetDesc(&srcTexDesc);
 
-		// 检查是否需要重新创建资源（纹理不存在或尺寸不匹配）
-		bool needRecreate = false;
-		if (!stagingTexture) {
-			needRecreate = true;
-		} else {
-			// 检查现有纹理尺寸是否匹配
-			D3D11_TEXTURE2D_DESC existingDesc;
-			stagingTexture->GetDesc(&existingDesc);
-			if (existingDesc.Width != srcTexDesc.Width || 
-				existingDesc.Height != srcTexDesc.Height ||
-				existingDesc.Format != srcTexDesc.Format) {
-				needRecreate = true;
-				logger::info("Recreating staging texture due to size/format change: {}x{} -> {}x{}", 
-					existingDesc.Width, existingDesc.Height, srcTexDesc.Width, srcTexDesc.Height);
-			}
+		// 使用 D3DResourceManager 管理资源
+		auto resManager = D3DResourceManager::GetSingleton();
+		if (!resManager->EnsureStagingTexture(device, &srcTexDesc)) {
+			logger::error("Failed to ensure staging texture");
+			return;
 		}
-
-		// 创建或重新创建资源(如果需要)
-		if (needRecreate) {
-			// 清理可能存在的旧资源
-			SAFE_RELEASE(stagingTexture);
-			SAFE_RELEASE(stagingSRV);
-			SAFE_RELEASE(scopePixelShader);
-			SAFE_RELEASE(samplerState);
-			SAFE_RELEASE(lutSamplerState);
-			SAFE_RELEASE(blendState);
-			SAFE_RELEASE(constantBuffer);
-
-			// 创建中间纹理
-			D3D11_TEXTURE2D_DESC stagingDesc = srcTexDesc;
-			stagingDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-			
-			stagingDesc.MiscFlags = 0;
-			stagingDesc.SampleDesc.Count = 1;
-			stagingDesc.SampleDesc.Quality = 0;
-			
-			stagingDesc.Usage = D3D11_USAGE_DEFAULT;
-			stagingDesc.CPUAccessFlags = 0;
-
-			HRESULT hr = device->CreateTexture2D(&stagingDesc, nullptr, &stagingTexture);
-			if (FAILED(hr)) {
-				logger::error("Failed to create staging texture: 0x{:X}", hr);
-				device->Release();
-				return;
-			}
-
-			// 创建着色器资源视图(SRV)
-			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-			srvDesc.Format = stagingDesc.Format;
-			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-			srvDesc.Texture2D.MostDetailedMip = 0;
-			srvDesc.Texture2D.MipLevels = 1;
-
-			hr = device->CreateShaderResourceView(stagingTexture, &srvDesc, &stagingSRV);
-			if (FAILED(hr)) {
-				logger::error("Failed to create staging SRV: 0x{:X}", hr);
-				stagingTexture->Release();
-				stagingTexture = nullptr;
-				device->Release();
-				return;
-			}
-
-			// 创建常量缓冲区
-			D3D11_BUFFER_DESC cbDesc;
-			ZeroMemory(&cbDesc, sizeof(cbDesc));
-			cbDesc.ByteWidth = sizeof(ScopeConstantBuffer);
-			cbDesc.Usage = D3D11_USAGE_DYNAMIC;
-			cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-			cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-			cbDesc.MiscFlags = 0;
-			cbDesc.StructureByteStride = 0;
-
-			hr = device->CreateBuffer(&cbDesc, nullptr, &constantBuffer);
-			if (FAILED(hr)) {
-				logger::error("Failed to create constant buffer: 0x{:X}", hr);
-				stagingSRV->Release();
-				stagingTexture->Release();
-				stagingTexture = nullptr;
-				stagingSRV = nullptr;
-				device->Release();
-				return;
-			}
-
-			ID3DBlob* psBlob = nullptr;
-
-			hr = CreateShaderFromFile(L"Data\\Shaders\\XiFeiLi\\TrueScopeShader.cso", L"HLSL\\TrueScopeShader.hlsl", "main", "ps_5_0", &psBlob);
-
-			// 创建像素着色器
-			hr = device->CreatePixelShader(
-				psBlob->GetBufferPointer(),
-				psBlob->GetBufferSize(),
-				nullptr,
-				&scopePixelShader);
-
-			if (FAILED(hr)) {
-				logger::error("Failed to create pixel shader: 0x{:X}", hr);
-				psBlob->Release();
-				device->Release();
-				return;
-			}
-
-			psBlob->Release();
-
-			// 创建采样器状态
-			D3D11_SAMPLER_DESC samplerDesc = {};
-			samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-			//samplerDesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
-			samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-			samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-			samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-			samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
-			samplerDesc.MinLOD = 0;
-			samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-
-			hr = device->CreateSamplerState(&samplerDesc, &samplerState);
-			if (FAILED(hr)) {
-				logger::error("Failed to create sampler state: 0x{:X}", hr);
-				scopePixelShader->Release();
-				scopePixelShader = nullptr;
-				device->Release();
-				return;
-			}
-			
-			samplerDesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
-			hr = device->CreateSamplerState(&samplerDesc, &lutSamplerState);
-			if (FAILED(hr)) {
-				logger::error("Failed to create sampler state: 0x{:X}", hr);
-				scopePixelShader->Release();
-				scopePixelShader = nullptr;
-				device->Release();
-				return;
-			}
-
-			D3D11_BLEND_DESC blendDesc = {};
-			blendDesc.AlphaToCoverageEnable = FALSE;
-			blendDesc.IndependentBlendEnable = FALSE;
-
-			// 设置第一个渲染目标的混合状态
-			blendDesc.RenderTarget[0].BlendEnable = TRUE;
-
-			// 源混合因子：使用源颜色的Alpha
-			blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-			blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-			blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-
-			// Alpha混合：直接使用源Alpha覆盖
-			blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-			blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
-			blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-
-			// 写入所有颜色通道
-			blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-
-
-
-			hr = device->CreateBlendState(&blendDesc, &blendState);
-			if (FAILED(hr)) {
-				logger::error("Failed to create blend state: 0x{:X}", hr);
-				// 清理其他已创建的资源...
-				device->Release();
-				return;
-			}
-			logger::info("Scope rendering resources created");
-		}
+		
+		ID3D11Texture2D* stagingTexture = resManager->GetStagingTexture();
+		ID3D11ShaderResourceView* stagingSRV = resManager->GetScopeTextureView();
 
 		// 复制/解析纹理内容
 		if (srcTexDesc.SampleDesc.Count > 1) {
@@ -1159,118 +828,72 @@ namespace ThroughScope {
 		bool needsUpdate = s_CachedConstantBufferData.NeedsUpdate(newCBData);
 
 		if (needsUpdate || forceUpdate) {
-			D3D11_MAPPED_SUBRESOURCE mappedResource;
-			HRESULT hr = pContext->Map(constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
-			if (SUCCEEDED(hr)) {
-				ScopeConstantBuffer* cbData = (ScopeConstantBuffer*)mappedResource.pData;
+            // Update additional data
+            newCBData.lastCameraPosition[0] = lastCameraPos.x;
+            newCBData.lastCameraPosition[1] = lastCameraPos.y;
+            newCBData.lastCameraPosition[2] = lastCameraPos.z;
 
-				// 填充常量缓冲区数据
-				*cbData = newCBData; // 复制基础数据
-				
-				// 填充其他数据
-				cbData->lastCameraPosition[0] = lastCameraPos.x;
-				cbData->lastCameraPosition[1] = lastCameraPos.y;
-				cbData->lastCameraPosition[2] = lastCameraPos.z;
-
-				cbData->lastScopePosition[0] = lastScopePos.x;
-				cbData->lastScopePosition[1] = lastScopePos.y;
-				cbData->lastScopePosition[2] = lastScopePos.z;
+            newCBData.lastScopePosition[0] = lastScopePos.x;
+            newCBData.lastScopePosition[1] = lastScopePos.y;
+            newCBData.lastScopePosition[2] = lastScopePos.z;
 
 			// 计算相对于瞄具的视图变换矩阵
 			DirectX::XMFLOAT4X4 rotationMatrix;
 
-			// 获取瞄具到摄像机的方向向量
-			RE::NiPoint3 scopeToCamDir = cameraPos - scopePos;
-			scopeToCamDir.Unitize();  // 标准化
-
-			// 创建观察矩阵(从瞄具视角看向摄像机的逆变换)
-			// 这确保了视差计算在所有角度下的一致性
 			auto scopeCamera = ScopeCamera::GetScopeCamera();
 			if (scopeCamera) {
-				// 使用瞄具摄像机的旋转矩阵的逆转置
 				auto& scopeRot = scopeCamera->world.rotate;
-
 				// 构建视图变换矩阵
-				// NiMatrix3 是行主序，XMFLOAT4X4 也是行主序
-				// 直接复制即可，HLSL 中的 mul(vector, matrix) 会正确处理
-				// 对于正交旋转矩阵，这样可以将世界空间向量转换为局部空间
 				rotationMatrix._11 = scopeRot.entry[0].x; rotationMatrix._12 = scopeRot.entry[0].y; rotationMatrix._13 = scopeRot.entry[0].z; rotationMatrix._14 = 0.0f;
 				rotationMatrix._21 = scopeRot.entry[1].x; rotationMatrix._22 = scopeRot.entry[1].y; rotationMatrix._23 = scopeRot.entry[1].z; rotationMatrix._24 = 0.0f;
 				rotationMatrix._31 = scopeRot.entry[2].x; rotationMatrix._32 = scopeRot.entry[2].y; rotationMatrix._33 = scopeRot.entry[2].z; rotationMatrix._34 = 0.0f;
 				rotationMatrix._41 = 0.0f; rotationMatrix._42 = 0.0f; rotationMatrix._43 = 0.0f; rotationMatrix._44 = 1.0f;
 			} else {
-				// 备用：使用单位矩阵(禁用视差效果)
 				memset(&rotationMatrix, 0, sizeof(rotationMatrix));
 				rotationMatrix._11 = rotationMatrix._22 = rotationMatrix._33 = rotationMatrix._44 = 1.0f;
 			}
 
-				// 新的视差参数
-				cbData->parallaxStrength = s_ParallaxStrength;
-				cbData->parallaxSmoothing = s_ParallaxSmoothing;
-				cbData->exitPupilRadius = s_ExitPupilRadius;
-				cbData->exitPupilSoftness = s_ExitPupilSoftness;
+            newCBData.parallaxStrength = s_ParallaxStrength;
+            newCBData.parallaxSmoothing = s_ParallaxSmoothing;
+            newCBData.exitPupilRadius = s_ExitPupilRadius;
+            newCBData.exitPupilSoftness = s_ExitPupilSoftness;
+            newCBData.vignetteStrength = s_VignetteStrength;
+            newCBData.vignetteRadius = s_VignetteRadius;
+            newCBData.vignetteSoftness = s_VignetteSoftness;
+            newCBData.eyeReliefDistance = s_EyeReliefDistance;
+            newCBData.enableParallax = s_EnableParallax;
 
-				cbData->vignetteStrength = s_VignetteStrength;
-				cbData->vignetteRadius = s_VignetteRadius;
-				cbData->vignetteSoftness = s_VignetteSoftness;
-				cbData->eyeReliefDistance = s_EyeReliefDistance;
-
-				cbData->enableParallax = s_EnableParallax;
-
-				// 更新夜视效果参数
-				cbData->nightVisionIntensity = s_EnableNightVision ? s_NightVisionIntensity : 0.0f;
-				cbData->nightVisionNoiseScale = s_NightVisionNoiseScale;
-				cbData->nightVisionNoiseAmount = s_NightVisionNoiseAmount;
-				cbData->nightVisionGreenTint = s_NightVisionGreenTint;
+            newCBData.nightVisionIntensity = s_EnableNightVision ? s_NightVisionIntensity : 0.0f;
+            newCBData.nightVisionNoiseScale = s_NightVisionNoiseScale;
+            newCBData.nightVisionNoiseAmount = s_NightVisionNoiseAmount;
+            newCBData.nightVisionGreenTint = s_NightVisionGreenTint;
 
 
 
-				// 设置LUT权重
-				for (int i = 0; i < 4; i++) {
-					cbData->lutWeights[i] = s_LUTWeights[i];
-				}
+            auto camMat = RE::PlayerCamera::GetSingleton()->cameraRoot->local.rotate.entry[0];
+            memcpy_s(&newCBData.CameraRotation, sizeof(newCBData.CameraRotation), &rotationMatrix, sizeof(rotationMatrix));
 
-				// 更新球形畸变参数
-				cbData->sphericalDistortionStrength = s_SphericalDistortionStrength;
-				cbData->sphericalDistortionRadius = s_SphericalDistortionRadius;
-				cbData->sphericalDistortionCenter[0] = s_SphericalDistortionCenterX;
-				cbData->sphericalDistortionCenter[1] = s_SphericalDistortionCenterY;
-				cbData->enableSphericalDistortion = s_EnableSphericalDistortion;
-				cbData->enableChromaticAberration = s_EnableChromaticAberration;
-
-				auto camMat = RE::PlayerCamera::GetSingleton()->cameraRoot->local.rotate.entry[0];
-				memcpy_s(&cbData->CameraRotation, sizeof(cbData->CameraRotation), &rotationMatrix, sizeof(rotationMatrix));
-				pContext->Unmap(constantBuffer, 0);
-				
-				// 更新缓存
-				s_CachedConstantBufferData.UpdateFrom(newCBData);
-			}
+            // Use D3DResourceManager to update Buffer
+            resManager->UpdateConstantBuffer(pContext, newCBData);
+            
+            s_CachedConstantBufferData.UpdateFrom(newCBData);
 		}
 
 		float blendFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 		pContext->OMSetBlendState(nullptr, blendFactor, 0xffffffff);
 
-		pContext->PSSetConstantBuffers(0, 1, &constantBuffer);
-		// 设置我们的像素着色器
-		pContext->PSSetShader(scopePixelShader, nullptr, 0);
+		ID3D11Buffer* cb = resManager->GetConstantBuffer();
+		pContext->PSSetConstantBuffers(0, 1, &cb);
+		
+		pContext->PSSetShader(resManager->GetScopePixelShader(), nullptr, 0);
 
 		// 设置纹理资源和采样器
-		// 直接使用瞄准镜场景纹理（stagingSRV）
-		pContext->PSSetShaderResources(0, 1, &stagingSRV);
-		pContext->PSSetShaderResources(1, 1, s_ReticleSRV.GetAddressOf());
+        ID3D11ShaderResourceView* views[2] = { stagingSRV, resManager->GetReticleSRV() };
+		pContext->PSSetShaderResources(0, 2, views);
 		
-		// 绑定LUT纹理到t2-t5
-		ID3D11ShaderResourceView* lutSRVs[4] = { 
-			s_CapturedLUTs[0].Get(), 
-			s_CapturedLUTs[1].Get(), 
-			s_CapturedLUTs[2].Get(), 
-			s_CapturedLUTs[3].Get() 
-		};
-		pContext->PSSetShaderResources(2, 4, lutSRVs);
-		
-		// 设置采样器（s0用于主纹理，s1用于LUT）
-		ID3D11SamplerState* samplers[2] = { samplerState, lutSamplerState };
-		pContext->PSSetSamplers(0, 2, samplers);
+		// 设置采样器（s0用于主纹理）
+		ID3D11SamplerState* samplers[1] = { resManager->GetSamplerState() };
+        pContext->PSSetSamplers(0, 1, samplers);
 
 		// === 绘制 ScopeQuad 并写入 Stencil ===
 		// ScopeQuad 在 hkDrawIndexed 中被跳过了，需要在这里用自定义 shader 绘制
@@ -1946,23 +1569,9 @@ namespace ThroughScope {
 
 	void D3DHooks::CleanupStaticResources()
 	{
-		// 清理静态全局资源
-		SAFE_RELEASE(stagingTexture);
-		SAFE_RELEASE(stagingSRV);
-		SAFE_RELEASE(scopePixelShader);
-		SAFE_RELEASE(samplerState);
-		SAFE_RELEASE(lutSamplerState);
-		SAFE_RELEASE(blendState);
-		SAFE_RELEASE(constantBuffer);
+		D3DResourceManager::GetSingleton()->Cleanup();
+		
 
-		// 清理ComPtr管理的资源（会自动调用Reset）
-		s_ReticleTexture.Reset();
-		s_ReticleSRV.Reset();
-
-		// 清理LUT相关资源
-		for (int i = 0; i < 4; i++) {
-			s_CapturedLUTs[i].Reset();
-		}
 
 		logger::info("D3DHooks static resources cleaned up successfully");
 	}

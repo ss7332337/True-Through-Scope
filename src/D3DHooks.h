@@ -3,8 +3,10 @@
 #include <d3d11.h>
 #include <DirectXMath.h>
 #include <dxgi.h>
+#include <dxgi.h>
 #include "RenderUtilities.h"
 #include <wrl/client.h>
+#include "rendering/D3DResourceManager.h"
 
 namespace ThroughScope {
 	using namespace DirectX;
@@ -110,70 +112,7 @@ namespace ThroughScope {
     class D3DHooks 
 	{
 	private:
-		 // 常量缓冲区数据结构
-		struct ScopeConstantBuffer
-		{
-			float screenWidth;
-			float screenHeight;
-			int enableNightVision;
-
-
-			// Viewport dimensions for DLSS/FSR3 upscaling
-			float viewportWidth;
-			float viewportHeight;
-			float padding_viewport[3];
-
-			float cameraPosition[3];
-			float padding2;  // 16字节对齐
-
-			float scopePosition[3];
-			float padding3;  // 16字节对齐
-
-			float lastCameraPosition[3];
-			float padding4;  // 16字节对齐
-
-			float lastScopePosition[3];
-			float padding5;  // 16字节对齐
-
-			// 新的视差参数 - 基于真实瞄镜光学原理
-			float parallaxStrength;         // 视差偏移强度 (建议 0.02-0.08)
-			float parallaxSmoothing;        // 视差时域平滑系数 (0.0-1.0)
-			float exitPupilRadius;          // 出瞳半径 (0.3-0.6)
-			float exitPupilSoftness;        // 出瞳边缘柔和度 (0.1-0.3)
-
-			float vignetteStrength;         // 边缘晕影强度 (0.0-1.0)
-			float vignetteRadius;           // 晕影起始半径 (0.5-0.9)
-			float vignetteSoftness;         // 晕影过渡柔和度 (0.1-0.5)
-			float eyeReliefDistance;        // 眼距模拟
-
-			float reticleScale;             // 瞄准镜缩放
-			float reticleOffsetX;           // X轴偏移
-			float reticleOffsetY;           // Y轴偏移
-			int   enableParallax;           // 是否启用视差效果
-
-			XMFLOAT4X4 CameraRotation = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-
-			float nightVisionIntensity;    // 夜视强度
-			float nightVisionNoiseScale;   // 噪点缩放
-			float nightVisionNoiseAmount;  // 噪点强度
-			float nightVisionGreenTint;    // 绿色色调强度
-
-
-
-			// Color Grading LUT权重
-			float lutWeights[4];  // 4个LUT的混合权重
-
-			float sphericalDistortionStrength;  // 球形畸变强度 (0.0 = 无畸变, 正值 = 桶形畸变, 负值 = 枕形畸变)
-			float sphericalDistortionRadius;    // 畸变作用半径 (0.0-1.0)
-			float sphericalDistortionCenter[2];
-
-			int enableSphericalDistortion;      // 是否启用球形畸变 (0 = 禁用, 1 = 启用)
-			int enableChromaticAberration;      // 是否启用色散效果 (0 = 禁用, 1 = 启用)
-			float brightnessBoost;              // 亮度增强系数
-			float ambientOffset;                // 环境光补偿 (Lift/Pedestal)
-		};
-
-		// 缓存的常量缓冲区数据，用于比较是否需要更新
+	// 缓存的常量缓冲区数据
 		struct CachedScopeConstantBuffer
 		{
 			float screenWidth = 0;
@@ -280,9 +219,6 @@ namespace ThroughScope {
         static bool IsScopeQuadBeingDrawnShape(ID3D11DeviceContext* pContext, UINT IndexCount);
 		static BOOL __stdcall ClipCursorHook(RECT* lpRect);
 
-        static ID3D11ShaderResourceView* s_ScopeTextureView;
-
-		static HRESULT CreateShaderFromFile(const WCHAR* csoFileNameInOut, const WCHAR* hlslFileName, LPCSTR entryPoint, LPCSTR shaderModel, ID3DBlob** ppBlobOut);
 		static bool IsEnableRender() { return s_EnableRender; }
 		static void SetEnableRender(bool value) { s_EnableRender = value; }
 
@@ -362,14 +298,7 @@ namespace ThroughScope {
 
 		static bool isSelfDrawCall;
 
-		// LUT纹理捕获相关
-		static void CaptureLUTTextures(ID3D11DeviceContext* context);
-		static ID3D11ShaderResourceView* GetCapturedLUT(int index) { 
-			return (index >= 0 && index < 4) ? s_CapturedLUTs[index].Get() : nullptr; 
-		}
-		static float GetLUTWeight(int index) {
-			return (index >= 0 && index < 4) ? s_LUTWeights[index] : 0.0f;
-		}
+
 
 	private:
 		struct BufferInfo
@@ -443,12 +372,8 @@ namespace ThroughScope {
 
 
 	private:
-		static Microsoft::WRL::ComPtr<ID3D11Texture2D> s_ReticleTexture;
-		static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> s_ReticleSRV;
 
-		// LUT纹理捕获相关
-		static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> s_CapturedLUTs[4];  // 存储4个LUT纹理
-		static float s_LUTWeights[4];  // 存储4个LUT的权重
+
 
 	public:
 		static void SetForwardStage(bool isForward) { s_isForwardStage = isForward; }

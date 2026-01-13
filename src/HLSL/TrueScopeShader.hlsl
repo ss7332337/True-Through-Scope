@@ -1,13 +1,9 @@
 Texture2D scopeTexture : register(t0);
 Texture2D reticleTexture : register(t1);
-// Color Grading 3D LUT纹理
-Texture3D lutTexture0 : register(t2);
-Texture3D lutTexture1 : register(t3);
-Texture3D lutTexture2 : register(t4);
-Texture3D lutTexture3 : register(t5);
+
 
 SamplerState scopeSampler : register(s0);
-SamplerState lutSampler : register(s1);
+
             
 // Constants buffer containing screen resolution, camera position and scope position
 cbuffer ScopeConstants : register(b0)
@@ -59,8 +55,7 @@ cbuffer ScopeConstants : register(b0)
     float nightVisionGreenTint;    // 绿色色调强度
 
 
-    // Color Grading LUT权重
-    float4 lutWeights;           // 4个LUT的混合权重
+
 
     // 球形畸变参数
     float sphericalDistortionStrength;  // 球形畸变强度 (0.0 = 无畸变, 正值 = 桶形畸变, 负值 = 枕形畸变)
@@ -246,36 +241,7 @@ float random(float2 st) {
     return frac(sin(dot(st.xy, float2(12.9898, 78.233))) * 43758.5453123);
 }
 
-// Color Grading 色彩分级函数
-float4 applyColorGrading(float4 color)
-{
-    float4 r0 = color;
 
-    // 对 RGB 分量取对数前进行安全钳制，避免 log(0) / 负数导致的 -INF/NaN
-    float3 rgb = log(max(abs(r0.xyz), 1e-6));
-
-    // gamma 校正：等价于 pow(color, 0.454545)
-    rgb *= 0.454545;
-    rgb = exp(rgb);
-
-    // LUT 坐标范围调整并夹紧到 [0,1]
-    float3 uvw = saturate(rgb * 0.9375 + 0.03125);
-
-    // 从多个 3D LUT 采样（显式 .rgb，避免隐式截断）
-    float3 c0 = lutTexture0.Sample(lutSampler, uvw).rgb;
-    float3 c1 = lutTexture1.Sample(lutSampler, uvw).rgb;
-    float3 c2 = lutTexture2.Sample(lutSampler, uvw).rgb;
-    float3 c3 = lutTexture3.Sample(lutSampler, uvw).rgb;
-
-    // 按权重混合（保持与你原逻辑一致：不做权重归一化）
-    float3 outRGB = c0 * lutWeights.x
-                  + c1 * lutWeights.y
-                  + c2 * lutWeights.z
-                  + c3 * lutWeights.w;
-
-    // 透传 alpha
-    return float4(outRGB, r0.w);
-}
 
 
 // 夜视效果处理
