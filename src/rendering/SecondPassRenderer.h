@@ -6,7 +6,7 @@
 #include "RenderUtilities.h"
 #include "LightBackupSystem.h"
 #include "RenderStateManager.h"
-
+#include "ScopedRenderState.h"
 
 namespace ThroughScope
 {

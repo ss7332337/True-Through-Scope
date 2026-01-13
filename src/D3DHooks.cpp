@@ -49,9 +49,9 @@ namespace ThroughScope {
 	HRESULT(WINAPI* D3DHooks::s_OriginalPresent)(IDXGISwapChain*, UINT, UINT) = nullptr;
 	RECT D3DHooks::oldRect{};
 	IAStateCache D3DHooks::s_CachedIAState;
-	VSStateCache D3DHooks::s_CachedVSState;
-	RSStateCache D3DHooks::s_CachedRSState;  // 新增
-	OMStateCache D3DHooks::s_CachedOMState;  // 新增
+	VSStateCacheWithCopy D3DHooks::s_CachedVSState;
+	RSStateCache D3DHooks::s_CachedRSState;
+	OMStateCache D3DHooks::s_CachedOMState;
 	float D3DHooks::s_ReticleScale = 1.0f;
 	float D3DHooks::s_ReticleOffsetX = 0.5f;
 	float D3DHooks::s_ReticleOffsetY = 0.5f;
@@ -1184,14 +1184,14 @@ namespace ThroughScope {
 
 		// 缓存Constant Buffers - 获取原始指针并创建副本
 		pContext->VSGetConstantBuffers(0, VSStateCache::MAX_CONSTANT_BUFFERS,
-			reinterpret_cast<ID3D11Buffer**>(s_CachedVSState.originalConstantBuffers));
+			reinterpret_cast<ID3D11Buffer**>(s_CachedVSState.constantBuffers));
 
 		// 为每个绑定的常量缓冲区创建副本并复制数据
 		for (UINT i = 0; i < VSStateCache::MAX_CONSTANT_BUFFERS; ++i) {
-			if (s_CachedVSState.originalConstantBuffers[i].Get()) {
+			if (s_CachedVSState.constantBuffers[i].Get()) {
 				// 获取原始缓冲区描述
 				D3D11_BUFFER_DESC originalDesc;
-				s_CachedVSState.originalConstantBuffers[i]->GetDesc(&originalDesc);
+				s_CachedVSState.constantBuffers[i]->GetDesc(&originalDesc);
 
 				// 创建可读的副本缓冲区
 				D3D11_BUFFER_DESC copyDesc = originalDesc;
@@ -1206,7 +1206,7 @@ namespace ThroughScope {
 				if (SUCCEEDED(hr)) {
 					// 复制缓冲区内容
 					pContext->CopyResource(s_CachedVSState.copiedConstantBuffers[i].Get(),
-						s_CachedVSState.originalConstantBuffers[i].Get());
+						s_CachedVSState.constantBuffers[i].Get());
 				} else {
 					logger::error("Failed to create copy of constant buffer {}: 0x{:X}", i, hr);
 					s_CachedVSState.copiedConstantBuffers[i].Reset();
@@ -1329,7 +1329,7 @@ namespace ThroughScope {
 			if (s_CachedVSState.copiedConstantBuffers[i].Get()) {
 				constantBuffers[i] = s_CachedVSState.copiedConstantBuffers[i].Get();
 			} else {
-				constantBuffers[i] = s_CachedVSState.originalConstantBuffers[i].Get();
+				constantBuffers[i] = s_CachedVSState.constantBuffers[i].Get();
 			}
 		}
 		pContext->VSSetConstantBuffers(0, VSStateCache::MAX_CONSTANT_BUFFERS, constantBuffers);

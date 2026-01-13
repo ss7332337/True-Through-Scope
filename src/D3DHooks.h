@@ -3,107 +3,26 @@
 #include <d3d11.h>
 #include <DirectXMath.h>
 #include <dxgi.h>
-#include <dxgi.h>
 #include "RenderUtilities.h"
 #include <wrl/client.h>
 #include "rendering/D3DResourceManager.h"
+#include "rendering/ScopedRenderState.h"
 
 namespace ThroughScope {
 	using namespace DirectX;
 
-	struct RSStateCache
+	// State cache structs are now defined in ScopedRenderState.h
+	// VSStateCache with copied constant buffers for D3DHooks special case
+	struct VSStateCacheWithCopy : public VSStateCache
 	{
-		// Rasterizer State
-		Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerState;
-
-		void Clear()
-		{
-			rasterizerState.Reset();
-		}
-	};
-
-	struct OMStateCache
-	{
-		// Render Targets
-		static constexpr UINT MAX_RENDER_TARGETS = D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT;
-		Microsoft::WRL::ComPtr<ID3D11RenderTargetView> renderTargetViews[MAX_RENDER_TARGETS];
-		Microsoft::WRL::ComPtr<ID3D11DepthStencilView> depthStencilView;
-		UINT numRenderTargets;
-
-		void Clear()
-		{
-			for (int i = 0; i < MAX_RENDER_TARGETS; ++i) {
-				renderTargetViews[i].Reset();
-			}
-			depthStencilView.Reset();
-			numRenderTargets = 0;
-		}
-	};
-
-	struct IAStateCache
-	{
-		// Input Layout
-		Microsoft::WRL::ComPtr<ID3D11InputLayout> inputLayout;
-
-		// Vertex Buffers
-		static constexpr UINT MAX_VERTEX_BUFFERS = 16;
-		Microsoft::WRL::ComPtr<ID3D11Buffer> vertexBuffers[MAX_VERTEX_BUFFERS];
-		UINT strides[MAX_VERTEX_BUFFERS];
-		UINT offsets[MAX_VERTEX_BUFFERS];
-
-		// Index Buffer
-		Microsoft::WRL::ComPtr<ID3D11Buffer> indexBuffer;
-		DXGI_FORMAT indexFormat;
-		UINT indexOffset;
-
-		// Primitive Topology
-		D3D11_PRIMITIVE_TOPOLOGY topology;
-
-		void Clear()
-		{
-			inputLayout.Reset();
-			for (int i = 0; i < MAX_VERTEX_BUFFERS; ++i) {
-				vertexBuffers[i].Reset();
-				strides[i] = 0;
-				offsets[i] = 0;
-			}
-			indexBuffer.Reset();
-			indexFormat = DXGI_FORMAT_UNKNOWN;
-			indexOffset = 0;
-			topology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
-		}
-	};
-
-	struct VSStateCache
-	{
-		// Vertex Shader
-		Microsoft::WRL::ComPtr<ID3D11VertexShader> vertexShader;
-
-		// Constant Buffers - 保存原始指针和拷贝的缓冲区
-		static constexpr UINT MAX_CONSTANT_BUFFERS = 14;
-		Microsoft::WRL::ComPtr<ID3D11Buffer> originalConstantBuffers[MAX_CONSTANT_BUFFERS];
+		// Additional copied constant buffers for data preservation
 		Microsoft::WRL::ComPtr<ID3D11Buffer> copiedConstantBuffers[MAX_CONSTANT_BUFFERS];
 
-		// Shader Resources
-		static constexpr UINT MAX_SHADER_RESOURCES = 128;
-		Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> shaderResources[MAX_SHADER_RESOURCES];
-
-		// Samplers
-		static constexpr UINT MAX_SAMPLERS = 16;
-		Microsoft::WRL::ComPtr<ID3D11SamplerState> samplers[MAX_SAMPLERS];
-
 		void Clear()
 		{
-			vertexShader.Reset();
+			VSStateCache::Clear();
 			for (int i = 0; i < MAX_CONSTANT_BUFFERS; ++i) {
-				originalConstantBuffers[i].Reset();
 				copiedConstantBuffers[i].Reset();
-			}
-			for (int i = 0; i < MAX_SHADER_RESOURCES; ++i) {
-				shaderResources[i].Reset();
-			}
-			for (int i = 0; i < MAX_SAMPLERS; ++i) {
-				samplers[i].Reset();
 			}
 		}
 	};
@@ -318,7 +237,7 @@ namespace ThroughScope {
 		static RECT oldRect;
 		static bool s_InPresent;  // 防止递归调用的标志
 		static IAStateCache s_CachedIAState;
-		static VSStateCache s_CachedVSState;
+		static VSStateCacheWithCopy s_CachedVSState;
 		static RSStateCache s_CachedRSState;
 		static OMStateCache s_CachedOMState;
 		static bool s_HasCachedState;
