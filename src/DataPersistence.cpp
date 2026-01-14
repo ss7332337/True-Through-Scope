@@ -203,6 +203,11 @@ namespace ThroughScope
 			config.parallaxSettings.eyeReliefDistance = getValue(parallaxJson, "eyeReliefDistance", 0.5f);
 			config.parallaxSettings.enableParallax = getValue(parallaxJson, "enableParallax", true);
 
+			// 高级视差参数
+			config.parallaxSettings.parallaxFogRadius = getValue(parallaxJson, "parallaxFogRadius", 1.0f);
+			config.parallaxSettings.parallaxMaxTravel = getValue(parallaxJson, "parallaxMaxTravel", 1.5f);
+			config.parallaxSettings.reticleParallaxStrength = getValue(parallaxJson, "reticleParallaxStrength", 0.5f);
+
 			// Load scope settings with defaults
 			const auto& scopeJson = configJson.value("scopeSettings", nlohmann::json::object());
 			config.scopeSettings.minFOV = getValue(scopeJson, "minFOV", 5);
@@ -293,7 +298,11 @@ namespace ThroughScope
 				{ "vignetteRadius", config.parallaxSettings.vignetteRadius },
 				{ "vignetteSoftness", config.parallaxSettings.vignetteSoftness },
 				{ "eyeReliefDistance", config.parallaxSettings.eyeReliefDistance },
-				{ "enableParallax", config.parallaxSettings.enableParallax }
+				{ "enableParallax", config.parallaxSettings.enableParallax },
+				// 高级视差参数
+				{ "parallaxFogRadius", config.parallaxSettings.parallaxFogRadius },
+				{ "parallaxMaxTravel", config.parallaxSettings.parallaxMaxTravel },
+				{ "reticleParallaxStrength", config.parallaxSettings.reticleParallaxStrength }
 			};
 
 			// Scope settings
@@ -378,7 +387,11 @@ namespace ThroughScope
 			0.7f,    // vignetteRadius
 			0.3f,    // vignetteSoftness
 			0.5f,    // eyeReliefDistance
-			true     // enableParallax
+			true,    // enableParallax
+			// 高级视差参数
+			1.0f,    // parallaxFogRadius
+			1.5f,    // parallaxMaxTravel
+			0.5f     // reticleParallaxStrength
 		};
 
 		// Set default scope settings

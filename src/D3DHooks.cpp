@@ -89,6 +89,12 @@ namespace ThroughScope {
 	float D3DHooks::s_VignetteSoftness = 0.3f;         // 晕影柔和度
 	float D3DHooks::s_EyeReliefDistance = 0.5f;        // 眼距
 	int   D3DHooks::s_EnableParallax = 1;              // 启用视差
+
+	// 高级视差参数
+	float D3DHooks::s_ParallaxFogRadius = 1.0f;            // 边缘渐变半径
+	float D3DHooks::s_ParallaxMaxTravel = 1.5f;            // 最大移动距离
+	float D3DHooks::s_ReticleParallaxStrength = 0.5f;      // 准星偏移强度
+
     bool D3DHooks::s_IsCapturingHDR = false; // 定义静态变量
     uint64_t D3DHooks::s_FrameNumber = 0;  // 帧计数器
     uint64_t D3DHooks::s_HDRCapturedFrame = 0;  // HDR 状态捕获的帧号
@@ -868,7 +874,10 @@ namespace ThroughScope {
             newCBData.nightVisionNoiseAmount = s_NightVisionNoiseAmount;
             newCBData.nightVisionGreenTint = s_NightVisionGreenTint;
 
-
+            // 高级视差参数
+            newCBData.parallaxFogRadius = s_ParallaxFogRadius;
+            newCBData.parallaxMaxTravel = s_ParallaxMaxTravel;
+            newCBData.reticleParallaxStrength = s_ReticleParallaxStrength;
 
             auto camMat = RE::PlayerCamera::GetSingleton()->cameraRoot->local.rotate.entry[0];
             memcpy_s(&newCBData.CameraRotation, sizeof(newCBData.CameraRotation), &rotationMatrix, sizeof(rotationMatrix));

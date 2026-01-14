@@ -54,8 +54,11 @@ cbuffer ScopeConstants : register(b0)
     float nightVisionNoiseAmount;  // 噪点强度
     float nightVisionGreenTint;    // 绿色色调强度
 
-
-
+    // 高级视差参数
+    float parallaxFogRadius;           // 边缘渐变半径
+    float parallaxMaxTravel;           // 最大移动距离
+    float reticleParallaxStrength;     // 准星偏移强度
+    float _padding1;                   // 对齐填充
 
     // 球形畸变参数
     float sphericalDistortionStrength;  // 球形畸变强度 (0.0 = 无畸变, 正值 = 桶形畸变, 负值 = 枕形畸变)
@@ -67,6 +70,7 @@ cbuffer ScopeConstants : register(b0)
     float brightnessBoost;              // 亮度增强系数
     float ambientOffset;                // 环境光补偿
 }
+
             
 struct PS_INPUT
 {
@@ -118,7 +122,7 @@ float2 calculateEyeOffset(float3 camPos, float3 scopePos, float3 lastCamPos, flo
     return eyeOffset;
 }
 
-// FTS 风格的视差计算函数
+// 视差计算函数 - 计算出瞳边缘的亮度衰减
 float getparallax(float d, float2 ds, float radius, float sway, float fogRadius)
 {
     // 为了防止除零，radius 应该 > 0
@@ -127,8 +131,7 @@ float getparallax(float d, float2 ds, float radius, float sway, float fogRadius)
     // 计算暗角因子
     float factor = abs((fogRadius / safeRadius) * d);
     
-    // 应用指数衰减 (sway amount)
-    // FTS 中 sway 也是作为指数
+    // 应用指数衰减
     float vignette = 1.0 - pow(factor, sway);
     
     return clamp(vignette, 0.0, 1.0);
@@ -187,9 +190,12 @@ ParallaxResult computeParallax(
         return result;
     }
 
+    // 限制眼睛偏移的最大移动距离
+    float2 clampedEyeOffset = clampLength(eyeOffset, parallaxMaxTravel);
+
     // 1. 动态出瞳 (Dynamic Exit Pupil)
     float sensitivity = 1.0 + eyeRelief; 
-    float2 maskCenterOffset = -eyeOffset * strength * sensitivity; // 反向移动
+    float2 maskCenterOffset = -clampedEyeOffset * strength * sensitivity; // 反向移动
     float2 maskCenter = float2(0.5, 0.5) + maskCenterOffset;
     
     // 计算当前像素到遮罩中心的距离 (宽高比校正)
@@ -197,26 +203,23 @@ ParallaxResult computeParallax(
     float2 correctedCenter = aspect_ratio_correction(maskCenter);
     float distToCenter = distance(correctedUV, correctedCenter);
     
-    // 2. 出瞳边缘色散 (Chromatic Aberration at Edge)
-    float edgeExponent = 5.0 * (1.1 - clamp(exitPupilSoftness, 0.1, 1.0)); 
-    float caShift = 0.015 * strength * 20.0; 
+    // 2. 出瞳边缘遮罩
+    float baseRadius = exitPupilRadius;
     
-    float radiusR = exitPupilRadius * (1.0 - caShift);
-    float radiusG = exitPupilRadius;
-    float radiusB = exitPupilRadius * (1.0 + caShift);
+    // 从 exitPupilSoftness 计算边缘过渡指数 (sway)
+    float sway = 5.0 * (1.1 - clamp(exitPupilSoftness, 0.1, 1.0));
     
-    float maskR = getparallax(distToCenter, float2(1,1), radiusR, edgeExponent, 1.0);
-    float maskG = getparallax(distToCenter, float2(1,1), radiusG, edgeExponent, 1.0);
-    float maskB = getparallax(distToCenter, float2(1,1), radiusB, edgeExponent, 1.0);
+    // 计算出瞳边缘遮罩 (单一值，无色散)
+    float mask = getparallax(distToCenter, float2(1,1), baseRadius, sway, parallaxFogRadius);
     
     // 3. 基础晕影叠加
     float staticVignette = calculateVignette(uv, vignetteStrength, vignetteRadius, vignetteSoftness);
     
-    result.brightnessMask = float3(maskR, maskG, maskB) * staticVignette;
+    result.brightnessMask = float3(mask, mask, mask) * staticVignette;
     
     // 4. 准星视差 (Reticle Parallax)
-    // 准星与眼睛同向微动，制造悬浮感
-    result.reticleOffset = eyeOffset * strength * 0.5;
+    // 使用独立的 reticleParallaxStrength 参数
+    result.reticleOffset = clampedEyeOffset * reticleParallaxStrength;
 
     return result;
 }

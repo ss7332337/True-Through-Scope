@@ -215,6 +215,22 @@ namespace ThroughScope {
 			s_CachedConstantBufferData.screenWidth = -1.0f; // 强制更新
 		}
 
+		// 高级视差参数访问器
+		static float GetParallaxFogRadius() { return s_ParallaxFogRadius; }
+		static float GetParallaxMaxTravel() { return s_ParallaxMaxTravel; }
+		static float GetReticleParallaxStrength() { return s_ReticleParallaxStrength; }
+
+		static void SetParallaxFogRadius(float v) { s_ParallaxFogRadius = std::clamp(v, 0.1f, 5.0f); }
+		static void SetParallaxMaxTravel(float v) { s_ParallaxMaxTravel = std::clamp(v, 0.1f, 10.0f); }
+		static void SetReticleParallaxStrength(float v) { s_ReticleParallaxStrength = std::clamp(v, 0.0f, 2.0f); }
+
+		static void UpdateAdvancedParallaxSettings(float fogRadius, float maxTravel, float reticleStrength) {
+			s_ParallaxFogRadius = fogRadius;
+			s_ParallaxMaxTravel = maxTravel;
+			s_ReticleParallaxStrength = reticleStrength;
+			s_CachedConstantBufferData.screenWidth = -1.0f; // 强制更新
+		}
+
 		static bool isSelfDrawCall;
 
 
@@ -253,6 +269,12 @@ namespace ThroughScope {
 		static float s_VignetteSoftness;
 		static float s_EyeReliefDistance;
 		static int   s_EnableParallax;
+
+		// 高级视差参数
+		static float s_ParallaxFogRadius;            // 边缘渐变半径
+		static float s_ParallaxMaxTravel;            // 最大移动距离
+		static float s_ReticleParallaxStrength;      // 准星偏移强度
+
 		static float s_ReticleScale;
 		static float s_ReticleOffsetX;
 		static float s_ReticleOffsetY;

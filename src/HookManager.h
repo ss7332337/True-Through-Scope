@@ -249,7 +249,7 @@ namespace ThroughScope
 		REL::Relocation<uintptr_t> Renderer_CreateRenderTarget_Ori{ REL::ID(425575) };
 		REL::Relocation<uintptr_t> RTM_CreateRenderTarget_Ori{ REL::ID(43433) };
 
-		REL::Relocation<uintptr_t> DrawWorld_LightUpdate_Ori{ REL::ID(918638) };
+		REL::Relocation<uintptr_t> DrawWorld_LightUpdate_Ori{ REL::ID(102390) };
 		REL::Relocation<uintptr_t> Renderer_DoZPrePass_Ori{ REL::ID(1491502) };
 		REL::Relocation<uintptr_t> BSGraphics_RenderZPrePass_Ori{ REL::ID(901559) };
 		REL::Relocation<uintptr_t> BSGraphics_RenderAlphaTestZPrePass_Ori{ REL::ID(767228) };

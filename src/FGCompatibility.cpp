@@ -40,8 +40,8 @@ namespace FGCompatibility
         if (!device) return false;
         if (g_ApplyMaskToMVCS) return true;  // 已编译
 
-        const wchar_t* shaderPath = L"Data\\Shaders\\ApplyMaskToMVCS.hlsl";
-        const wchar_t* csoPath = L"Data\\Shaders\\ApplyMaskToMVCS.cso";
+        const wchar_t* shaderPath = L"src\\HLSL\\ApplyMaskToMVCS.hlsl";
+        const wchar_t* csoPath = L"Data\\Shaders\\XiFeiLi\\ApplyMaskToMVCS.cso";
 
         ID3DBlob* shaderBlob = nullptr;
         

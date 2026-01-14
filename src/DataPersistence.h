@@ -54,7 +54,13 @@ namespace ThroughScope
 			float vignetteSoftness = 0.3f;         // 晕影柔和度
 			float eyeReliefDistance = 0.5f;        // 眼距
 			bool  enableParallax = true;           // 启用视差
+
+			// 高级视差参数
+			float parallaxFogRadius = 1.0f;            // 边缘渐变半径
+			float parallaxMaxTravel = 1.5f;            // 最大移动距离
+			float reticleParallaxStrength = 0.5f;      // 准星偏移强度
 		};
+
 
 		struct ScopeSettings
 		{

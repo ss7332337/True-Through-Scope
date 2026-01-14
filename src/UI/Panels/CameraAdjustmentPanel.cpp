@@ -454,13 +454,13 @@ namespace ThroughScope
 			if (m_CurrentValues.enableParallax) {
 				ImGui::Separator();
 				ImGui::Text("%s", LOC("camera.parallax_offset"));
-				ImGui::SliderFloat(LOC("camera.parallax_strength"), &m_CurrentValues.parallaxStrength, 0.0f, 0.2f, "%.3f");
+				ImGui::SliderFloat(LOC("camera.parallax_strength"), &m_CurrentValues.parallaxStrength, 0.0f, 1.5f, "%.3f");
 				ImGui::SliderFloat(LOC("camera.parallax_smoothing"), &m_CurrentValues.parallaxSmoothing, 0.0f, 1.0f, "%.2f");
-				ImGui::SliderFloat(LOC("camera.eye_relief"), &m_CurrentValues.eyeReliefDistance, 0.0f, 2.0f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.eye_relief"), &m_CurrentValues.eyeReliefDistance, 0.0f, 5.0f, "%.2f");
 
 				ImGui::Separator();
 				ImGui::Text("%s", LOC("camera.exit_pupil"));
-				ImGui::SliderFloat(LOC("camera.exit_pupil_radius"), &m_CurrentValues.exitPupilRadius, 0.2f, 0.8f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.exit_pupil_radius"), &m_CurrentValues.exitPupilRadius, 0.1f, 1.5f, "%.2f");
 				ImGui::SliderFloat(LOC("camera.exit_pupil_softness"), &m_CurrentValues.exitPupilSoftness, 0.05f, 0.5f, "%.2f");
 
 				ImGui::Separator();
@@ -468,6 +468,19 @@ namespace ThroughScope
 				ImGui::SliderFloat(LOC("camera.vignette_strength"), &m_CurrentValues.vignetteStrength, 0.0f, 1.0f, "%.2f");
 				ImGui::SliderFloat(LOC("camera.vignette_radius"), &m_CurrentValues.vignetteRadius, 0.3f, 1.0f, "%.2f");
 				ImGui::SliderFloat(LOC("camera.vignette_softness"), &m_CurrentValues.vignetteSoftness, 0.05f, 0.5f, "%.2f");
+
+				// 高级视差参数
+				ImGui::Separator();
+				ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", LOC("camera.advanced_parallax"));
+				
+				ImGui::SliderFloat(LOC("camera.fog_radius"), &m_CurrentValues.parallaxFogRadius, 0.1f, 5.0f, "%.2f");
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip(LOC("camera.fog_radius_tooltip"));
+				
+				ImGui::SliderFloat(LOC("camera.max_travel"), &m_CurrentValues.parallaxMaxTravel, 0.1f, 10.0f, "%.2f");
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip(LOC("camera.max_travel_tooltip"));
+				
+				ImGui::SliderFloat(LOC("camera.reticle_parallax"), &m_CurrentValues.reticleParallaxStrength, 0.0f, 2.0f, "%.2f");
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip(LOC("camera.reticle_parallax_tooltip"));
 			}
 		}
 	}
@@ -648,6 +661,11 @@ namespace ThroughScope
 		config.parallaxSettings.eyeReliefDistance = m_CurrentValues.eyeReliefDistance;
 		config.parallaxSettings.enableParallax = m_CurrentValues.enableParallax;
 
+		// 高级视差参数
+		config.parallaxSettings.parallaxFogRadius = m_CurrentValues.parallaxFogRadius;
+		config.parallaxSettings.parallaxMaxTravel = m_CurrentValues.parallaxMaxTravel;
+		config.parallaxSettings.reticleParallaxStrength = m_CurrentValues.reticleParallaxStrength;
+
 		// 保存夜视设置
 		config.scopeSettings.nightVision = m_EnableNightVision;
 		config.scopeSettings.nightVisionIntensity = m_NightVisionIntensity;
@@ -691,6 +709,11 @@ namespace ThroughScope
 		m_CurrentValues.vignetteSoftness = config->parallaxSettings.vignetteSoftness;
 		m_CurrentValues.eyeReliefDistance = config->parallaxSettings.eyeReliefDistance;
 		m_CurrentValues.enableParallax = config->parallaxSettings.enableParallax;
+
+		// 高级视差参数
+		m_CurrentValues.parallaxFogRadius = config->parallaxSettings.parallaxFogRadius;
+		m_CurrentValues.parallaxMaxTravel = config->parallaxSettings.parallaxMaxTravel;
+		m_CurrentValues.reticleParallaxStrength = config->parallaxSettings.reticleParallaxStrength;
 
 		// 加载夜视设置
 		m_EnableNightVision = config->scopeSettings.nightVision;
@@ -878,6 +901,12 @@ namespace ThroughScope
 			m_CurrentValues.vignetteSoftness,
 			m_CurrentValues.eyeReliefDistance,
 			m_CurrentValues.enableParallax ? 1 : 0);
+
+		// 高级视差参数
+		D3DHooks::UpdateAdvancedParallaxSettings(
+			m_CurrentValues.parallaxFogRadius,
+			m_CurrentValues.parallaxMaxTravel,
+			m_CurrentValues.reticleParallaxStrength);
 	}
 
 	void CameraAdjustmentPanel::ScanForNIFFiles()

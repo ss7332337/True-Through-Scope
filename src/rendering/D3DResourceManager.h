@@ -60,7 +60,11 @@ namespace ThroughScope
         float nightVisionNoiseAmount;
         float nightVisionGreenTint;
 
-
+        // 高级视差参数
+        float parallaxFogRadius;             // 边缘渐变半径
+        float parallaxMaxTravel;             // 最大移动距离
+        float reticleParallaxStrength;       // 准星偏移强度
+        float _padding1;                     // 对齐填充
 
         // Distortion
         float sphericalDistortionStrength;
@@ -72,6 +76,7 @@ namespace ThroughScope
         float brightnessBoost;
         float ambientOffset;
     };
+
 
     class D3DResourceManager
     {

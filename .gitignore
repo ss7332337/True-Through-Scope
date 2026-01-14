@@ -19,3 +19,4 @@ src/Decomplied.cpp
 /src/*.txt
 /docs
 /rdcEvents
+*.md
