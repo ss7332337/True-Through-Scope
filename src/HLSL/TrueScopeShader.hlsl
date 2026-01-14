@@ -430,9 +430,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 
     // 准星坐标 - 直接使用屏幕UV（加上视差偏移）
     // 不需要 aspect_ratio_correction，因为准星纹理本身是方形的
-    float2 reticleInputUV = texCoord + parallax.reticleOffset;
+    // FIX: Reverse parallax X offset to compensate for X-flip / 反转视差X偏移以补偿翻转
+    float2 reticleInputUV = texCoord + float2(-parallax.reticleOffset.x, parallax.reticleOffset.y);
     float2 reticleTexCoord = transform_reticle_coords(reticleInputUV);
-    // 注意：不再进行 X 翻转，因为现在 transform_reticle_coords 已正确处理坐标
+    reticleTexCoord.x = 1.0 - reticleTexCoord.x;
     float4 reticleColor = reticleTexture.Sample(scopeSampler, reticleTexCoord);
 
     // ========================================================================

@@ -353,14 +353,14 @@ namespace ThroughScope {
 
 	bool D3DHooks::PreInit()
 	{
-#ifdef _DEBUG
-		HMODULE mod = LoadLibraryA("renderdoc.dll");
-		isRenderDocDll = mod;
-		if (mod) {
-			logger::info("Found RenderDoc.dll, Using Another Hook.");
-			InitRenderDoc();
-		}
-#endif
+//#ifdef _DEBUG
+//		HMODULE mod = LoadLibraryA("renderdoc.dll");
+//		isRenderDocDll = mod;
+//		if (mod) {
+//			logger::info("Found RenderDoc.dll, Using Another Hook.");
+//			InitRenderDoc();
+//		}
+//#endif
 		logger::info("D3D11 hooks loading...");
 		ThroughScope::upscalerModular = LoadLibraryA("Data/F4SE/Plugins/Fallout4Upscaler.dll");
 
