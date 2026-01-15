@@ -89,8 +89,7 @@ namespace ThroughScope
 	{
 		std::lock_guard<std::mutex> lock(m_SetupMutex);
 		
-		// 等待150ms
-		std::this_thread::sleep_for(std::chrono::milliseconds(150));
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		
 		// 检查是否被取消
 		if (m_CancelPending.load()) {

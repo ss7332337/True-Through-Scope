@@ -1,5 +1,6 @@
 #include "ZoomDataPanel.h"
 #include "../../ScopeCamera.h"
+#include "../../EventHandler.h"
 
 namespace ThroughScope
 {
@@ -24,15 +25,48 @@ namespace ThroughScope
             return;
         }
 
-        // Check if UI values need reinitialization
-        std::string currentConfigKey = fmt::format("{:08X}_{}",
-            weaponInfo.weaponFormID,
-            weaponInfo.currentConfig->modelName);
+        if (EquipWatcher::IsPendingSetup()) {
+            ImGui::TextColored(m_WarningColor, LOC("zoom.weapon_switching"));
+            m_UIValuesInitialized = false;
+            return;
+        }
 
-        if (!m_UIValuesInitialized || m_LastLoadedConfigKey != currentConfigKey) {
-            LoadFromConfig(weaponInfo.currentConfig);
-            m_LastLoadedConfigKey = currentConfigKey;
+        bool weaponChanged = (m_LastWeaponFormID != 0 && m_LastWeaponFormID != weaponInfo.weaponFormID);
+        m_LastWeaponFormID = weaponInfo.weaponFormID;
+
+        const auto& configValues = weaponInfo.currentConfig->zoomDataSettings;
+        
+        bool valuesDesync = false;
+        if (isSaved) {
+            const float epsilon = 0.001f;
+            valuesDesync = 
+                std::abs(m_CurrentValues.fovMult - configValues.fovMult) > epsilon ||
+                std::abs(m_CurrentValues.offsetX - configValues.offsetX) > epsilon ||
+                std::abs(m_CurrentValues.offsetY - configValues.offsetY) > epsilon ||
+                std::abs(m_CurrentValues.offsetZ - configValues.offsetZ) > epsilon;
+        }
+
+        bool needsReload = weaponChanged || !m_UIValuesInitialized || valuesDesync;
+        
+        if (needsReload) {
+            m_CurrentValues.fovMult = configValues.fovMult;
+            m_CurrentValues.offsetX = configValues.offsetX;
+            m_CurrentValues.offsetY = configValues.offsetY;
+            m_CurrentValues.offsetZ = configValues.offsetZ;
+
+            if (weaponInfo.instanceData && weaponInfo.instanceData->zoomData) {
+                weaponInfo.instanceData->zoomData->zoomData.fovMult = m_CurrentValues.fovMult;
+                weaponInfo.instanceData->zoomData->zoomData.cameraOffset.x = m_CurrentValues.offsetX;
+                weaponInfo.instanceData->zoomData->zoomData.cameraOffset.y = m_CurrentValues.offsetY;
+                weaponInfo.instanceData->zoomData->zoomData.cameraOffset.z = m_CurrentValues.offsetZ;
+            }
+
+            m_PreviousValues = m_CurrentValues;
             m_UIValuesInitialized = true;
+            
+            m_LastLoadedConfigKey = fmt::format("{:08X}_{}", 
+                weaponInfo.weaponFormID, 
+                weaponInfo.currentConfig->modelName);
         }
 
         RenderZoomDataControls();
@@ -41,6 +75,19 @@ namespace ThroughScope
 
     void ZoomDataPanel::Update()
     {
+        if (EquipWatcher::IsPendingSetup()) {
+            return;
+        }
+
+        auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
+        if (!weaponInfo.currentConfig || !weaponInfo.instanceData) {
+            return;
+        }
+
+        if (m_LastWeaponFormID != 0 && m_LastWeaponFormID != weaponInfo.weaponFormID) {
+            return;
+        }
+
         if (HasChanges()) {
             ApplyAllSettings();
             UpdatePreviousValues();
@@ -185,6 +232,14 @@ namespace ThroughScope
         m_CurrentValues.offsetX = config->zoomDataSettings.offsetX;
         m_CurrentValues.offsetY = config->zoomDataSettings.offsetY;
         m_CurrentValues.offsetZ = config->zoomDataSettings.offsetZ;
+
+        auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
+        if (weaponInfo.instanceData && weaponInfo.instanceData->zoomData) {
+            weaponInfo.instanceData->zoomData->zoomData.fovMult = m_CurrentValues.fovMult;
+            weaponInfo.instanceData->zoomData->zoomData.cameraOffset.x = m_CurrentValues.offsetX;
+            weaponInfo.instanceData->zoomData->zoomData.cameraOffset.y = m_CurrentValues.offsetY;
+            weaponInfo.instanceData->zoomData->zoomData.cameraOffset.z = m_CurrentValues.offsetZ;
+        }
 
         UpdatePreviousValues();
     }

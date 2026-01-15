@@ -47,6 +47,7 @@ namespace ThroughScope
         
         bool m_UIValuesInitialized = false;
         std::string m_LastLoadedConfigKey = "";
+        uint32_t m_LastWeaponFormID = 0;
         
         // Rendering functions
         void RenderWeaponInformation();

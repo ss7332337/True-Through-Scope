@@ -22,6 +22,7 @@ namespace ThroughScope
 		static bool Initialize();
 		static void Shutdown();
 		static bool IsScopeActive() { return s_IsScopeActive; }
+		static bool IsPendingSetup() { return s_Instance ? s_Instance->m_PendingSetup.load() : false; }
 
 		virtual RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent& a_event, RE::BSTEventSource<RE::TESEquipEvent>* a_eventSource) override;
 		//void SetupScopeForWeapon(const DataPersistence::WeaponInfo& weaponInfo);
