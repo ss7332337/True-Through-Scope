@@ -14,6 +14,26 @@ namespace ThroughScope
 	{
 		logger::info("Initializing ImGui...");
 
+		// 首先初始化本地化系统（只执行一次，避免重复初始化）
+		auto localization = LocalizationManager::GetSingleton();
+		if (!localization->IsInitialized()) {
+			if (!localization->Initialize()) {
+				logger::warn("Failed to initialize localization system, using fallback English text");
+			} else {
+				logger::info("Localization system initialized successfully");
+			}
+			
+			// 从DataPersistence加载保存的语言设置
+			auto dataPersistence = DataPersistence::GetSingleton();
+			const auto& globalSettings = dataPersistence->GetGlobalSettings();
+			if (globalSettings.selectedLanguage >= 0 &&
+				globalSettings.selectedLanguage < static_cast<int>(Language::COUNT)) {
+				Language savedLanguage = static_cast<Language>(globalSettings.selectedLanguage);
+				localization->SetLanguage(savedLanguage);
+				logger::debug("Loaded saved language setting: {}", static_cast<int>(savedLanguage));
+			}
+		}
+
 		// 检查是否已经有ImGui上下文存在（避免与其他MOD冲突）
 		if (ImGui::GetCurrentContext() != nullptr) {
 			logger::warn("ImGui context already exists, using existing context");
@@ -25,22 +45,8 @@ namespace ThroughScope
 				LoadLanguageFonts();
 			}
 
-			// 继续初始化面板系统和本地化
+			// 继续初始化面板系统
 			InitializePanels();
-
-			auto localization = LocalizationManager::GetSingleton();
-			if (!localization->Initialize()) {
-				logger::warn("Failed to initialize localization system, using fallback English text");
-			}
-
-			auto dataPersistence = DataPersistence::GetSingleton();
-			const auto& globalSettings = dataPersistence->GetGlobalSettings();
-			if (globalSettings.selectedLanguage >= 0 &&
-				globalSettings.selectedLanguage < static_cast<int>(Language::COUNT)) {
-				Language savedLanguage = static_cast<Language>(globalSettings.selectedLanguage);
-				localization->SetLanguage(savedLanguage);
-
-			}
 
 			m_Initialized = true;
 
@@ -111,24 +117,8 @@ namespace ThroughScope
 			return false;
 		}
 
-		// 初始化面板系统
+		// 初始化面板系统（本地化已在函数开始时初始化）
 		InitializePanels();
-
-		// 初始化本地化系统
-		auto localization = LocalizationManager::GetSingleton();
-		if (!localization->Initialize()) {
-			logger::warn("Failed to initialize localization system, using fallback English text");
-		}
-		
-		// 从DataPersistence加载保存的语言设置
-		auto dataPersistence = DataPersistence::GetSingleton();
-		const auto& globalSettings = dataPersistence->GetGlobalSettings();
-		if (globalSettings.selectedLanguage >= 0 && 
-			globalSettings.selectedLanguage < static_cast<int>(Language::COUNT)) {
-			Language savedLanguage = static_cast<Language>(globalSettings.selectedLanguage);
-			localization->SetLanguage(savedLanguage);
-
-		}
 
 		m_Initialized = true;
 
