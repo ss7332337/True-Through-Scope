@@ -70,6 +70,11 @@ namespace ThroughScope {
 	static UINT s_ScopeQuadIndexCount = 0;
 	static UINT s_ScopeQuadStartIndexLocation = 0;
 	static INT s_ScopeQuadBaseVertexLocation = 0;
+	
+	// ScopeQuad viewport capture for Upscaling compatibility
+	// 保存检测到 scope quad 时的 viewport，用于后续渲染到 RT4 时正确变换坐标
+	static D3D11_VIEWPORT s_ScopeQuadOriginalViewport = {};
+	static bool s_HasScopeQuadViewport = false;
 
 	bool D3DHooks::s_EnableRender = false;
 	bool D3DHooks::s_InPresent = false;
@@ -353,14 +358,14 @@ namespace ThroughScope {
 
 	bool D3DHooks::PreInit()
 	{
-//#ifdef _DEBUG
-//		HMODULE mod = LoadLibraryA("renderdoc.dll");
-//		isRenderDocDll = mod;
-//		if (mod) {
-//			logger::info("Found RenderDoc.dll, Using Another Hook.");
-//			InitRenderDoc();
-//		}
-//#endif
+#ifdef _DEBUG
+		HMODULE mod = LoadLibraryA("renderdoc.dll");
+		isRenderDocDll = mod;
+		if (mod) {
+			logger::info("Found RenderDoc.dll, Using Another Hook.");
+			InitRenderDoc();
+		}
+#endif
 		logger::info("D3D11 hooks loading...");
 		ThroughScope::upscalerModular = LoadLibraryA("Data/F4SE/Plugins/Fallout4Upscaler.dll");
 
@@ -454,6 +459,12 @@ namespace ThroughScope {
 			s_ScopeQuadIndexCount = IndexCount;
 			s_ScopeQuadStartIndexLocation = StartIndexLocation;
 			s_ScopeQuadBaseVertexLocation = BaseVertexLocation;
+			
+			// 保存当前 viewport (Upscaling 兼容)
+			// 顶点坐标是基于这个 viewport 计算的，渲染到 RT4 时需要使用相同的 viewport
+			UINT vpCount = 1;
+			pContext->RSGetViewports(&vpCount, &s_ScopeQuadOriginalViewport);
+			s_HasScopeQuadViewport = (vpCount > 0);
 			
 			D3DPERF_EndEvent();
 			
@@ -707,16 +718,25 @@ namespace ThroughScope {
 		UINT screenWidth = rendererState.backBufferWidth;
 		UINT screenHeight = rendererState.backBufferHeight;
 		
-		// DLSS/FSR3: Use FirstPass viewport for shader UV calculation
-		// Upscaling 动态调整 viewport 大小，必须使用 FirstPassViewport
+		// DLSS/FSR3 Upscaling 兼容：使用 scope quad 检测时捕获的原始 viewport
+		// 这样 shader 的 UV 计算与 SV_POSITION 坐标空间匹配
+		// 注意：s_ScopeQuadOriginalViewport 是在 hkDrawIndexed 中检测到 scope quad 时捕获的
 		float viewportWidth = static_cast<float>(screenWidth);
 		float viewportHeight = static_cast<float>(screenHeight);
 		
-		D3D11_VIEWPORT firstPassViewport = {};
-		if (RenderUtilities::GetFirstPassViewport(firstPassViewport) && 
-			firstPassViewport.Width > 0 && firstPassViewport.Height > 0) {
-			viewportWidth = firstPassViewport.Width;
-			viewportHeight = firstPassViewport.Height;
+		if (s_HasScopeQuadViewport && 
+			s_ScopeQuadOriginalViewport.Width > 0 && s_ScopeQuadOriginalViewport.Height > 0) {
+			// 使用检测时捕获的 viewport，与渲染时设置的 viewport 一致
+			viewportWidth = s_ScopeQuadOriginalViewport.Width;
+			viewportHeight = s_ScopeQuadOriginalViewport.Height;
+		} else {
+			// Fallback: 使用 RT4/FirstPass viewport
+			D3D11_VIEWPORT firstPassViewport = {};
+			if (RenderUtilities::GetFirstPassViewport(firstPassViewport) && 
+				firstPassViewport.Width > 0 && firstPassViewport.Height > 0) {
+				viewportWidth = firstPassViewport.Width;
+				viewportHeight = firstPassViewport.Height;
+			}
 		}
 
 		// 获取视差所需的数据
@@ -919,7 +939,11 @@ namespace ThroughScope {
 				stencilDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
 			}
 
-			// 获取当前绑定的 RTV（由 RestoreFirstPass 设置）
+			// 使用 RT4 作为渲染目标 (Upscaling 兼容)
+			// Upscaling MOD 从 RT4 复制数据，所以必须渲染到 RT4
+			ID3D11RenderTargetView* rt4RTV = (ID3D11RenderTargetView*)rendererData->renderTargets[4].rtView;
+			
+			// 备份当前 RTV/DSV
 			Microsoft::WRL::ComPtr<ID3D11RenderTargetView> currentRTV;
 			Microsoft::WRL::ComPtr<ID3D11DepthStencilView> currentDSV;
 			pContext->OMGetRenderTargets(1, currentRTV.GetAddressOf(), currentDSV.GetAddressOf());
@@ -928,6 +952,11 @@ namespace ThroughScope {
 			Microsoft::WRL::ComPtr<ID3D11DepthStencilState> oldDSS;
 			UINT oldStencilRef;
 			pContext->OMGetDepthStencilState(oldDSS.GetAddressOf(), &oldStencilRef);
+			
+			// 备份当前 viewport
+			UINT numViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+			D3D11_VIEWPORT oldViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+			pContext->RSGetViewports(&numViewports, oldViewports);
 
 			// 创建写入 stencil 的 DSS（禁用深度测试，避免被场景深度遮挡）
 			D3D11_DEPTH_STENCIL_DESC dssDesc;
@@ -946,9 +975,15 @@ namespace ThroughScope {
 
 			Microsoft::WRL::ComPtr<ID3D11DepthStencilState> stencilWriteDSS;
 			if (SUCCEEDED(device->CreateDepthStencilState(&dssDesc, stencilWriteDSS.GetAddressOf()))) {
-				// 关键：绑定当前 RTV + 带 stencil 的 DSV（解决 "No Resource" 问题）
-				ID3D11RenderTargetView* rtv = currentRTV.Get();
-				pContext->OMSetRenderTargets(1, &rtv, stencilDSV);
+				// 设置 viewport (关键：使用 scope quad 检测时捕获的原始 viewport)
+				// 这样顶点坐标变换与游戏原始渲染一致，即使 RT4 尺寸不同
+				// D3D11 的 viewport 变换会自动处理坐标映射
+				if (s_HasScopeQuadViewport) {
+					pContext->RSSetViewports(1, &s_ScopeQuadOriginalViewport);
+				}
+				
+				// 绑定 RT4 + 支持 stencil 的 DSV
+				pContext->OMSetRenderTargets(1, &rt4RTV, stencilDSV);
 
 				// 设置 stencil ref = 127
 				pContext->OMSetDepthStencilState(stencilWriteDSS.Get(), 127);
@@ -959,6 +994,11 @@ namespace ThroughScope {
 				pContext->DrawIndexed(scopeNodeIndexCount, 0, 0);
 				isSelfDrawCall = false;
 
+				// 恢复原始 viewport
+				if (numViewports > 0) {
+					pContext->RSSetViewports(numViewports, oldViewports);
+				}
+				
 				// 恢复原始 RTV/DSV 和 DSS
 				pContext->OMSetRenderTargets(1, currentRTV.GetAddressOf(), currentDSV.Get());
 				pContext->OMSetDepthStencilState(oldDSS.Get(), oldStencilRef);

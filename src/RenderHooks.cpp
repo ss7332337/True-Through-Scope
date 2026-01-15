@@ -606,6 +606,34 @@ namespace ThroughScope
 		D3DEventNode(g_hookMgr->g_ForwardOriginal(ptr_drawWorld), L"hkDrawWorld_Forward");
 		D3DHooks::SetForwardStage(false);
 
+		// Capture RT4 viewport for Upscaling compatibility
+		// This works for both Upscaling (DLSS/FSR3) and non-Upscaling cases:
+		// - With Upscaling: RT4 viewport = internal render resolution (lower than output)
+		// - Without Upscaling: RT4 viewport = backbuffer resolution (full resolution)
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		if (rendererData && rendererData->context) {
+			auto context = (ID3D11DeviceContext*)rendererData->context;
+
+			// Get RT4's texture description to determine the actual rendering resolution
+			ID3D11Texture2D* rt4Texture = (ID3D11Texture2D*)rendererData->renderTargets[4].texture;
+			if (rt4Texture) {
+				D3D11_TEXTURE2D_DESC texDesc;
+				rt4Texture->GetDesc(&texDesc);
+
+				// Create viewport from RT4 texture dimensions
+				D3D11_VIEWPORT rt4Viewport = {};
+				rt4Viewport.TopLeftX = 0.0f;
+				rt4Viewport.TopLeftY = 0.0f;
+				rt4Viewport.Width = static_cast<float>(texDesc.Width);
+				rt4Viewport.Height = static_cast<float>(texDesc.Height);
+				rt4Viewport.MinDepth = 0.0f;
+				rt4Viewport.MaxDepth = 1.0f;
+
+				// Store for later use in SetScopeTexture and SecondPassRenderer
+				RenderUtilities::SetFirstPassViewport(rt4Viewport);
+			}
+		}
+
 		auto scopeRenderMgr = ScopeRenderingManager::GetSingleton();
 		if (scopeRenderMgr->IsUpscalingActive()) {
 			D3DPERF_BeginEvent(0xFF00AAFF, L"[FO4TEST_TIMING] After_Forward_CopyBuffersToShared");
