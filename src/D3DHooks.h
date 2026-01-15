@@ -167,6 +167,8 @@ namespace ThroughScope {
 		static float GetReticleScale() { return s_ReticleScale; }
 		static float GetReticleOffsetX() { return s_ReticleOffsetX; }
 		static float GetReticleOffsetY() { return s_ReticleOffsetY; }
+		static bool GetScaleReticleWithZoom() { return s_ScaleReticleWithZoom; }
+		static void SetScaleReticleWithZoom(bool enable) { s_ScaleReticleWithZoom = enable; }
 
 		// 球形畸变设置的Getter和Setter函数
 		static void SetSphericalDistortionStrength(float strength) { s_SphericalDistortionStrength = strength; }
@@ -278,6 +280,7 @@ namespace ThroughScope {
 		static float s_ReticleScale;
 		static float s_ReticleOffsetX;
 		static float s_ReticleOffsetY;
+		static bool s_ScaleReticleWithZoom;
 
 		// 夜视效果参数
 		static float s_NightVisionIntensity;

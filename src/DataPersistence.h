@@ -92,6 +92,7 @@ namespace ThroughScope
 			float scale = 1.0f;    // 瞄准镜缩放 (0.1 - 32.0)
 			float offsetX = 0.5f;
 			float offsetY = 0.5f;
+			bool scaleReticleWithZoom = false;  // 准星随瞄具放大
 		};
 
 		struct ZoomDataSettings

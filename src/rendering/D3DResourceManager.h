@@ -50,7 +50,10 @@ namespace ThroughScope
         float reticleScale;
         float reticleOffsetX;
         float reticleOffsetY;
+        float reticleZoomScale;    // 准星放大倍率（启用时为 1/fovMult，禁用时为 1.0）
+
         int   enableParallax;
+        float _paddingBeforeMatrix[3];  // 对齐填充，确保 CameraRotation 从 16 字节边界开始
 
         XMFLOAT4X4 CameraRotation;
 

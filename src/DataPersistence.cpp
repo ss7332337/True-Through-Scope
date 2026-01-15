@@ -221,6 +221,7 @@ namespace ThroughScope
 			config.reticleSettings.offsetX = getValue(reticleJson, "offsetX", 0.5f);
 			config.reticleSettings.offsetY = getValue(reticleJson, "offsetY", 0.5f);
 			config.reticleSettings.scale = getValue(reticleJson, "scale", 1.0f);
+			config.reticleSettings.scaleReticleWithZoom = getValue(reticleJson, "scaleWithZoom", false);
 
 			// Load zoom data settings with defaults
 			const auto& zoomDataJson = configJson.value("zoomData", nlohmann::json::object());
@@ -330,7 +331,8 @@ namespace ThroughScope
 				{ "customPath", config.reticleSettings.customReticlePath },
 				{ "offsetX", config.reticleSettings.offsetX },
 				{ "offsetY", config.reticleSettings.offsetY },
-				{ "scale", config.reticleSettings.scale }
+				{ "scale", config.reticleSettings.scale },
+				{ "scaleWithZoom", config.reticleSettings.scaleReticleWithZoom }
 			};
 
 
@@ -418,8 +420,9 @@ namespace ThroughScope
 		// Default reticle settings
 		presetConfig.reticleSettings.customReticlePath = "";
 		presetConfig.reticleSettings.offsetX = 0.5f;
-		presetConfig.reticleSettings.offsetX = 0.5f;
-		presetConfig.reticleSettings.scale = 1;
+		presetConfig.reticleSettings.offsetY = 0.5f;
+		presetConfig.reticleSettings.scale = 1.0f;
+		presetConfig.reticleSettings.scaleReticleWithZoom = false;
 
 		presetConfig.zoomDataSettings.fovMult = 1.0f;
 		presetConfig.zoomDataSettings.offsetX = 0.0f;

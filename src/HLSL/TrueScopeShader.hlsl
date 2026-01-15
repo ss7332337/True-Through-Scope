@@ -44,7 +44,10 @@ cbuffer ScopeConstants : register(b0)
     float reticleScale;
     float reticleOffsetX;
     float reticleOffsetY;
+    float reticleZoomScale;         // 准星放大倍率（启用时为 1/fovMult，禁用时为 1.0）
+
     int enableParallax;             // 是否启用视差效果
+    float3 _paddingBeforeMatrix;    // 对齐填充，确保 CameraRotation 从 16 字节边界开始
 
     float4x4 CameraRotation;
 
@@ -229,8 +232,12 @@ float2 transform_reticle_coords(float2 uv)
     float2 centered = uv - 0.5;
     float aspectRatio = screenWidth / screenHeight;
     centered.x *= aspectRatio;
-    float safeScale = max(reticleScale, 0.01);
-    centered /= safeScale;
+    
+    // 最终缩放 = 用户设置的基础缩放 * 放大倍率
+    // reticleZoomScale: 启用时为 1/fovMult (越放大越大)，禁用时为 1.0
+    float finalScale = max(reticleScale * reticleZoomScale, 0.01);
+    centered /= finalScale;
+    
     centered.x -= reticleOffsetX * aspectRatio;  // X偏移也需要考虑宽高比
     centered.y += reticleOffsetY;
     // 注意：不需要撤销宽高比校正，因为我们就是要让采样范围不对称

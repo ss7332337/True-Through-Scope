@@ -163,9 +163,6 @@ namespace ThroughScope
 					if (fileName != m_CurrentSettings.texturePath) {
 						m_CurrentSettings.texturePath = fileName;
 						isSaved = false;
-						// 加载预览
-						CreateTexturePreview(fileName);
-
 						m_Manager->SetDebugText(fmt::format(fmt::runtime(LOC("reticle.texture_selected")), fileName).c_str());
 					}
 				}
@@ -226,6 +223,15 @@ namespace ThroughScope
 		if (settingsChanged) {
 			isSaved = false;
 		}
+
+		ImGui::Spacing();
+
+		// 准星随瞄具放大选项
+		if (ImGui::Checkbox(LOC("reticle.scale_with_zoom"), &m_CurrentSettings.scaleWithZoom)) {
+			isSaved = false;
+			D3DHooks::SetScaleReticleWithZoom(m_CurrentSettings.scaleWithZoom);
+		}
+		RenderHelpTooltip(LOC("reticle.scale_with_zoom_tooltip"));
 
 		ImGui::Spacing();
 
@@ -321,12 +327,6 @@ namespace ThroughScope
 		} else {
 			ImGui::TextColored(m_SuccessColor, LOC("reticle.all_saved"));
 		}
-
-		ImGui::Spacing();
-
-		// 预览控制
-		ImGui::Checkbox(LOC("reticle.show_preview"), &m_ShowPreview);
-		RenderHelpTooltip(LOC("tooltip.show_preview"));
 	}
 
 	bool ReticlePanel::LoadTexture(const std::string& texturePath)
@@ -381,6 +381,7 @@ namespace ThroughScope
 			modifiedConfig.reticleSettings.scale = m_CurrentSettings.scale;
 			modifiedConfig.reticleSettings.offsetX = m_CurrentSettings.offsetX;
 			modifiedConfig.reticleSettings.offsetY = m_CurrentSettings.offsetY;
+			modifiedConfig.reticleSettings.scaleReticleWithZoom = m_CurrentSettings.scaleWithZoom;
 
 			// 保存配置
 			auto dataPersistence = DataPersistence::GetSingleton();
@@ -405,6 +406,10 @@ namespace ThroughScope
 			m_CurrentSettings.scale = weaponInfo.currentConfig->reticleSettings.scale;
 			m_CurrentSettings.offsetX = weaponInfo.currentConfig->reticleSettings.offsetX;
 			m_CurrentSettings.offsetY = weaponInfo.currentConfig->reticleSettings.offsetY;
+			m_CurrentSettings.scaleWithZoom = weaponInfo.currentConfig->reticleSettings.scaleReticleWithZoom;
+
+			// 应用到D3DHooks
+			D3DHooks::SetScaleReticleWithZoom(m_CurrentSettings.scaleWithZoom);
 
 			// 创建预览
 			CreateTexturePreview(m_CurrentSettings.texturePath);

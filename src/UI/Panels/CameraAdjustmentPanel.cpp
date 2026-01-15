@@ -438,10 +438,6 @@ namespace ThroughScope
 
 				ImGui::SliderInt(LOC("camera.min_fov"), &m_MinFov, 1, 180);
 				ImGui::SliderInt(LOC("camera.max_fov"), &m_MaxFov, 2, 180);
-				ImGui::Checkbox(LOC("camera.night_vision"), &m_EnableNightVision);
-				ImGui::SameLine();
-				ImGui::Text(LOC("camera.night_vision_Tips"));
-
 			}
 		}
 	}

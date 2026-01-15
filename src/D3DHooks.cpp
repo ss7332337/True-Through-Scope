@@ -55,6 +55,7 @@ namespace ThroughScope {
 	float D3DHooks::s_ReticleScale = 1.0f;
 	float D3DHooks::s_ReticleOffsetX = 0.5f;
 	float D3DHooks::s_ReticleOffsetY = 0.5f;
+	bool D3DHooks::s_ScaleReticleWithZoom = false;
 	bool D3DHooks::s_HasCachedState = false;
 	D3DHooks::CachedScopeConstantBuffer D3DHooks::s_CachedConstantBufferData; // 初始化缓存数据
 
@@ -832,9 +833,31 @@ namespace ThroughScope {
 		newCBData.scopePosition[0] = scopePos.x;
 		newCBData.scopePosition[1] = scopePos.y;
 		newCBData.scopePosition[2] = scopePos.z;
+		// 保持用户设置的基础准星缩放不变
 		newCBData.reticleScale = s_ReticleScale;
 		newCBData.reticleOffsetX = s_ReticleOffsetX;
 		newCBData.reticleOffsetY = s_ReticleOffsetY;
+		
+		// 计算准星放大倍率 - 若启用了随瞄具放大，则根据当前FOV计算倍率
+		float zoomScale = 1.0f;
+		if (s_ScaleReticleWithZoom) {
+			// 获取当前实际 FOV 和基准 FOV
+			float currentFOV = ScopeCamera::GetTargetFOV();
+			// 使用默认视角作为基准（通常是 90 或配置的 maxFOV）
+			float baseFOV = 70.0f;  // 默认基准 FOV
+			
+			auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
+			if (weaponInfo.currentConfig) {
+				baseFOV = static_cast<float>(weaponInfo.currentConfig->scopeSettings.maxFOV);
+			}
+			
+			// 放大倍率 = 基准FOV / 当前FOV
+			// 例如：baseFOV=70, currentFOV=35 -> zoomScale=2.0 (2倍放大)
+			if (currentFOV > 1.0f) {
+				zoomScale = baseFOV / currentFOV;
+			}
+		}
+		newCBData.reticleZoomScale = zoomScale;
 		newCBData.enableNightVision = s_EnableNightVision;
 
 		

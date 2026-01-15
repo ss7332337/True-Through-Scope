@@ -36,6 +36,7 @@ namespace ThroughScope
             float scale = 1.0f;         // 缩放 (0.1 - 32.0)
             float offsetX = 0.5f;       // X偏移 (0.0 - 1.0)
             float offsetY = 0.5f;       // Y偏移 (0.0 - 1.0)
+            bool scaleWithZoom = false; // 准星随瞄具放大
         };
         
         // 获取当前设置
