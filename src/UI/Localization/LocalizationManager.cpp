@@ -18,7 +18,10 @@ namespace ThroughScope
         { "Deutsch", "de" },
         { "Français", "fr" },
         { "Español", "es" },
-        { "Русский", "ru" }
+        { "Русский", "ru" },
+        { "Italiano", "it" },
+        { "Português", "pt" },
+        { "Polski", "pl" }
     };
 
     LocalizationManager* LocalizationManager::GetSingleton() 

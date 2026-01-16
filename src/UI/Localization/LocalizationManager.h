@@ -15,6 +15,9 @@ namespace ThroughScope
         French = 6,
         Spanish = 7,
         Russian = 8,
+        Italian = 9,
+        Portuguese = 10,
+        Polish = 11,
         COUNT
     };
 

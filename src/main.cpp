@@ -257,7 +257,6 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_f4se, F4
 	spdlog::set_pattern("%g(%#): [%^%l%$] %v"s);
 
 	logger::info(FMT_STRING("=== {} v{}.{}.{} ==="), Version::PROJECT, Version::MAJOR, Version::MINOR, Version::PATCH);
-	logger::info("TrueThroughScope: This is YOUR MOD - all logs with 'TrueThroughScope:' prefix are from your code");
 
 	if (a_f4se->IsEditor()) {
 		logger::critical("loaded in editor");
