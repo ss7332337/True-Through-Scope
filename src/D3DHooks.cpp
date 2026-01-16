@@ -413,8 +413,7 @@ namespace ThroughScope {
 
 		// 创建Hook
 
-		if (isRenderDocDll)
-		{
+		if (isRenderDocDll) {
 			if (rdoc_api && m_Device) {
 				IDXGIDevice* pDXGIDevice = nullptr;
 				if (SUCCEEDED(m_Device->QueryInterface(__uuidof(IDXGIDevice), (void**)&pDXGIDevice))) {
@@ -425,6 +424,7 @@ namespace ThroughScope {
 					logger::error("Failed to get DXGI device for RenderDoc");
 				}
 			}
+		}
 
 
 		Utilities::CreateAndEnableHook(presentFunc, reinterpret_cast<void*>(hkPresent), reinterpret_cast<void**>(&s_OriginalPresent), "Present");
