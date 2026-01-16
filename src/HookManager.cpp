@@ -166,6 +166,9 @@ extern void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* 
 		CreateAndEnableHook((LPVOID)BSShaderAccumulator_RegisterObject_Ori.address(), &hkBSShaderAccumulator_RegisterObject,
 			reinterpret_cast<LPVOID*>(&g_RegisterObjectOriginal), "BSShaderAccumulator_RegisterObject");
 
+		CreateAndEnableHook((LPVOID)DrawTriShape_Ori.address(), &hkDrawTriShape,
+			reinterpret_cast<LPVOID*>(&g_DrawTriShape), "DrawTriShape");
+
 		RegisterTAAHook();
 		RegisterImageSpaceDebugHooks();
 

@@ -346,6 +346,7 @@ namespace ThroughScope {
 		static bool IsTargetDrawCall(std::vector<BufferInfo> vertexInfos, const BufferInfo& indexInfo, UINT indexCount);
 		static UINT GetVertexBuffersInfo(ID3D11DeviceContext* pContext, std::vector<BufferInfo>& outInfos, UINT maxSlotsToCheck = D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT);
 		static bool GetIndexBufferInfo(ID3D11DeviceContext* pContext, BufferInfo& outInfo);
+		static bool HasTTSMarkerUV(ID3D11DeviceContext* pContext, UINT stride, UINT offset);  // 检查顶点缓冲区是否有 TTS 标记 UV
 
 		static void ProcessGamepadFOVInput();
 		static void ProcessMouseWheelFOVInput(short wheelDelta);

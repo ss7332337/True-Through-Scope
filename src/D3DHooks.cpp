@@ -125,6 +125,13 @@ namespace ThroughScope {
 	static constexpr UINT TARGET_STRIDE = 28;
 	static constexpr UINT TARGET_INDEX_COUNT = 96;
 	static constexpr UINT TARGET_BUFFER_SIZE = 0x0000000008000000;
+	
+	// TTS Marker UV - 用于可靠检测 TTSEffectShape 的唯一标识
+	// 在 NIF 编辑时，将第一个顶点的 UV 设置为这个特殊值
+	// UV 使用 half-float (16-bit) 格式存储在顶点缓冲区中
+	static constexpr float TTS_MARKER_UV_U = 0.415411f;
+	static constexpr float TTS_MARKER_UV_V = 0.189191f;
+	static constexpr float TTS_MARKER_UV_TOLERANCE = 0.001f;
 	typedef void(__stdcall* D3D11DrawIndexedHook)(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
 	typedef void(__stdcall* D3D11RSSetViewportsHook)(ID3D11DeviceContext* pContext, UINT NumViewports, const D3D11_VIEWPORT* pViewports);
 	using ClipCur = decltype(&ClipCursor);
@@ -600,27 +607,158 @@ namespace ThroughScope {
 
 		return true;
 	}
+
+	// Half-float 转换辅助函数 (FO4 使用 half-float 存储 UV)
+	static float HalfToFloat(uint16_t half)
+	{
+		uint32_t sign = (half & 0x8000) << 16;
+		uint32_t exponent = (half >> 10) & 0x1F;
+		uint32_t mantissa = half & 0x3FF;
+
+		if (exponent == 0) {
+			// Subnormal or zero
+			if (mantissa == 0) {
+				uint32_t result = sign;
+				return *reinterpret_cast<float*>(&result);
+			}
+			// Subnormal - normalize
+			while ((mantissa & 0x400) == 0) {
+				mantissa <<= 1;
+				exponent--;
+			}
+			exponent++;
+			mantissa &= 0x3FF;
+		} else if (exponent == 31) {
+			// Inf or NaN
+			uint32_t result = sign | 0x7F800000 | (mantissa << 13);
+			return *reinterpret_cast<float*>(&result);
+		}
+
+		exponent = exponent + (127 - 15);
+		uint32_t result = sign | (exponent << 23) | (mantissa << 13);
+		return *reinterpret_cast<float*>(&result);
+	}
+
+	// 检查顶点缓冲区是否包含 TTS Marker UV
+	// FO4 顶点格式 (stride=28, Full Prec): Position(12) + BitangentX(4) + UV(4) + Normal(4) + Tangent(4)
+	// UV 位于偏移 16 字节处，使用 half-float 格式
+	static constexpr UINT TTS_UV_OFFSET = 16;  // Position(12) + BitangentX(4)
+	bool D3DHooks::HasTTSMarkerUV(ID3D11DeviceContext* pContext, UINT stride, UINT offset)
+	{
+		// 只有 stride=28 的格式我们知道 UV 的位置
+		if (stride != 28)
+			return false;
+
+		// 获取顶点缓冲区
+		ID3D11Buffer* vertexBuffer = nullptr;
+		UINT vbStride = 0, vbOffset = 0;
+		pContext->IAGetVertexBuffers(0, 1, &vertexBuffer, &vbStride, &vbOffset);
+		
+		if (!vertexBuffer)
+			return false;
+
+		// 获取设备
+		ID3D11Device* device = nullptr;
+		pContext->GetDevice(&device);
+		if (!device) {
+			vertexBuffer->Release();
+			return false;
+		}
+
+		// 获取缓冲区描述
+		D3D11_BUFFER_DESC bufferDesc;
+		vertexBuffer->GetDesc(&bufferDesc);
+
+		// 我们只需要读取第一个顶点 (28 字节)
+		UINT readSize = std::min(stride, bufferDesc.ByteWidth - vbOffset);
+		if (readSize < stride) {
+			vertexBuffer->Release();
+			device->Release();
+			return false;
+		}
+
+		// 创建一个 staging buffer 用于 CPU 读取
+		D3D11_BUFFER_DESC stagingDesc = {};
+		stagingDesc.ByteWidth = stride;
+		stagingDesc.Usage = D3D11_USAGE_STAGING;
+		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		stagingDesc.BindFlags = 0;
+
+		ID3D11Buffer* stagingBuffer = nullptr;
+		HRESULT hr = device->CreateBuffer(&stagingDesc, nullptr, &stagingBuffer);
+		if (FAILED(hr)) {
+			vertexBuffer->Release();
+			device->Release();
+			return false;
+		}
+
+		// 从顶点缓冲区复制第一个顶点到 staging buffer
+		D3D11_BOX srcBox = {};
+		srcBox.left = vbOffset;
+		srcBox.right = vbOffset + stride;
+		srcBox.top = 0;
+		srcBox.bottom = 1;
+		srcBox.front = 0;
+		srcBox.back = 1;
+
+		pContext->CopySubresourceRegion(stagingBuffer, 0, 0, 0, 0, vertexBuffer, 0, &srcBox);
+
+		// 映射 staging buffer 读取数据
+		D3D11_MAPPED_SUBRESOURCE mapped;
+		hr = pContext->Map(stagingBuffer, 0, D3D11_MAP_READ, 0, &mapped);
+		
+		bool hasMarker = false;
+		if (SUCCEEDED(hr)) {
+			// UV 在偏移 TTS_UV_OFFSET 字节处，使用 half-float 格式
+			const uint8_t* data = static_cast<const uint8_t*>(mapped.pData);
+			const uint16_t* uvData = reinterpret_cast<const uint16_t*>(data + TTS_UV_OFFSET);
+			
+			float u = HalfToFloat(uvData[0]);
+			float v = HalfToFloat(uvData[1]);
+			
+			// 检查是否匹配 TTS Marker UV
+			hasMarker = (std::abs(u - TTS_MARKER_UV_U) < TTS_MARKER_UV_TOLERANCE &&
+			             std::abs(v - TTS_MARKER_UV_V) < TTS_MARKER_UV_TOLERANCE);
+			
+			pContext->Unmap(stagingBuffer, 0);
+		}
+
+		stagingBuffer->Release();
+		vertexBuffer->Release();
+		device->Release();
+
+		return hasMarker;
+	}
     
 	bool D3DHooks::IsScopeQuadBeingDrawn(ID3D11DeviceContext* pContext, UINT IndexCount)
 	{
-		// Our scope should use exactly 6 indices (2 triangles)
 		if (!s_isForwardStage)
 			return false;
 
-		// Check if player exists
 		auto playerCharacter = RE::PlayerCharacter::GetSingleton();
 		if (!playerCharacter || !playerCharacter->Get3D())
 			return false;
 
-		// Check vertex buffer info
 		std::vector<BufferInfo> vertexInfo;
 		BufferInfo indexInfo;
 		if (!GetVertexBuffersInfo(pContext, vertexInfo) || !GetIndexBufferInfo(pContext, indexInfo))
 			return false;
+		
+		if (vertexInfo.empty())
+			return false;
 
+		// ===== 主检测方法: TTS Marker UV =====
+		// 检查第一个顶点的 UV 是否为 TTS 标记值 (0.415411, 0.189191)
+		if (HasTTSMarkerUV(pContext, vertexInfo[0].stride, vertexInfo[0].offset))
+		{
+			return true;
+		}
+
+		// ===== 回退检测方法: 几何特征匹配 =====
+		// 如果 NIF 还没有设置标记 UV，使用传统的几何匹配方法
+		// 检查 buffer size, stride 和 index count
 		if (IsTargetDrawCall(vertexInfo[0], indexInfo, IndexCount))
 		{
-			// Just trust geometry match.
 			return true;
 		}
 

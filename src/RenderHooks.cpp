@@ -468,12 +468,6 @@ namespace ThroughScope
 			// 之前的 RenderEffectRange (aiLast=21) 太晚了，导致 Scope 画面缺失 ImageSpace 效果(如模糊)
 			const auto renderStateMgr = RenderStateManager::GetSingleton();
 			
-			// 确保 d3dHooks 有效 (如果它是全局/静态变量，此前代码段未显示其定义，假设可用或通过 GetSingleton)
-			// 这里假设 d3dHooks 在此上下文中有效，因为它在其他函数中被使用了
-			// 如果 d3dHooks 不可见，我们需要找到它的来源。
-			// 既然之前的代码用了 d3dHooks->GetContext()，我们尝试引用它。
-			// 如果编译器报错，我会修复。
-			
 			if (renderStateMgr->IsScopeReady() && 
 				renderStateMgr->IsRenderReady() && 
 				D3DHooks::IsEnableRender()) {
@@ -504,9 +498,6 @@ namespace ThroughScope
 					// Merge Render Targets
 					RenderTargetMerger::GetInstance().MergeRenderTargets(context, device);
 
-					// FG Interop
-					// 注意：FGInterop::Initialize() 应该在此之前被调用过，
-					// 我们可以在这里也检查一下
 					if (!FGInterop::IsActive()) FGInterop::Initialize();
 
 					if (FGInterop::IsMaskAPIAvailable()) {
