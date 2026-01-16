@@ -8,6 +8,7 @@
 #include <DirectXMath.h>
 
 #include "ScopeRenderingManager.h"
+#include "STSCompatibility.h"
 
 namespace ThroughScope
 {
@@ -90,8 +91,22 @@ namespace ThroughScope
 			}
 
 			// 5. 执行第二次渲染
+			// [STS兼容] 在渲染前隐藏ScopeAiming节点，避免双重视差/准星
+			auto stsCompat = STSCompatibility::GetSingleton();
+			RE::NiNode* weaponNode = nullptr;
+			if (g_pchar && g_pchar->Get3D()) {
+				auto weapon3D = g_pchar->Get3D()->GetObjectByName("Weapon");
+				if (weapon3D && weapon3D->IsNode()) {
+					weaponNode = static_cast<RE::NiNode*>(weapon3D);
+					stsCompat->HideScopeAimingForRender(weaponNode);
+				}
+			}
+			
 			DrawScopeContent();
 			m_renderExecuted = true;
+			
+			// [STS兼容] 恢复ScopeAiming节点可见性
+			stsCompat->RestoreScopeAimingAfterRender(weaponNode);
 			
 			//ApplyCustomHDREffect(); 
 

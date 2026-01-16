@@ -4,6 +4,7 @@ set(SOURCES
 	src/ScopeCamera.cpp
 	src/D3DHooks.cpp
 	src/NiFLoader.cpp
+	src/STSCompatibility.cpp
 	src/UI/ImGuiManager.cpp
 	src/UI/Panels/CameraAdjustmentPanel.cpp
 	src/UI/Panels/DebugPanel.cpp

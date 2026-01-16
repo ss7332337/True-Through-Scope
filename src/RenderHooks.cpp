@@ -467,7 +467,7 @@ namespace ThroughScope
 			// [FIX] 移动 Scope 渲染到 Render_PreUI 之后 (Post-Forward, Pre-ImageSpace)
 			// 之前的 RenderEffectRange (aiLast=21) 太晚了，导致 Scope 画面缺失 ImageSpace 效果(如模糊)
 			const auto renderStateMgr = RenderStateManager::GetSingleton();
-			
+
 			if (renderStateMgr->IsScopeReady() && 
 				renderStateMgr->IsRenderReady() && 
 				D3DHooks::IsEnableRender()) {
