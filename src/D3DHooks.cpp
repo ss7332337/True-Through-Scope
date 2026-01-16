@@ -1198,9 +1198,12 @@ namespace ThroughScope {
 	{
 		auto playerChar = RE::PlayerCharacter::GetSingleton();
 		if (uMsg == WM_MOUSEWHEEL && s_EnableFOVAdjustment && playerChar && Utilities::IsInADS(playerChar)) {
-			short wheelDelta = GET_WHEEL_DELTA_WPARAM(wParam);
-			ProcessMouseWheelFOVInput(wheelDelta);
-			return true;
+			// Only intercept if we have an active TTS scope
+			if (ScopeCamera::s_CurrentScopeNode) {
+				short wheelDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+				ProcessMouseWheelFOVInput(wheelDelta);
+				return true;
+			}
 		}
 
 		
