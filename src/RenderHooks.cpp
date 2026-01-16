@@ -196,7 +196,7 @@ namespace ThroughScope
 	static REL::Relocation<BSCullingGroup*> ptr_k1stPersonCullingGroup{ REL::ID(731482) };
 	
 	// 调试计数器
-	static int g_DebugFilterCount = 0;
+
 
 	// ========== 激光节点识别和添加 ==========
 
@@ -846,9 +846,7 @@ namespace ThroughScope
 	// 此处使用D3DPERF会崩溃
 	void __fastcall hkUI_BeginRender()
 	{
-		//D3DPERF_BeginEvent(0xFFFF00FF, L"UI_BeginRender");
 		g_hookMgr->g_UI_BeginRender();
-		//D3DPERF_EndEvent();
 	}
 
 	// ========== SetUseDynamicResolutionViewport Debug Hook ==========

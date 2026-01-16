@@ -286,14 +286,7 @@ namespace ThroughScope {
 		// Hook主上下文
 		HookContext(m_Context);
 
-		// Hook延迟上下文
-		/*ID3D11DeviceContext* deferredContext = nullptr;
-		for (UINT i = 0; i < 2; i++) {
-			if (SUCCEEDED(m_Device->CreateDeferredContext(0, &deferredContext))) {
-				HookContext(deferredContext);
-				deferredContext->Release();
-			}
-		}*/
+
 	}
 
 	
@@ -377,12 +370,7 @@ namespace ThroughScope {
 		logger::info("D3D11 hooks loading...");
 		ThroughScope::upscalerModular = LoadLibraryA("Data/F4SE/Plugins/Fallout4Upscaler.dll");
 
-		//if (!ThroughScope::upscalerModular)
-		//{
-		//	REL::Relocation<uintptr_t> D3D11CreateDeviceAndSwapChainAddress{ REL::ID(438126) };
-		//	Utilities::CreateAndEnableHook((LPVOID)D3D11CreateDeviceAndSwapChainAddress.address(), &D3DHooks::D3D11CreateDeviceAndSwapChain_Hook,
-		//		reinterpret_cast<LPVOID*>(&m_D3D11CreateDeviceAndSwapChain_O), "D3D11CreateDeviceAndSwapChainAddress");
-		//}
+
 
 		REL::Relocation<uintptr_t> D3D11CreateDeviceAndSwapChainAddress{ REL::ID(438126) };
 		Utilities::CreateAndEnableHook((LPVOID)D3D11CreateDeviceAndSwapChainAddress.address(), &D3DHooks::D3D11CreateDeviceAndSwapChain_Hook,
@@ -437,8 +425,7 @@ namespace ThroughScope {
 					logger::error("Failed to get DXGI device for RenderDoc");
 				}
 			}
-			//Utilities::CreateAndEnableHook(drawIndexedFunc, reinterpret_cast<void*>(hkDrawIndexed), reinterpret_cast<LPVOID*>(&phookD3D11DrawIndexed), "DrawIndexedHook");
-		}
+
 
 		Utilities::CreateAndEnableHook(presentFunc, reinterpret_cast<void*>(hkPresent), reinterpret_cast<void**>(&s_OriginalPresent), "Present");
 		Utilities::CreateAndEnableHook(&ClipCursor, ClipCursorHook, reinterpret_cast<LPVOID*>(&phookClipCursor), "ClipCursorHook");
@@ -457,7 +444,7 @@ namespace ThroughScope {
 			return phookD3D11DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 
 		bool isScopeQuad = IsScopeQuadBeingDrawn(pContext, IndexCount);
-		//bool isScopeQuad = IsScopeQuadBeingDrawnShape(pContext, IndexCount);
+
 		if (isScopeQuad) {
 			D3DPERF_BeginEvent(0xFFFF00FF, L"TTS_ScopeQuad_Detected");
 

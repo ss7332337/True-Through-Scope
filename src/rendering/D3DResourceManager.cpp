@@ -130,7 +130,7 @@ namespace ThroughScope
                 dwShaderFlags, 0, ppBlobOut, &errorBlob);
             if (FAILED(hr)) {
                 if (errorBlob != nullptr) {
-                    OutputDebugStringA(reinterpret_cast<const char*>(errorBlob->GetBufferPointer()));
+                    logger::error("Shader Compile Error: {}", reinterpret_cast<const char*>(errorBlob->GetBufferPointer()));
                 }
                 SAFE_RELEASE(errorBlob);
                 return hr;

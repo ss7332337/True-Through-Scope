@@ -77,7 +77,7 @@ void NIFLoader::ProcessNiNode(NiNode* node)
 		return;
 	}
 
-	std::cout << "Processing NiNode: " << node->GetName() << std::endl;
+
 
 	// Iterate through the children of the NiNode
 	for (uint16_t i = 0; i < node->children.size(); ++i) {
@@ -104,13 +104,11 @@ void NIFLoader::ProcessNiNode(NiNode* node)
 		return;
 	}
 
-	std::cout << "Found BSTriShape: " << triShape->GetName() << std::endl;
-	std::cout << "  Triangle Count: " << triShape->numTriangles << std::endl;
-	std::cout << "  Vertex Count: " << triShape->numVertices << std::endl;
+
 
 	// Get the vertex and index data
 	BSGraphics::VertexDesc vertexDesc = triShape->vertexDesc;
-	std::cout << "  Vertex Desc: 0x" << std::hex << vertexDesc.desc << std::dec << std::endl;
+
 
 	// Get the shader property
 	NiShadeProperty* shadeProperty = triShape->QShaderProperty();
@@ -122,7 +120,7 @@ void NIFLoader::ProcessNiNode(NiNode* node)
 			ProcessBSEffectShaderProperty(effectShader);
 		}
 	} else {
-		std::cout << "  No shader property found" << std::endl;
+
 	}
 
 	// Get the alpha property
@@ -130,7 +128,7 @@ void NIFLoader::ProcessNiNode(NiNode* node)
 	if (alphaProperty) {
 		ProcessNiAlphaProperty(alphaProperty);
 	} else {
-		std::cout << "  No alpha property found" << std::endl;
+
 	}
 }
 
@@ -140,41 +138,7 @@ void NIFLoader::ProcessBSEffectShaderProperty(BSEffectShaderProperty* property)
 		return;
 	}
 
-	std::cout << "Found BSEffectShaderProperty" << std::endl;
 
-	// Get the effect shader material (if available)
-	BSEffectShaderMaterial* material = dynamic_cast<BSEffectShaderMaterial*>(property->material);
-	if (material) {
-		std::cout << "  Base Color: ["
-				  << material->baseColor.r << ", "
-				  << material->baseColor.g << ", "
-				  << material->baseColor.b << "]" << std::endl;
-
-		// Get texture information
-		if (material->spBaseTexture) {
-			std::cout << "  Base Texture: " << material->spBaseTexture->GetName() << std::endl;
-		}
-
-		std::cout << "  Falloff Start Angle: " << material->falloffStartAngle << std::endl;
-		std::cout << "  Falloff Stop Angle: " << material->falloffStopAngle << std::endl;
-		std::cout << "  Base Color Scale: " << material->baseColorScale << std::endl;
-	}
-
-	// Check any flags set on the property
-	std::cout << "  Alpha: " << property->alpha << std::endl;
-
-	// Output some shader property flags
-	std::cout << "  Flags: ";
-	if (property->flags.any(BSShaderProperty::EShaderPropertyFlags::kAlphaTest)) {
-		std::cout << "AlphaTest ";
-	}
-	if (property->flags.any(BSShaderProperty::EShaderPropertyFlags::kZBufferTest)) {
-		std::cout << "ZBufferTest ";
-	}
-	if (property->flags.any(BSShaderProperty::EShaderPropertyFlags::kGlowMap)) {
-		std::cout << "GlowMap ";
-	}
-	std::cout << std::endl;
 }
 
 void NIFLoader::ProcessNiAlphaProperty(NiAlphaProperty* property)
@@ -183,7 +147,6 @@ void NIFLoader::ProcessNiAlphaProperty(NiAlphaProperty* property)
 		return;
 	}
 
-	std::cout << "Found NiAlphaProperty" << std::endl;
-	std::cout << "  Alpha Test Ref: " << static_cast<int>(property->alphaTestRef) << std::endl;
+
 
 }
