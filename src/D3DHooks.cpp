@@ -968,13 +968,8 @@ namespace ThroughScope {
 		if (s_ScaleReticleWithZoom) {
 			// 获取当前实际 FOV 和基准 FOV
 			float currentFOV = ScopeCamera::GetTargetFOV();
-			// 使用默认视角作为基准（通常是 90 或配置的 maxFOV）
-			float baseFOV = 70.0f;  // 默认基准 FOV
-			
-			auto weaponInfo = DataPersistence::GetCurrentWeaponInfo();
-			if (weaponInfo.currentConfig) {
-				baseFOV = static_cast<float>(weaponInfo.currentConfig->scopeSettings.maxFOV);
-			}
+			// 使用玩家的 worldFOV 作为基准
+			float baseFOV = ScopeCamera::GetBaseFOV();
 			
 			// 放大倍率 = 基准FOV / 当前FOV
 			// 例如：baseFOV=70, currentFOV=35 -> zoomScale=2.0 (2倍放大)

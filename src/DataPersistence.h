@@ -64,10 +64,9 @@ namespace ThroughScope
 
 		struct ScopeSettings
 		{
-			int minFOV = 5;
-			int maxFOV = 90;
+			float minMagnification = 1.0f;   // 最小倍率 (1x = 无放大)
+			float maxMagnification = 6.0f;   // 最大倍率 (6x = 6倍放大)
 			bool nightVision = false;
-
 
 			// 夜视效果参数
 			float nightVisionIntensity = 1.0f;

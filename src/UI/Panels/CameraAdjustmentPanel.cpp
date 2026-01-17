@@ -435,9 +435,27 @@ namespace ThroughScope
 		if (ImGui::CollapsingHeader(LOC("camera.scope_settings"))) {
 			auto weaponInfo = m_Manager->GetCurrentWeaponInfo();
 			if (weaponInfo.currentConfig) {
-
-				ImGui::SliderInt(LOC("camera.min_fov"), &m_MinFov, 1, 180);
-				ImGui::SliderInt(LOC("camera.max_fov"), &m_MaxFov, 2, 180);
+				// 显示当前倍率
+				float currentMag = ScopeCamera::GetCurrentMagnification();
+				ImGui::Text(LOC("camera.current_magnification"), currentMag);
+				
+				// 倍率范围滑块
+				if (ImGui::SliderFloat(LOC("camera.min_magnification"), &m_MinMagnification, 1.0f, 100.0f, "%.1fx")) {
+					// 确保 min <= max
+					if (m_MinMagnification > m_MaxMagnification) {
+						m_MaxMagnification = m_MinMagnification;
+					}
+					// 实时应用
+					ScopeCamera::SetMagnificationRange(m_MinMagnification, m_MaxMagnification);
+				}
+				if (ImGui::SliderFloat(LOC("camera.max_magnification"), &m_MaxMagnification, 1.0f, 100.0f, "%.1fx")) {
+					// 确保 max >= min
+					if (m_MaxMagnification < m_MinMagnification) {
+						m_MinMagnification = m_MaxMagnification;
+					}
+					// 实时应用
+					ScopeCamera::SetMagnificationRange(m_MinMagnification, m_MaxMagnification);
+				}
 			}
 		}
 	}
@@ -670,8 +688,8 @@ namespace ThroughScope
 		config.scopeSettings.nightVisionGreenTint = m_NightVisionGreenTint;
 
 
-		config.scopeSettings.minFOV = m_MinFov;
-		config.scopeSettings.maxFOV = m_MaxFov;
+		config.scopeSettings.minMagnification = m_MinMagnification;
+		config.scopeSettings.maxMagnification = m_MaxMagnification;
 
 		// 保存球形畸变设置
 		config.scopeSettings.enableSphericalDistortion = m_EnableSphericalDistortion;
@@ -720,8 +738,8 @@ namespace ThroughScope
 
 
 
-		m_MinFov = config->scopeSettings.minFOV;
-		m_MaxFov = config->scopeSettings.maxFOV;
+		m_MinMagnification = config->scopeSettings.minMagnification;
+		m_MaxMagnification = config->scopeSettings.maxMagnification;
 
 		// 加载球形畸变设置
 		m_EnableSphericalDistortion = config->scopeSettings.enableSphericalDistortion;
@@ -882,7 +900,7 @@ namespace ThroughScope
 		ApplyRotationAdjustment();
 		ApplyScaleAdjustment();
 
-		ScopeCamera::SetFOVMinMax(m_CurrentValues.minFov, m_CurrentValues.maxFov);
+		ScopeCamera::SetMagnificationRange(m_MinMagnification, m_MaxMagnification);
 
 		// 应用新的视差设置
 		D3DHooks::UpdateScopeParallaxSettings(

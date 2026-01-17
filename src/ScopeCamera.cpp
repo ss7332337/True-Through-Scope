@@ -32,8 +32,8 @@ namespace ThroughScope
 	BGSKeyword* ScopeCamera::AnimsAX50_scopeK = nullptr;
 
 	float ScopeCamera::s_TargetFOV = DEFAULT_FOV;
-	float ScopeCamera::minFov = 1;
-	float ScopeCamera::maxFov = 100;
+	float ScopeCamera::s_MinMagnification = 1.0f;
+	float ScopeCamera::s_MaxMagnification = 6.0f;
     
     bool ScopeCamera::s_OriginalFirstPerson = false;
     bool ScopeCamera::s_OriginalRenderDecals = false;
@@ -44,6 +44,17 @@ namespace ThroughScope
 	bool ScopeCamera::isDelayStarted = false;
 	bool ScopeCamera::isFirstScopeRender = true;
 
+	// 获取玩家的场景 FOV (worldFOV) 作为倍率计算的基准
+	float ScopeCamera::GetBaseFOV()
+	{
+		const auto playerCamera = RE::PlayerCamera::GetSingleton();
+		if (playerCamera) {
+			// 使用 worldFOV（场景FOV），而非 firstPersonFOV（第一人称模型FOV）
+			return playerCamera->worldFOV;
+		}
+		// 默认值，fallback
+		return 70.0f;
+	}
 
 
     bool ScopeCamera::Initialize()
@@ -170,8 +181,8 @@ namespace ThroughScope
 		D3DHooks::SetEnableSphericalDistortion(config->scopeSettings.enableSphericalDistortion);
 		D3DHooks::SetEnableChromaticAberration(config->scopeSettings.enableChromaticAberration);
 
-		// 设置摄像头FOV
-		ScopeCamera::SetFOVMinMax(config->scopeSettings.minFOV, config->scopeSettings.maxFOV);
+		// 设置倍率范围
+		ScopeCamera::SetMagnificationRange(config->scopeSettings.minMagnification, config->scopeSettings.maxMagnification);
 
 
 	}

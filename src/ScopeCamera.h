@@ -9,6 +9,18 @@ namespace ThroughScope
 {
     class ScopeCamera
     {
+	private:
+        // Static member declarations (must be before inline methods that use them)
+        static RE::NiCamera* s_ScopeCamera;
+        static RE::NiCamera* s_OriginalCamera;
+        static float s_TargetFOV;
+		static float s_MinMagnification;
+		static float s_MaxMagnification;
+        static bool s_OriginalFirstPerson;
+        static bool s_OriginalRenderDecals;
+        static bool s_IsRenderingForScope;
+		static bool s_IsUserAdjustingZoomData;
+
     public:
         // Initialize scope camera system
         static bool Initialize();
@@ -31,14 +43,41 @@ namespace ThroughScope
         static float GetTargetFOV() { return s_TargetFOV; }
 		static void SetTargetFOV(float fov)
 		{
-			s_TargetFOV = std::clamp(fov, minFov, maxFov);
+			// 使用倍率限制来约束FOV
+			float baseFOV = GetBaseFOV();
+			float minFOV = baseFOV / s_MaxMagnification;  // 最大倍率 = 最小FOV
+			float maxFOV = baseFOV / s_MinMagnification;  // 最小倍率 = 最大FOV
+			s_TargetFOV = std::clamp(fov, minFOV, maxFOV);
 		}
 
-		static void SetFOVMinMax(float _minFov, float _maxFov)
+		// 倍率系统
+		static float GetBaseFOV();  // 获取玩家的场景 FOV (worldFOV)
+		static void SetMagnificationRange(float minMag, float maxMag)
 		{
-			minFov = _minFov;
-			maxFov = _maxFov;
+			s_MinMagnification = std::max(1.0f, minMag);  // 最小倍率不能低于1x
+			s_MaxMagnification = std::max(s_MinMagnification, maxMag);
+			// 实时更新当前FOV以符合新范围
+			SetTargetFOV(s_TargetFOV);
 		}
+		static float CalculateFOVFromMagnification(float magnification)
+		{
+			return GetBaseFOV() / std::max(1.0f, magnification);
+		}
+		static float GetCurrentMagnification()
+		{
+			float baseFOV = GetBaseFOV();
+			if (s_TargetFOV > 0.1f) {
+				return baseFOV / s_TargetFOV;
+			}
+			return 1.0f;
+		}
+		static void SetTargetMagnification(float mag)
+		{
+			float clampedMag = std::clamp(mag, s_MinMagnification, s_MaxMagnification);
+			s_TargetFOV = CalculateFOVFromMagnification(clampedMag);
+		}
+		static float GetMinMagnification() { return s_MinMagnification; }
+		static float GetMaxMagnification() { return s_MaxMagnification; }
         
         // Flag indicating if we're in scope render mode
         static bool IsRenderingForScope() { return s_IsRenderingForScope; }
@@ -61,22 +100,6 @@ namespace ThroughScope
 		static bool IsUserAdjustingZoomData() { return s_IsUserAdjustingZoomData; }
 
     private:
-        // Camera objects
-        static RE::NiCamera* s_ScopeCamera;
-        static RE::NiCamera* s_OriginalCamera;
-        
-        // Adjustment settings
-        static float s_TargetFOV;
-		static float minFov;
-		static float maxFov;
-        
-        // State flags
-        static bool s_OriginalFirstPerson;
-        static bool s_OriginalRenderDecals;
-        static bool s_IsRenderingForScope;
-		static bool s_IsUserAdjustingZoomData;  // 标记用户是否正在调整ZoomData
-
-		
 		static RE::BGSKeyword* an_45;
 		static RE::BGSKeyword* AnimsXM2010_scopeKH45;
 		static RE::BGSKeyword* AnimsXM2010_scopeKM;
@@ -88,7 +111,6 @@ namespace ThroughScope
 		static RE::BGSKeyword* QMW_AnimsRU556M_off;
 		static RE::BGSKeyword* AX50_toounScope_L;
 		static RE::BGSKeyword* AnimsAX50_scopeK;
-
 
         static void ResetCamera();
     };

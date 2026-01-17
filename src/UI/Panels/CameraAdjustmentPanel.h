@@ -54,11 +54,6 @@ namespace ThroughScope
 			float nightVisionGreenTint = 1.2f;
 			bool  enableNightVision = false;
 
-
-
-			int minFov = 5;
-			int maxFov = 100;
-
 			// 球形畸变设置
 			float sphericalDistortionStrength = 0.0f;
 			float sphericalDistortionRadius = 0.8f;
@@ -91,9 +86,9 @@ namespace ThroughScope
         bool m_UIValuesInitialized = false;
         std::string m_LastLoadedConfigKey = "";
 
-		//fov
-		int m_MinFov = 5;
-		int m_MaxFov = 100;
+		// 倍率
+		float m_MinMagnification = 1.0f;
+		float m_MaxMagnification = 6.0f;
         
         // 新的视差设置
         float m_ParallaxStrength = 0.05f;

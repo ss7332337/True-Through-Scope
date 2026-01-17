@@ -210,8 +210,8 @@ namespace ThroughScope
 
 			// Load scope settings with defaults
 			const auto& scopeJson = configJson.value("scopeSettings", nlohmann::json::object());
-			config.scopeSettings.minFOV = getValue(scopeJson, "minFOV", 5);
-			config.scopeSettings.maxFOV = getValue(scopeJson, "maxFOV", 90);
+			config.scopeSettings.minMagnification = getValue(scopeJson, "minMagnification", 1.0f);
+			config.scopeSettings.maxMagnification = getValue(scopeJson, "maxMagnification", 6.0f);
 			config.scopeSettings.nightVision = getValue(scopeJson, "nightVision", false);
 
 
@@ -308,8 +308,8 @@ namespace ThroughScope
 
 			// Scope settings
 			configJson["scopeSettings"] = {
-				{ "minFOV", config.scopeSettings.minFOV },
-				{ "maxFOV", config.scopeSettings.maxFOV },
+				{ "minMagnification", config.scopeSettings.minMagnification },
+				{ "maxMagnification", config.scopeSettings.maxMagnification },
 				{ "nightVision", config.scopeSettings.nightVision },
 				// 保存夜视效果参数
 				{ "nightVisionIntensity", config.scopeSettings.nightVisionIntensity },
@@ -397,8 +397,8 @@ namespace ThroughScope
 		};
 
 		// Set default scope settings
-		presetConfig.scopeSettings.minFOV = 5;
-		presetConfig.scopeSettings.maxFOV = 90;
+		presetConfig.scopeSettings.minMagnification = 1.0f;
+		presetConfig.scopeSettings.maxMagnification = 6.0f;
 		presetConfig.scopeSettings.nightVision = false;
 
 		// 设置夜视效果默认参数
