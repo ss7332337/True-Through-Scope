@@ -176,7 +176,7 @@ namespace ThroughScope
 			const auto& cameraJson = configJson.value("camera", nlohmann::json::object());
 			config.cameraAdjustments.deltaPosX = getValue(cameraJson, "deltaPosX", 0.0f);
 			config.cameraAdjustments.deltaPosY = getValue(cameraJson, "deltaPosY", 0.0f);
-			config.cameraAdjustments.deltaPosZ = getValue(cameraJson, "deltaPosZ", 7.0f);
+			config.cameraAdjustments.deltaPosZ = getValue(cameraJson, "deltaPosZ", 5.0f);
 
 			// Handle rotation array
 			if (cameraJson.contains("deltaRot") && cameraJson["deltaRot"].is_array() && cameraJson["deltaRot"].size() == 3) {
@@ -186,7 +186,7 @@ namespace ThroughScope
 			} else {
 				config.cameraAdjustments.deltaRot[0] = 0.0f;
 				config.cameraAdjustments.deltaRot[1] = 0.0f;
-				config.cameraAdjustments.deltaRot[2] = 7.0f;
+				config.cameraAdjustments.deltaRot[2] = 0.0f;
 			}
 
 			config.cameraAdjustments.deltaScale = getValue(cameraJson, "deltaScale", 1.0f);
@@ -218,8 +218,8 @@ namespace ThroughScope
 			// Load reticle settings with defaults
 			const auto& reticleJson = configJson.value("reticle", nlohmann::json::object());
 			config.reticleSettings.customReticlePath = getValue(reticleJson, "customPath", "");
-			config.reticleSettings.offsetX = getValue(reticleJson, "offsetX", 0.5f);
-			config.reticleSettings.offsetY = getValue(reticleJson, "offsetY", 0.5f);
+			config.reticleSettings.offsetX = getValue(reticleJson, "offsetX", 0.0f);
+			config.reticleSettings.offsetY = getValue(reticleJson, "offsetY", 0.0f);
 			config.reticleSettings.scale = getValue(reticleJson, "scale", 1.0f);
 			config.reticleSettings.scaleReticleWithZoom = getValue(reticleJson, "scaleWithZoom", false);
 
@@ -374,7 +374,7 @@ namespace ThroughScope
 
 		// Set default camera adjustments
 		presetConfig.cameraAdjustments = {
-			0.0f, 0.0f, 0.0f,      // Position
+			0.0f, 0.0f, 5.0f,      // Position
 			{ 0.0f, 0.0f, 0.0f },  // Rotation
 			1.0f                   // Scale
 		};
@@ -419,8 +419,8 @@ namespace ThroughScope
 
 		// Default reticle settings
 		presetConfig.reticleSettings.customReticlePath = "";
-		presetConfig.reticleSettings.offsetX = 0.5f;
-		presetConfig.reticleSettings.offsetY = 0.5f;
+		presetConfig.reticleSettings.offsetX = 0.0f;
+		presetConfig.reticleSettings.offsetY = 0.0f;
 		presetConfig.reticleSettings.scale = 1.0f;
 		presetConfig.reticleSettings.scaleReticleWithZoom = false;
 

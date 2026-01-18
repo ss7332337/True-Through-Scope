@@ -1,6 +1,6 @@
 #include "HookManager.h"
 #include "Utilities.h"
-#include "ImageSpaceDebugHook.h"
+
 #include <MinHook.h>
 #include <thread>
 #include <chrono>
@@ -170,7 +170,7 @@ extern void __fastcall hkBSSkyShader_SetupGeometry(void* thisPtr, BSRenderPass* 
 			reinterpret_cast<LPVOID*>(&g_DrawTriShape), "DrawTriShape");
 
 		RegisterTAAHook();
-		RegisterImageSpaceDebugHooks();
+
 
 		logger::info("Hooks registered successfully");
 	}

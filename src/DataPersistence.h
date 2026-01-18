@@ -38,7 +38,7 @@ namespace ThroughScope
 		{
 			float deltaPosX = 0.0f;
 			float deltaPosY = 0.0f;
-			float deltaPosZ = 7.0f;
+			float deltaPosZ = 5.0f;
 			float deltaRot[3] = { 0.0f, 0.0f, 0.0f };  // Pitch, Yaw, Roll
 			float deltaScale = 1.25f;
 		};
@@ -89,8 +89,8 @@ namespace ThroughScope
 		{
 			std::string customReticlePath;
 			float scale = 1.0f;    // 瞄准镜缩放 (0.1 - 32.0)
-			float offsetX = 0.5f;
-			float offsetY = 0.5f;
+			float offsetX = 0.0f;
+			float offsetY = 0.0f;
 			bool scaleReticleWithZoom = false;  // 准星随瞄具放大
 		};
 

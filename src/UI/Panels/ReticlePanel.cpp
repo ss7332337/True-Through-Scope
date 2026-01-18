@@ -12,8 +12,8 @@ namespace ThroughScope
 		// 设置默认值
 		m_CurrentSettings.texturePath = "Test.dds";  // 默认纹理
 		m_CurrentSettings.scale = 1.0f;
-		m_CurrentSettings.offsetX = 0.5f;
-		m_CurrentSettings.offsetY = 0.5f;
+		m_CurrentSettings.offsetX = 0.0f;
+		m_CurrentSettings.offsetY = 0.0f;
 	}
 
 	bool ReticlePanel::Initialize()
@@ -237,8 +237,8 @@ namespace ThroughScope
 
 		// 快速重置按钮
 		if (ImGui::Button(LOC("reticle.reset_to_center"), ImVec2(-1, 0))) {
-			m_CurrentSettings.offsetX = 0.5f;
-			m_CurrentSettings.offsetY = 0.5f;
+			m_CurrentSettings.offsetX = 0.0f;
+			m_CurrentSettings.offsetY = 0.0f;
 			isSaved = false;
 		}
 		RenderHelpTooltip(LOC("tooltip.reset_to_center"));
@@ -425,8 +425,8 @@ namespace ThroughScope
 	{
 		m_CurrentSettings.texturePath = "Test.dds";
 		m_CurrentSettings.scale = 1.0f;
-		m_CurrentSettings.offsetX = 0.5f;
-		m_CurrentSettings.offsetY = 0.5f;
+		m_CurrentSettings.offsetX = 0.0f;
+		m_CurrentSettings.offsetY = 0.0f;
 
 		CreateTexturePreview(m_CurrentSettings.texturePath);
 	}

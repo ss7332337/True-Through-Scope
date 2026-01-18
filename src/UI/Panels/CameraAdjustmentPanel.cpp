@@ -468,9 +468,9 @@ namespace ThroughScope
 			if (m_CurrentValues.enableParallax) {
 				ImGui::Separator();
 				ImGui::Text("%s", LOC("camera.parallax_offset"));
-				ImGui::SliderFloat(LOC("camera.parallax_strength"), &m_CurrentValues.parallaxStrength, 0.0f, 1.5f, "%.3f");
+				ImGui::SliderFloat(LOC("camera.parallax_strength"), &m_CurrentValues.parallaxStrength, 0.0f, 50.0f, "%.3f");
 				ImGui::SliderFloat(LOC("camera.parallax_smoothing"), &m_CurrentValues.parallaxSmoothing, 0.0f, 1.0f, "%.2f");
-				ImGui::SliderFloat(LOC("camera.eye_relief"), &m_CurrentValues.eyeReliefDistance, 0.0f, 5.0f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.eye_relief"), &m_CurrentValues.eyeReliefDistance, 0.0f, 50.0f, "%.2f");
 
 				ImGui::Separator();
 				ImGui::Text("%s", LOC("camera.exit_pupil"));
@@ -490,10 +490,10 @@ namespace ThroughScope
 				ImGui::SliderFloat(LOC("camera.fog_radius"), &m_CurrentValues.parallaxFogRadius, 0.1f, 5.0f, "%.2f");
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip(LOC("camera.fog_radius_tooltip"));
 				
-				ImGui::SliderFloat(LOC("camera.max_travel"), &m_CurrentValues.parallaxMaxTravel, 0.1f, 10.0f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.max_travel"), &m_CurrentValues.parallaxMaxTravel, 0.1f, 20.0f, "%.2f");
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip(LOC("camera.max_travel_tooltip"));
 				
-				ImGui::SliderFloat(LOC("camera.reticle_parallax"), &m_CurrentValues.reticleParallaxStrength, 0.0f, 2.0f, "%.2f");
+				ImGui::SliderFloat(LOC("camera.reticle_parallax"), &m_CurrentValues.reticleParallaxStrength, 0.0f, 10.0f, "%.2f");
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip(LOC("camera.reticle_parallax_tooltip"));
 			}
 		}

@@ -20,3 +20,5 @@ src/Decomplied.cpp
 /docs
 /rdcEvents
 *.md
+/backup
+/Data

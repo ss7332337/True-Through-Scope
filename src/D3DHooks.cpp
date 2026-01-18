@@ -103,7 +103,7 @@ namespace ThroughScope {
 
     bool D3DHooks::s_IsCapturingHDR = false; // 定义静态变量
     uint64_t D3DHooks::s_FrameNumber = 0;  // 帧计数器
-    uint64_t D3DHooks::s_HDRCapturedFrame = 0;  // HDR 状态捕获的帧号
+
 
 	// 夜视效果参数初始化
 	float D3DHooks::s_NightVisionIntensity = 1.0f;
@@ -630,6 +630,8 @@ namespace ThroughScope {
 	// FO4 顶点格式 (stride=28, Full Prec): Position(12) + BitangentX(4) + UV(4) + Normal(4) + Tangent(4)
 	// UV 位于偏移 16 字节处，使用 half-float 格式
 	static constexpr UINT TTS_UV_OFFSET = 16;  // Position(12) + BitangentX(4)
+	Microsoft::WRL::ComPtr<ID3D11Buffer> D3DHooks::s_StagingBuffer = nullptr;
+
 	bool D3DHooks::HasTTSMarkerUV(ID3D11DeviceContext* pContext, UINT stride, UINT offset)
 	{
 		// 只有 stride=28 的格式我们知道 UV 的位置
@@ -644,39 +646,39 @@ namespace ThroughScope {
 		if (!vertexBuffer)
 			return false;
 
-		// 获取设备
-		ID3D11Device* device = nullptr;
-		pContext->GetDevice(&device);
-		if (!device) {
-			vertexBuffer->Release();
-			return false;
-		}
-
 		// 获取缓冲区描述
 		D3D11_BUFFER_DESC bufferDesc;
 		vertexBuffer->GetDesc(&bufferDesc);
 
-		// 我们只需要读取第一个顶点 (28 字节)
-		UINT readSize = std::min(stride, bufferDesc.ByteWidth - vbOffset);
-		if (readSize < stride) {
+		// 安全检查：防止读取越界
+		// 我们需要读取 stride 字节，从 vbOffset 开始
+		if (vbOffset + stride > bufferDesc.ByteWidth) {
 			vertexBuffer->Release();
-			device->Release();
 			return false;
 		}
 
-		// 创建一个 staging buffer 用于 CPU 读取
-		D3D11_BUFFER_DESC stagingDesc = {};
-		stagingDesc.ByteWidth = stride;
-		stagingDesc.Usage = D3D11_USAGE_STAGING;
-		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-		stagingDesc.BindFlags = 0;
+		// 如果缓存的 staging buffer 还没创建，或者丢失了，就创建一个
+		if (!s_StagingBuffer) {
+			ID3D11Device* device = nullptr;
+			pContext->GetDevice(&device);
+			if (!device) {
+				vertexBuffer->Release();
+				return false;
+			}
 
-		ID3D11Buffer* stagingBuffer = nullptr;
-		HRESULT hr = device->CreateBuffer(&stagingDesc, nullptr, &stagingBuffer);
-		if (FAILED(hr)) {
-			vertexBuffer->Release();
+			D3D11_BUFFER_DESC stagingDesc = {};
+			stagingDesc.ByteWidth = 28; // 我们只关心 stride=28 的情况
+			stagingDesc.Usage = D3D11_USAGE_STAGING;
+			stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+			stagingDesc.BindFlags = 0;
+
+			HRESULT hr = device->CreateBuffer(&stagingDesc, nullptr, s_StagingBuffer.GetAddressOf());
 			device->Release();
-			return false;
+
+			if (FAILED(hr)) {
+				vertexBuffer->Release();
+				return false;
+			}
 		}
 
 		// 从顶点缓冲区复制第一个顶点到 staging buffer
@@ -688,11 +690,11 @@ namespace ThroughScope {
 		srcBox.front = 0;
 		srcBox.back = 1;
 
-		pContext->CopySubresourceRegion(stagingBuffer, 0, 0, 0, 0, vertexBuffer, 0, &srcBox);
+		pContext->CopySubresourceRegion(s_StagingBuffer.Get(), 0, 0, 0, 0, vertexBuffer, 0, &srcBox);
 
 		// 映射 staging buffer 读取数据
 		D3D11_MAPPED_SUBRESOURCE mapped;
-		hr = pContext->Map(stagingBuffer, 0, D3D11_MAP_READ, 0, &mapped);
+		HRESULT hr = pContext->Map(s_StagingBuffer.Get(), 0, D3D11_MAP_READ, 0, &mapped);
 		
 		bool hasMarker = false;
 		if (SUCCEEDED(hr)) {
@@ -707,12 +709,10 @@ namespace ThroughScope {
 			hasMarker = (std::abs(u - TTS_MARKER_UV_U) < TTS_MARKER_UV_TOLERANCE &&
 			             std::abs(v - TTS_MARKER_UV_V) < TTS_MARKER_UV_TOLERANCE);
 			
-			pContext->Unmap(stagingBuffer, 0);
+			pContext->Unmap(s_StagingBuffer.Get(), 0);
 		}
 
-		stagingBuffer->Release();
 		vertexBuffer->Release();
-		device->Release();
 
 		return hasMarker;
 	}

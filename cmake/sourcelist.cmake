@@ -27,7 +27,6 @@ set(SOURCES
 	src/rendering/D3DResourceManager.cpp
 	src/rendering/ScopeRenderingManager.cpp
 	src/rendering/RenderTargetMerger.cpp
-	src/ImageSpaceDebugHook.cpp
 	src/ENBIntegration.cpp
 	src/FGCompatibility.cpp
 )

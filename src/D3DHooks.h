@@ -260,6 +260,7 @@ namespace ThroughScope {
 		static OMStateCache s_CachedOMState;
 		static bool s_HasCachedState;
 		static CachedScopeConstantBuffer s_CachedConstantBufferData; // 缓存的常量缓冲区数据
+		static Microsoft::WRL::ComPtr<ID3D11Buffer> s_StagingBuffer;
 	private:
 		// 新的视差参数
 		static float s_ParallaxStrength;
@@ -372,11 +373,10 @@ namespace ThroughScope {
 		
 		static bool s_IsCapturingHDR;
 		static uint64_t s_FrameNumber;  // 帧计数器
-		static uint64_t s_HDRCapturedFrame;  // HDR 状态捕获的帧号
+
 		
 		static uint64_t GetFrameNumber() { return s_FrameNumber; }
-		static uint64_t GetHDRCapturedFrame() { return s_HDRCapturedFrame; }
-		static bool IsHDRStateCurrentFrame() { return s_HDRCapturedFrame == s_FrameNumber; }
+
 
     };
 }
