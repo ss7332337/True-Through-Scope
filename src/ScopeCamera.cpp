@@ -235,6 +235,24 @@ namespace ThroughScope
 
 		const auto& config = *weaponInfo.currentConfig;
 
+		// Clean up potentially existing old model to prevent duplicate generation
+		if (auto player = RE::PlayerCharacter::GetSingleton()) {
+			if (auto root = player->Get3D(true)) {
+				if (auto weaponObj = root->GetObjectByName("Weapon")) {
+					if (auto weaponNode = weaponObj->IsNode()) {
+						if (auto existingNode = weaponNode->GetObjectByName("TTSNode")) {
+							weaponNode->DetachChild(existingNode);
+						}
+					}
+				}
+			}
+		}
+
+		// Ensure static reference is cleared
+		if (s_CurrentScopeNode) {
+			s_CurrentScopeNode->DecRefCount();
+			s_CurrentScopeNode = nullptr;
+		}
 
 		// 保存原始ZoomData值，用于后续恢复
 		static std::map<TESFormID, BGSZoomData::Data> originalZoomDataCache;
