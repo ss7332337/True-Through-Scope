@@ -20,13 +20,20 @@ namespace ThroughScope
         };
 
         // Initialization
-        static bool Initialize();
+        	// Check and resize backup textures if dimensions mismatch (e.g. dynamic resolution)
+	static void ResizeFirstPassTextures(ID3D11Device* device, unsigned int width, unsigned int height);
+
+	static bool Initialize();
         static void Shutdown();
         static void CleanupBackBufferResources();
         
         // Texture management
         static bool CreateTemporaryTextures();
         static void ReleaseTemporaryTextures();
+
+		// Robust texture copy that handles dimension mismatches
+		// Uses CopyResource if dimensions match, otherwise falls back to shader copy
+		static bool SafeCopyTexture(ID3D11DeviceContext* context, ID3D11Device* device, ID3D11Texture2D* dest, ID3D11Texture2D* src);
     
         // Texture getters
         static ID3D11Texture2D* GetFirstPassColorTexture() { return s_FirstPassColorTexture; }

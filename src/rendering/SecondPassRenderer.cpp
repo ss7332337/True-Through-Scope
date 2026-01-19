@@ -230,34 +230,27 @@ namespace ThroughScope
 		}
 
 		// 复制当前渲染目标内容到临时BackBuffer
-		m_context->CopyResource(m_tempBackBufferTex, m_rtTexture2D);
+		if (!RenderUtilities::SafeCopyTexture(m_context, m_device, m_tempBackBufferTex, m_rtTexture2D)) {
+			logger::warn("BackupFirstPassTextures: Failed to backup RT to TempBackBuffer due to mismatch or error");
+			// Continue anyway, maybe we can use mainRTTexture
+		}
 
 		// 复制主渲染目标到我们的纹理
 		if (m_mainRTTexture && m_mainDSTexture) {
-			// 验证尺寸匹配
-			D3D11_TEXTURE2D_DESC firstPassColorDesc, mainRTDesc;
-			RenderUtilities::GetFirstPassColorTexture()->GetDesc(&firstPassColorDesc);
-			m_mainRTTexture->GetDesc(&mainRTDesc);
+			
+			// 检查并调整备份纹理尺寸以匹配当前RT (解决 CopyResource 尺寸不匹配问题)
+			D3D11_TEXTURE2D_DESC srcDesc;
+			m_mainRTTexture->GetDesc(&srcDesc);
+			RenderUtilities::ResizeFirstPassTextures(m_device, srcDesc.Width, srcDesc.Height);
 
-			if (firstPassColorDesc.Width == mainRTDesc.Width && firstPassColorDesc.Height == mainRTDesc.Height) {
-				m_context->CopyResource(RenderUtilities::GetFirstPassColorTexture(), m_mainRTTexture);
-			} else {
-				logger::warn("Skipping first pass color copy: size mismatch {}x{} vs {}x{}",
-					firstPassColorDesc.Width, firstPassColorDesc.Height,
-					mainRTDesc.Width, mainRTDesc.Height);
+			// 验证尺寸匹配 (Logic now inside SafeCopyTexture, but we keep the wrapper or just call it)
+			if (!RenderUtilities::SafeCopyTexture(m_context, m_device, RenderUtilities::GetFirstPassColorTexture(), m_mainRTTexture)) {
+				logger::warn("BackupFirstPassTextures: Failed to backup MainRT to FirstPassColor");
 			}
 
 			// 验证深度纹理尺寸匹配
-			D3D11_TEXTURE2D_DESC firstPassDepthDesc, mainDSDesc;
-			RenderUtilities::GetFirstPassDepthTexture()->GetDesc(&firstPassDepthDesc);
-			m_mainDSTexture->GetDesc(&mainDSDesc);
-
-			if (firstPassDepthDesc.Width == mainDSDesc.Width && firstPassDepthDesc.Height == mainDSDesc.Height) {
-				m_context->CopyResource(RenderUtilities::GetFirstPassDepthTexture(), m_mainDSTexture);
-			} else {
-				logger::warn("Skipping first pass depth copy: size mismatch {}x{} vs {}x{}",
-					firstPassDepthDesc.Width, firstPassDepthDesc.Height,
-					mainDSDesc.Width, mainDSDesc.Height);
+			if (!RenderUtilities::SafeCopyTexture(m_context, m_device, RenderUtilities::GetFirstPassDepthTexture(), m_mainDSTexture)) {
+				logger::warn("BackupFirstPassTextures: Failed to backup MainDS to FirstPassDepth");
 			}
 
 			// Use centralized RenderTargetMerger to backup all required render targets
@@ -513,9 +506,16 @@ namespace ThroughScope
 			float fovRad = targetFOV * 0.01745329251f;  // degrees to radians
 			float halfFovTan = tan(fovRad * 0.5f);
 
-			// 从渲染状态获取实际宽高比
-			float aspectRatio = 1.7777778f;  // 默认 16:9
-			if (gState.backBufferHeight > 0) {
+			// Calculate Aspect Ratio
+			float aspectRatio = 1.7777778f;  // Default 16:9
+			
+			if (m_mainRTTexture) {
+				D3D11_TEXTURE2D_DESC desc;
+				m_mainRTTexture->GetDesc(&desc);
+				if (desc.Height > 0) {
+					aspectRatio = static_cast<float>(desc.Width) / static_cast<float>(desc.Height);
+				}
+			} else if (gState.backBufferHeight > 0) {
 				aspectRatio = static_cast<float>(gState.backBufferWidth) / static_cast<float>(gState.backBufferHeight);
 			}
 
@@ -601,13 +601,34 @@ namespace ThroughScope
 				posAdjustUpdated = true;
 			}
 
-			// 执行第二次渲染
+			// Override global state for correct viewport calculation
+			static REL::Relocation<RE::BSGraphics::State*> g_GlobalState{ REL::RelocationID(600795, 2704621) };
+			auto globalState = g_GlobalState.get();
+
+			uint32_t savedWidth = globalState->backBufferWidth;
+			uint32_t savedHeight = globalState->backBufferHeight;
+
+			if (m_mainRTTexture) {
+				D3D11_TEXTURE2D_DESC desc;
+				m_mainRTTexture->GetDesc(&desc);
+				
+				if (desc.Width != savedWidth || desc.Height != savedHeight) {
+					globalState->backBufferWidth = desc.Width;
+					globalState->backBufferHeight = desc.Height;
+				}
+			}
+
+			// Perform Second Pass Render
 			auto hookMgr = HookManager::GetSingleton();
 			
-			// TODO: BSMTAManager 竞态条件问题待解决
-			// 禁用 BSMTAManager 会导致阴影渲染崩溃，需要找其他方案
+			// TODO: BSMTAManager race condition remains
+			// Disabling BSMTAManager crashes shadows, need alternative
 			
 			hookMgr->g_RenderPreUIOriginal(savedDrawWorld);
+
+			// Restore Global State dimensions
+			globalState->backBufferWidth = savedWidth;
+			globalState->backBufferHeight = savedHeight;
 
 			// 恢复 PosAdjust
 			if (posAdjustUpdated) {
@@ -643,57 +664,33 @@ namespace ThroughScope
 
 		if (m_texturesBackedUp) {
 			// 复制第二次渲染结果到我们的纹理
-			D3D11_TEXTURE2D_DESC secondPassColorDesc, mainRTDesc;
-			RenderUtilities::GetSecondPassColorTexture()->GetDesc(&secondPassColorDesc);
-			m_mainRTTexture->GetDesc(&mainRTDesc);
-
-			if (secondPassColorDesc.Width == mainRTDesc.Width && secondPassColorDesc.Height == mainRTDesc.Height) {
-				m_context->CopyResource(RenderUtilities::GetSecondPassColorTexture(), m_mainRTTexture);
-			} else {
-				logger::warn("Skipping second pass color copy: size mismatch {}x{} vs {}x{}",
-					secondPassColorDesc.Width, secondPassColorDesc.Height,
-					mainRTDesc.Width, mainRTDesc.Height);
+			// 复制第二次渲染结果到我们的纹理
+			// Dest: SecondPassColorTexture, Src: m_mainRTTexture
+			if (!RenderUtilities::SafeCopyTexture(m_context, m_device, RenderUtilities::GetSecondPassColorTexture(), m_mainRTTexture)) {
+				logger::warn("RestoreFirstPass: Failed to copy SecondPass result from MainRT");
 			}
 
 			// 恢复BackBuffer
-			D3D11_TEXTURE2D_DESC rtDesc, tempBackBufferDesc;
-			m_rtTexture2D->GetDesc(&rtDesc);
-			m_tempBackBufferTex->GetDesc(&tempBackBufferDesc);
-
-			if (rtDesc.Width == tempBackBufferDesc.Width && rtDesc.Height == tempBackBufferDesc.Height) {
-				m_context->CopyResource(m_rtTexture2D, m_tempBackBufferTex);
-			} else {
-				logger::warn("Skipping BackBuffer restore: size mismatch {}x{} vs {}x{}",
-					rtDesc.Width, rtDesc.Height,
-					tempBackBufferDesc.Width, tempBackBufferDesc.Height);
+			// Line 651: m_context->CopyResource(m_rtTexture2D, m_tempBackBufferTex);
+			// Dest: m_rtTexture2D (Game BackBuffer), Src: m_tempBackBufferTex (Backup)
+			if (!RenderUtilities::SafeCopyTexture(m_context, m_device, m_rtTexture2D, m_tempBackBufferTex)) {
+				logger::warn("RestoreFirstPass: Failed to restore BackBuffer from Temp");
 			}
 
 			RenderUtilities::SetSecondPassComplete(true);
 
 			// 如果第二次渲染完成，恢复主渲染目标内容用于正常显示
 			if (RenderUtilities::IsSecondPassComplete()) {
-				D3D11_TEXTURE2D_DESC firstPassColorDesc, mainRTDesc2;
-				RenderUtilities::GetFirstPassColorTexture()->GetDesc(&firstPassColorDesc);
-				m_mainRTTexture->GetDesc(&mainRTDesc2);
-
-				if (firstPassColorDesc.Width == mainRTDesc2.Width && firstPassColorDesc.Height == mainRTDesc2.Height) {
-					m_context->CopyResource(m_mainRTTexture, RenderUtilities::GetFirstPassColorTexture());
-				} else {
-					logger::warn("Skipping first pass color restore: size mismatch {}x{} vs {}x{}",
-						firstPassColorDesc.Width, firstPassColorDesc.Height,
-						mainRTDesc2.Width, mainRTDesc2.Height);
+				// Line 667: CopyResource(m_mainRTTexture, RenderUtilities::GetFirstPassColorTexture());
+				// Dest: m_mainRTTexture, Src: GetFirstPassColorTexture (Backup of First Pass)
+				if (!RenderUtilities::SafeCopyTexture(m_context, m_device, m_mainRTTexture, RenderUtilities::GetFirstPassColorTexture())) {
+					logger::warn("RestoreFirstPass: Failed to restore MainRT from FirstPassColor");
 				}
 
-				D3D11_TEXTURE2D_DESC firstPassDepthDesc, mainDSDesc;
-				RenderUtilities::GetFirstPassDepthTexture()->GetDesc(&firstPassDepthDesc);
-				m_mainDSTexture->GetDesc(&mainDSDesc);
-
-				if (firstPassDepthDesc.Width == mainDSDesc.Width && firstPassDepthDesc.Height == mainDSDesc.Height) {
-					m_context->CopyResource(m_mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
-				} else {
-					logger::warn("Skipping first pass depth restore: size mismatch {}x{} vs {}x{}",
-						firstPassDepthDesc.Width, firstPassDepthDesc.Height,
-						mainDSDesc.Width, mainDSDesc.Height);
+				// Line 679: CopyResource(m_mainDSTexture, RenderUtilities::GetFirstPassDepthTexture());
+				// Dest: m_mainDSTexture, Src: GetFirstPassDepthTexture
+				if (!RenderUtilities::SafeCopyTexture(m_context, m_device, m_mainDSTexture, RenderUtilities::GetFirstPassDepthTexture())) {
+					logger::warn("RestoreFirstPass: Failed to restore MainDS from FirstPassDepth");
 				}
 			}
 
@@ -1105,7 +1102,7 @@ namespace ThroughScope
 				ID3D11Resource* mvResource = nullptr;
 				mvRTV->GetResource(&mvResource);
 				if (mvResource) {
-					m_context->CopyResource(tempMVTexture, mvResource);
+					RenderUtilities::SafeCopyTexture(m_context, m_device, tempMVTexture, (ID3D11Texture2D*)mvResource);
 					mvResource->Release();
 				}
 

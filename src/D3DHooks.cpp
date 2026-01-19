@@ -941,7 +941,14 @@ namespace ThroughScope {
 				RenderUtilities::GetSecondPassColorTexture(), 0,
 				srcTexDesc.Format);
 		} else {
-			pContext->CopyResource(stagingTexture, RenderUtilities::GetSecondPassColorTexture());
+			ID3D11Device* device = nullptr;
+			pContext->GetDevice(&device);
+			if (device) {
+				RenderUtilities::SafeCopyTexture(pContext, device, stagingTexture, RenderUtilities::GetSecondPassColorTexture());
+				device->Release();
+			} else {
+				pContext->CopyResource(stagingTexture, RenderUtilities::GetSecondPassColorTexture());
+			}
 		}
 
 		RestoreAllCachedStates();
@@ -1193,7 +1200,6 @@ namespace ThroughScope {
 	{
 		auto playerChar = RE::PlayerCharacter::GetSingleton();
 		if (uMsg == WM_MOUSEWHEEL && s_EnableFOVAdjustment && playerChar && Utilities::IsInADS(playerChar)) {
-			// Only intercept if we have an active TTS scope
 			if (ScopeCamera::s_CurrentScopeNode) {
 				short wheelDelta = GET_WHEEL_DELTA_WPARAM(wParam);
 				ProcessMouseWheelFOVInput(wheelDelta);
