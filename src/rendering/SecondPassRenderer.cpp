@@ -9,11 +9,10 @@
 
 #include "ScopeRenderingManager.h"
 #include "STSCompatibility.h"
+#include "ScopeCulling.h"
 
 namespace ThroughScope
 {
-	// [SAFEGUARD] Helper function for SEH to avoid C2712
-	// Cannot use objects with destructors in a function with __try
 	void SafeShadowNodeUpdate(RE::NiNode* node, RE::NiUpdateData* ctx)
 	{
 		__try {
@@ -335,9 +334,6 @@ namespace ThroughScope
 		// 清理深度模板缓冲区
 		m_context->ClearDepthStencilView(m_mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-		// ENB 兼容模式：清理所有可能被 ENB 读取的 G-Buffer 通道
-		// 这对于防止第一次渲染的武器模型"鬼影"至关重要
-		// 扩展清理范围从 (8, 9) 到 (5-19) 以覆盖所有 ENB 可能读取的缓冲区
 		static const int allGBuffers[] = { 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 };
 		for (int bufIdx : allGBuffers) {
 			if (bufIdx < 100 && rendererData->renderTargets[bufIdx].rtView) {
@@ -430,30 +426,14 @@ namespace ThroughScope
 			m_depthBackupCreated = true;
 		}
 
-		// 复制深度缓冲区内容到备份纹理
-		// 注意：直接 CopyResource 在格式不同时会失败，需要用 shader 转换
-		// 这里使用引擎的 depth SRV 并在 ApplyMotionVectorMask 中直接采样比较
-		// 简化方案：存储当前渲染数据的深度 SRV 索引
-
 		D3DPERF_EndEvent();
 		return true;
 	}
 
 	void SecondPassRenderer::DrawScopeContent()
 	{
-
-
-		// [FIX] 同步背景任务
-		// 使用 ProcessQueues 处理 Pending 的任务 (如 Actor::SetParentCell)
-		// 这会在当前线程(主线程)立即执行这些任务，而不是等待后台线程
-		// 从而确保场景图在我们遍历前是稳定的，且不会造成死锁
 		HookManager::FlushBackgroundTasks();
 
-		// [FIX] NPC 闪烁修复 - 强制更新场景图
-		// 刷新任务(ProcessQueues)可能修改了场景图(例如移动了Actor)，导致变换矩阵和包围盒过时。
-		// 这会导致剔除系统(Culling)错误地剔除主要对象，表现为闪烁。
-		// 在这里强制更新整个 ShadowSceneNode (场景根节点) 的 WorldData 和 WorldBound。
-		// 注意：ShadowSceneNode 通常不包含所有物体(如UI)，但包含主要的3D世界对象。
 		if (ptr_DrawWorldShadowNode.get() && ptr_DrawWorldShadowNode.address()) {
 			D3DPERF_BeginEvent(0xffffffff, L"UpdateSceneGraph");
 			auto shadowNode = *ptr_DrawWorldShadowNode;
@@ -461,15 +441,8 @@ namespace ThroughScope
 			ctx.flags = 0; // 默认标志
 			ctx.time = 0.0f; // 假设不需要时间步进，只更新空间关系
 			
-			// [FIX] Update Optimization
-			// Instead of updating the entire ShadowSceneNode (which risks race conditions with background jobs),
-			// we only update the current Cell's 3D root. This contains the NPCs and local geometry causing flickering.
-			// This significantly reduces the scope of the update and the chance of collision.
 			RE::NiNode* updateTarget = shadowNode;
 			
-			// Try to get the player's current cell 3D
-			// 使用 g_pchar->Get3D(false) (World Reference) 的父节点作为 Cell Root
-			// 修复了之前使用 RE::TESObjectCELL::Get3D 的编译错误
 			if (g_pchar) {
 				auto player3D = g_pchar->Get3D(false);
 				if (player3D && player3D->parent) {
@@ -477,9 +450,6 @@ namespace ThroughScope
 				}
 			}
 
-			// [SAFEGUARD] 使用辅助函数调用 Update 以规避 C2712 错误
-			// 背景线程(JobListManager)可能同时在修改场景图(DoBuildGeomArray)，导致访问冲突(0xC0000005)。
-			// 如果发生冲突，我们跳过当帧更新(可能导致一帧闪烁)，但避免游戏崩溃。
 			SafeShadowNodeUpdate(updateTarget, &ctx);
 			D3DPERF_EndEvent();
 		}
@@ -501,7 +471,6 @@ namespace ThroughScope
 		// 设置渲染标志
 		ScopeCamera::SetRenderingForScope(true);
 
-		// RAII: 备份原始相机指针，作用域结束时自动恢复
 		ScopedCameraBackup cameraGuard;
 
 		// 获取渲染状态
@@ -518,6 +487,7 @@ namespace ThroughScope
 			if (gState.backBufferHeight > 0) {
 				aspectRatio = static_cast<float>(gState.backBufferWidth) / static_cast<float>(gState.backBufferHeight);
 			}
+
 
 			// 重新设置视锥体参数
 			m_scopeCamera->viewFrustum.top = m_scopeCamera->viewFrustum.nearPlane * halfFovTan;
@@ -604,17 +574,26 @@ namespace ThroughScope
 			// 执行第二次渲染
 			auto hookMgr = HookManager::GetSingleton();
 			
-			// TODO: BSMTAManager 竞态条件问题待解决
-			// 禁用 BSMTAManager 会导致阴影渲染崩溃，需要找其他方案
+			// 缓存瞄具视锥体平面用于 BSCullingGroup::Add 过滤
+			// 必须在相机数据（viewFrustum, world transform）设置完成后调用
+			UpdateCachedScopeFrustumPlanes(m_scopeCamera);
 			
-			hookMgr->g_RenderPreUIOriginal(savedDrawWorld);
+			// 使用自定义裁剪平面
+			// 从瞄具相机计算视锥体平面，设置为自定义裁剪平面
+			{
+				ScopedCustomCulling cullGuard(*DrawWorldCullingProcess, m_scopeCamera);
+				hookMgr->g_RenderPreUIOriginal(savedDrawWorld);
+			}
 
 			// 恢复 PosAdjust
 			if (posAdjustUpdated) {
 				RE::BSGraphics::Renderer::GetSingleton().SetPosAdjust(&backupPosAdjust);
 			}
 
-			// 相机指针由 ScopedCameraBackup 自动恢复
+			InvalidateCachedScopeFrustumPlanes();
+
+			uint32_t tested, passed, filtered;
+			GetAndResetCullingStats(tested, passed, filtered);
 
 			// 清除渲染标志
 			ScopeCamera::SetRenderingForScope(false);

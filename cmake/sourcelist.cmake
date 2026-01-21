@@ -29,4 +29,5 @@ set(SOURCES
 	src/rendering/RenderTargetMerger.cpp
 	src/ENBIntegration.cpp
 	src/FGCompatibility.cpp
+	src/rendering/ScopeCulling.cpp
 )

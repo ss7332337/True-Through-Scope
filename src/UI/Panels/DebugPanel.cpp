@@ -1,4 +1,9 @@
 #include "DebugPanel.h"
+#include "rendering/ScopeCulling.h"
+#include "ScopeCamera.h"
+#include "D3DHooks.h"
+#include "Utilities.h"
+#include "fmt/format.h"
 
 namespace ThroughScope
 {
@@ -60,7 +65,7 @@ namespace ThroughScope
 
 		ImGui::NextColumn();
 
-		// 右列 - 值
+		// Right column - values
 		FormatVector3(m_DebugInfo.cameraLocalPos, buffer, sizeof(buffer));
 		ImGui::Text("%s", buffer);
 
@@ -102,7 +107,7 @@ namespace ThroughScope
 
 		ImGui::NextColumn();
 
-		// 右列 - 值
+		// Right column - values
 		FormatVector3(m_DebugInfo.ttsLocalPos, buffer, sizeof(buffer));
 		ImGui::Text("%s", buffer);
 
@@ -135,7 +140,7 @@ namespace ThroughScope
 
 		ImGui::NextColumn();
 
-		// 右列 - 状态
+		// Right column - status
 		ImGui::TextColored(m_DebugInfo.renderingEnabled ? m_SuccessColor : m_ErrorColor,
 			"%s", m_DebugInfo.renderingEnabled ? LOC("common.yes") : LOC("common.no"));
 
@@ -150,6 +155,7 @@ namespace ThroughScope
 			"%s", nodeStatus.c_str());
 
 		ImGui::Columns(1);
+
 	}
 
 	void DebugPanel::RenderAdvancedDebugInfo()
@@ -169,7 +175,7 @@ namespace ThroughScope
 			ImGui::SameLine();
 			ImGui::SetNextItemWidth(180);
 			
-			// Dropdown for all managed RTs (matches RenderTargetMerger)
+			// Dropdown for all managed RTs
 			const char* rtOptions[] = {
 				"RT_09 SSR_BlurredExtra",
 				"RT_20 GBuffer_Normal",
@@ -187,7 +193,7 @@ namespace ThroughScope
 			static const int rtIndices[] = { 9, 20, 22, 23, 24, 28, 29, 39, 57, 58, 59 };
 			constexpr int numRTs = sizeof(rtIndices) / sizeof(rtIndices[0]);
 			
-			// Find current selection based on s_DebugGBufferIndex
+			// Find current selection
 			for (int i = 0; i < numRTs; i++) {
 				if (rtIndices[i] == SecondPassRenderer::s_DebugGBufferIndex) {
 					selectedRTIndex = i;
@@ -237,7 +243,6 @@ namespace ThroughScope
 	{
 		RenderSectionHeader(LOC("debug.actions"));
 
-		// 第一行按钮
 		if (ImGui::Button(LOC("debug.print_hierarchy"))) {
 			PrintNodeHierarchy();
 		}
@@ -255,7 +260,6 @@ namespace ThroughScope
 		}
 		RenderHelpTooltip(LOC("tooltip.copy_values"));
 
-		// 第二行按钮
 		if (ImGui::Button(LOC("debug.force_update"))) {
 			UpdateDebugInfo();
 			m_Manager->SetDebugText(LOC("debug.info_updated"));
@@ -266,7 +270,7 @@ namespace ThroughScope
 			m_Manager->SetDebugText("");
 		}
 
-		// 设置选项
+		// Settings options
 		ImGui::Spacing();
 		ImGui::Separator();
 
@@ -322,7 +326,6 @@ namespace ThroughScope
 		try {
 			std::string clipboardText;
 
-			// 格式化调试信息
 			if (m_DebugInfo.ttsNodeExists) {
 				clipboardText = fmt::format(
 					"{}\n"
@@ -355,7 +358,6 @@ namespace ThroughScope
 					LOC("debug.load_model_first"));
 			}
 
-			// 复制到剪贴板
 			if (::OpenClipboard(nullptr)) {
 				EmptyClipboard();
 				HGLOBAL hClipboardData = GlobalAlloc(GMEM_DDESHARE, clipboardText.length() + 1);
@@ -378,7 +380,6 @@ namespace ThroughScope
 
 	void DebugPanel::UpdateDebugInfo()
 	{
-		// 更新相机信息
 		auto scopeCamera = ScopeCamera::GetScopeCamera();
 		if (scopeCamera) {
 			m_DebugInfo.cameraLocalPos = scopeCamera->local.translate;
@@ -394,7 +395,6 @@ namespace ThroughScope
 			m_DebugInfo.currentFOV = ScopeCamera::GetTargetFOV();
 		}
 
-		// 更新TTSNode信息
 		auto ttsNode = m_Manager->GetTTSNode();
 		if (ttsNode) {
 			m_DebugInfo.ttsNodeExists = true;
@@ -412,12 +412,10 @@ namespace ThroughScope
 			m_DebugInfo.ttsNodeExists = false;
 		}
 
-		// 更新渲染状态
 		m_DebugInfo.renderingEnabled = D3DHooks::IsEnableRender();
 		m_DebugInfo.isForwardStage = D3DHooks::GetForwardStage();
 		m_DebugInfo.isRenderingForScope = ScopeCamera::IsRenderingForScope();
 
-		// 更新性能信息
 		ImGuiIO& io = ImGui::GetIO();
 		m_DebugInfo.frameTime = io.DeltaTime;
 		m_DebugInfo.frameCount = (int)ImGui::GetFrameCount();
@@ -430,7 +428,7 @@ namespace ThroughScope
 
 	void DebugPanel::FormatRotationDegrees(const RE::NiPoint3& rot, char* buffer, size_t bufferSize)
 	{
-		float pitch = rot.x * 57.2957795f;  // 弧度转度数
+		float pitch = rot.x * 57.2957795f;
 		float yaw = rot.y * 57.2957795f;
 		float roll = rot.z * 57.2957795f;
 		snprintf(buffer, bufferSize, "[%.1f, %.1f, %.1f]°", pitch, yaw, roll);

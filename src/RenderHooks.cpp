@@ -12,6 +12,7 @@
 #include "rendering/RenderStateManager.h"
 #include "ENBIntegration.h"
 #include "FGCompatibility.h"
+#include "rendering/ScopeCulling.h"
 #include <d3d9.h>  // for D3DPERF_BeginEvent / D3DPERF_EndEvent
 #include <DirectXMath.h>
 #include <chrono>
@@ -333,12 +334,59 @@ namespace ThroughScope
 			return;
 		}
 
-		// [NOTE] 第一人称裁剪组过滤已移至 hkBSShaderAccumulator_RenderBatches
+		// 在瞄具渲染时，对物体进行视锥体裁剪测试
+		// 如果物体的包围球完全在瞄具视锥体外部，则跳过添加
+		if (ScopeCamera::IsRenderingForScope()) {
+			const RE::NiFrustumPlanes* scopePlanes = GetCachedScopeFrustumPlanes();
+			if (scopePlanes) {
+				IncrementCullingTested();
+				
+				// 检查是否应该跳过裁剪（重要/特殊物体）
+				bool skipCulling = false;
+				
+				// 1. 跳过没有有效包围球的物体（可能是特殊几何体）
+				const RE::NiBound& wb = apObj->worldBound;
+				if (wb.fRadius <= 0.0f) {
+					skipCulling = true;
+				}
+				
+				// 2. 跳过包围球中心在原点附近的物体（可能是屏幕空间几何体）
+				if (!skipCulling) {
+					float distFromOrigin = sqrtf(wb.center.x * wb.center.x + 
+					                             wb.center.y * wb.center.y + 
+					                             wb.center.z * wb.center.z);
+					if (distFromOrigin < 500.0f) {  // 小于500单位视为屏幕空间物体
+						skipCulling = true;
+					}
+				}
+				
+				// 3. 跳过特定名称的物体（天空、天气、瞄具等）
+				if (!skipCulling && apObj->name.c_str()) {
+					const char* name = apObj->name.c_str();
+					if (strstr(name, "Sky") || strstr(name, "Weather") 
+						|| strstr(name, "Scope") || strstr(name, "TTS") 
+						//|| strstr(name, "Cloud") || strstr(name, "Lens")
+						) {
+						skipCulling = true;
+					}
+				}
+				
+				if (skipCulling) {
+					IncrementCullingPassed();
+				} else {
+					// 使用物体的 worldBound 进行测试
+					if (!TestBoundAgainstFrustum(&apObj->worldBound, *scopePlanes)) {
+						// 物体完全在视锥体外，跳过
+						IncrementCullingFiltered();
+						return;
+					}
+					IncrementCullingPassed();
+				}
+			}
+		}
 		// 使用 Forward-stage aware 过滤实现：
 		// - Deferred 阶段跳过第一人称累加器（阻止手部渲染）
 		// - Forward 阶段允许第一人称累加器（保留激光渲染）
-		// 详见 docs/手型洞修复方案.md
-		
 		g_hookMgr->g_BSCullingGroupAdd(thisPtr, apObj, aBound, aFlags);
 	}
 

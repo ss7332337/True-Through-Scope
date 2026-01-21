@@ -1,6 +1,7 @@
 #include "SettingsPanel.h"
 
 #include "shellapi.h"
+#include "rendering/ScopeCulling.h"
 #include "ScopeCamera.h"
 #include "D3DHooks.h"
 #include "DataPersistence.h"
@@ -31,6 +32,13 @@ namespace ThroughScope
 		//}
 		RenderKeyBindingSettings();
 		RenderInterfaceSettings();
+		
+		if (m_ShowAdvancedSettings) {
+			ImGui::Spacing();
+			ImGui::Separator();
+			RenderAdvancedSettings();
+		}
+
 		ImGui::Spacing();
 		ImGui::Separator();
 		RenderActionButtons();
@@ -101,6 +109,10 @@ namespace ThroughScope
 			ImGui::EndCombo();
 		}
 		RenderHelpTooltip(LOC("tooltip.select_language"));
+
+		ImGui::Spacing();
+		ImGui::Checkbox(LOC("debug.show_advanced"), &m_ShowAdvancedSettings);
+		RenderHelpTooltip(LOC("tooltip.show_advanced_debug"));
 
 	}
 
@@ -194,6 +206,38 @@ namespace ThroughScope
 
 	}
 
+
+	void SettingsPanel::RenderAdvancedSettings()
+	{
+		RenderSectionHeader(LOC("settings.advanced"));
+		
+		// 裁剪安全余量
+		float margin = GetCullingSafetyMargin();
+		// 允许调整范围 -2.0 到 2.0 (-200% ~ +200%)
+		// 默认 0.05 (5%)
+
+		// Show Culling Stats
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::Spacing();
+		ImGui::Text(LOC("debug.culling_stats"));
+
+		uint32_t tested, passed, filtered;
+		// Removed ScopeCulling:: prefix
+		GetLastFrameCullingStats(tested, passed, filtered);
+		float rate = tested > 0 ? (float)filtered / tested * 100.0f : 0.0f;
+
+		ImGui::Text("Tested: %d", tested);
+		ImGui::SameLine();
+		ImGui::Text("Passed: %d", passed);
+		ImGui::SameLine();
+		ImGui::Text("Filtered: %d (%.1f%%)", filtered, rate);
+
+		if (ImGui::SliderFloat("Culling Safety Margin", &margin, -2.0f, 2.0f, "%.2f")) {
+			SetCullingSafetyMargin(margin);
+		}
+		RenderHelpTooltip("Adjusts the frustum culling bound safety margin.\nPositive values ensure less culling (safer).\nNegative values cull more aggressively (riskier).\nDefault: 0.05");
+	}
 
 	void SettingsPanel::RenderActionButtons()
 	{
