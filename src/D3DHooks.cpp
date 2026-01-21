@@ -953,10 +953,10 @@ namespace ThroughScope {
 
 		RestoreAllCachedStates();
 
-		// 准备常量缓冲区数据
+		// 使用渲染分辨率而非显示分辨率 (Fallout4Upscaler兼容)
 		ScopeConstantBuffer newCBData = {};
-		newCBData.screenWidth = static_cast<float>(screenWidth);
-		newCBData.screenHeight = static_cast<float>(screenHeight);
+		newCBData.screenWidth = viewportWidth;
+		newCBData.screenHeight = viewportHeight;
 		newCBData.viewportWidth = viewportWidth;
 		newCBData.viewportHeight = viewportHeight;
 		newCBData.cameraPosition[0] = cameraPos.x;
