@@ -34,7 +34,6 @@ namespace ThroughScope
 
 		auto& eventEquipped = player->currentProcess->middleHigh->equippedItems;
 
-		// Check if we have a gun equipped
 		if (!(eventEquipped.size() > 0 &&
 				eventEquipped[0].item.instanceData &&
 				((TESObjectWEAP::InstanceData*)eventEquipped[0].item.instanceData.get())->type == WEAPON_TYPE::kGun)) {

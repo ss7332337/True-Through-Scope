@@ -199,7 +199,27 @@ namespace ThroughScope
 
 			auto& rt = rendererData->renderTargets[backup.rtIndex];
 			if (rt.texture) {
-				context->CopyResource(backup.backupTexture, (ID3D11Resource*)rt.texture);
+                // Check for dimension/format mismatch (Dynamic Resolution / DLSS support)
+                D3D11_TEXTURE2D_DESC rtDesc;
+                ((ID3D11Texture2D*)rt.texture)->GetDesc(&rtDesc);
+
+                if (rtDesc.Width != backup.width || rtDesc.Height != backup.height || rtDesc.Format != backup.format) {
+                   logger::info("RenderTargetMerger: resizing backup for RT_{} from {}x{} to {}x{}", 
+                       backup.rtIndex, backup.width, backup.height, rtDesc.Width, rtDesc.Height);
+                   ReleaseBackupTexture(backup);
+                   // CreateBackupTexture will update backup struct with new dimensions from current RT
+                   ID3D11Device* device = (ID3D11Device*)rendererData->device;
+                   if (!CreateBackupTexture(backup, device)) {
+                       logger::warn("RenderTargetMerger: Failed to resize backup for RT_{}", backup.rtIndex);
+                       continue;
+                   }
+                }
+
+                // Use SafeCopyTexture to handle potential dimension mismatches
+                ID3D11Device* device = (ID3D11Device*)rendererData->device;
+                if (device) {
+				    RenderUtilities::SafeCopyTexture(context, device, backup.backupTexture, (ID3D11Texture2D*)rt.texture);
+                }
 			}
 		}
 

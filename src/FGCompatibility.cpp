@@ -432,7 +432,14 @@ namespace FGCompatibility
                 D3DPERF_EndEvent();
             } else {
                 // 回退：简单复制
-                context->CopyResource(sharedBuffer, mvTexture);
+                ID3D11Device* device = nullptr;
+                context->GetDevice(&device);
+                if (device) {
+                    RenderUtilities::SafeCopyTexture(context, device, sharedBuffer, mvTexture);
+                    device->Release();
+                } else {
+                    context->CopyResource(sharedBuffer, mvTexture);
+                }
             }
 
             // ========== 执行 Depth 复制 ==========
@@ -540,7 +547,15 @@ namespace FGCompatibility
             }
 
             context->OMSetRenderTargets(0, nullptr, nullptr);
-            context->CopyResource(sharedBuffer, mvTexture);
+            
+            ID3D11Device* device = nullptr;
+            context->GetDevice(&device);
+            if (device) {
+                RenderUtilities::SafeCopyTexture(context, device, sharedBuffer, mvTexture);
+                device->Release();
+            } else {
+                context->CopyResource(sharedBuffer, mvTexture);
+            }
 
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             logger::error("[FGCompat] Exception in ExecuteMVCopy");

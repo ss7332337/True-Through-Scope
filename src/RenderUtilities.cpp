@@ -3,6 +3,7 @@
 #include "ScopeCamera.h"
 
 #include "Utilities.h"
+#include <wrl/client.h>
 namespace ThroughScope
 {
     ID3D11Texture2D* RenderUtilities::s_FirstPassColorTexture = nullptr;
@@ -420,6 +421,82 @@ namespace ThroughScope
 	}
 
 
+	// Check and resize backup textures if dimensions mismatch (e.g. dynamic resolution)
+	void RenderUtilities::ResizeFirstPassTextures(ID3D11Device* device, unsigned int width, unsigned int height)
+	{
+		bool recreateColor = false;
+		bool recreateDepth = false;
+
+		// Check Color Texture
+		if (s_FirstPassColorTexture) {
+			D3D11_TEXTURE2D_DESC desc;
+			s_FirstPassColorTexture->GetDesc(&desc);
+			if (desc.Width != width || desc.Height != height) {
+				recreateColor = true;
+			}
+		} else {
+			recreateColor = true;
+		}
+
+		// Check Depth Texture
+		if (s_FirstPassDepthTexture) {
+			D3D11_TEXTURE2D_DESC desc;
+			s_FirstPassDepthTexture->GetDesc(&desc);
+			if (desc.Width != width || desc.Height != height) {
+				recreateDepth = true;
+			}
+		} else {
+			recreateDepth = true;
+		}
+
+		if (recreateColor) {
+			SAFE_RELEASE(s_FirstPassColorTexture);
+			SAFE_RELEASE(s_SecondPassColorTexture);
+
+			D3D11_TEXTURE2D_DESC colorDesc;
+			ZeroMemory(&colorDesc, sizeof(colorDesc));
+			colorDesc.Width = width;
+			colorDesc.Height = height;
+			colorDesc.MipLevels = 1;
+			colorDesc.ArraySize = 1;
+			colorDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;  // Standard HDR format
+			colorDesc.SampleDesc.Count = 1;
+			colorDesc.SampleDesc.Quality = 0;
+			colorDesc.Usage = D3D11_USAGE_DEFAULT;
+			colorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+			colorDesc.CPUAccessFlags = 0;
+			colorDesc.MiscFlags = 0;
+
+			device->CreateTexture2D(&colorDesc, nullptr, &s_FirstPassColorTexture);
+			device->CreateTexture2D(&colorDesc, nullptr, &s_SecondPassColorTexture);
+			logger::info("Resized FirstPass Color Textures to {}x{}", width, height);
+		}
+
+		if (recreateDepth) {
+			SAFE_RELEASE(s_FirstPassDepthTexture);
+			SAFE_RELEASE(s_SecondPassDepthTexture);
+
+			D3D11_TEXTURE2D_DESC depthDesc;
+			ZeroMemory(&depthDesc, sizeof(depthDesc));
+			depthDesc.Width = width;
+			depthDesc.Height = height;
+			depthDesc.MipLevels = 1;
+			depthDesc.ArraySize = 1;
+			depthDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+			depthDesc.SampleDesc.Count = 1;
+			depthDesc.SampleDesc.Quality = 0;
+			depthDesc.Usage = D3D11_USAGE_DEFAULT;
+			depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+			depthDesc.CPUAccessFlags = 0;
+			depthDesc.MiscFlags = 0;
+
+			device->CreateTexture2D(&depthDesc, nullptr, &s_FirstPassDepthTexture);
+			device->CreateTexture2D(&depthDesc, nullptr, &s_SecondPassDepthTexture);
+			logger::info("Resized FirstPass Depth Textures to {}x{}", width, height);
+		}
+	}
+
+
     bool RenderUtilities::Initialize()
     {
         bool result = CreateTemporaryTextures();
@@ -769,4 +846,109 @@ namespace ThroughScope
 			s_TempGBufferSRV = nullptr;
 		}
     }
+
+	bool RenderUtilities::SafeCopyTexture(ID3D11DeviceContext* context, ID3D11Device* device, ID3D11Texture2D* dest, ID3D11Texture2D* src)
+	{
+		if (!context || !device || !dest || !src) return false;
+
+		D3D11_TEXTURE2D_DESC srcDesc, destDesc;
+		src->GetDesc(&srcDesc);
+		dest->GetDesc(&destDesc);
+
+		// 1. Direct Copy if dimensions and format match
+		if (srcDesc.Width == destDesc.Width &&
+			srcDesc.Height == destDesc.Height &&
+			srcDesc.Format == destDesc.Format) {
+			context->CopyResource(dest, src);
+			return true;
+		}
+
+		// 2. Fallback: Shader Copy (Requires RTV on Dest, SRV on Src)
+		// Only works if both bind flags are appropriate.
+		// Usually works for Color buffers, fails for Depth buffers (unless special care)
+
+		if (!(destDesc.BindFlags & D3D11_BIND_RENDER_TARGET)) {
+			logger::warn("SafeCopyTexture: Mismatch ({}x{} vs {}x{}), but Dest is not RenderTarget. Skipping.",
+				srcDesc.Width, srcDesc.Height, destDesc.Width, destDesc.Height);
+			return false;
+		}
+
+		// Check/Create RTV for destination
+		Microsoft::WRL::ComPtr<ID3D11RenderTargetView> destRTV;
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc;
+		ZeroMemory(&rtvDesc, sizeof(rtvDesc));
+		rtvDesc.Format = destDesc.Format;
+		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+		rtvDesc.Texture2D.MipSlice = 0;
+		if (FAILED(device->CreateRenderTargetView(dest, &rtvDesc, destRTV.GetAddressOf()))) {
+			logger::warn("SafeCopyTexture: Failed to create RTV for backup copy.");
+			return false;
+		}
+
+		// Check/Create SRV for source
+		Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srcSRV;
+
+		// If it's a bindable shader resource, created SRV
+		if (srcDesc.BindFlags & D3D11_BIND_SHADER_RESOURCE) {
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+			ZeroMemory(&srvDesc, sizeof(srvDesc));
+			srvDesc.Format = srcDesc.Format;
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+			srvDesc.Texture2D.MipLevels = 1;
+			// Handle some typeless formats if needed, or assume straight mapping for now
+			if (FAILED(device->CreateShaderResourceView(src, &srvDesc, srcSRV.GetAddressOf()))) {
+				logger::warn("SafeCopyTexture: Failed to create SRV for source copy.");
+				return false;
+			}
+		}
+		else {
+			logger::warn("SafeCopyTexture: Mismatch ({}x{} vs {}x{}), but Source is not ShaderResource. Skipping.",
+				srcDesc.Width, srcDesc.Height, destDesc.Width, destDesc.Height);
+			return false;
+		}
+
+		// --- Perform Draw ---
+		// Backup state
+		Microsoft::WRL::ComPtr<ID3D11RenderTargetView> oldRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT];
+		Microsoft::WRL::ComPtr<ID3D11DepthStencilView> oldDSV;
+		context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, oldRTVs[0].GetAddressOf(), oldDSV.GetAddressOf());
+
+		D3D11_VIEWPORT oldViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+		UINT numViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+		context->RSGetViewports(&numViewports, oldViewports);
+
+		// Set State
+		context->OMSetRenderTargets(1, destRTV.GetAddressOf(), nullptr);
+
+		D3D11_VIEWPORT vp;
+		vp.TopLeftX = 0;
+		vp.TopLeftY = 0;
+		vp.Width = (float)destDesc.Width;
+		vp.Height = (float)destDesc.Height;
+		vp.MinDepth = 0.0f;
+		vp.MaxDepth = 1.0f;
+		context->RSSetViewports(1, &vp);
+
+		// Set Shaders (FullscreenVS + GBufferCopyPS)
+		context->VSSetShader(GetFullscreenVS(), nullptr, 0);
+		context->PSSetShader(GetGBufferCopyPS(), nullptr, 0); // Copies color
+		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		
+		ID3D11ShaderResourceView* srvs[] = { srcSRV.Get() };
+		context->PSSetShaderResources(0, 1, srvs);
+		
+		// Draw
+		context->Draw(3, 0);
+
+		// Restore
+		// Unbind SRV
+		ID3D11ShaderResourceView* nullSRVs[] = { nullptr };
+		context->PSSetShaderResources(0, 1, nullSRVs);
+
+		context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, (ID3D11RenderTargetView**)oldRTVs, oldDSV.Get());
+		context->RSSetViewports(numViewports, oldViewports);
+		
+		return true;
+	}
 }
