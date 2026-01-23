@@ -386,13 +386,77 @@ namespace ThroughScope
 		D3D11_TEXTURE2D_DESC depthDesc;
 		m_mainDSTexture->GetDesc(&depthDesc);
 
-		// 创建备份纹理（如果尚未创建或尺寸变化）
-		if (!m_depthBackupCreated) {
+		auto getTypelessDepthFormat = [](DXGI_FORMAT format) -> DXGI_FORMAT {
+			switch (format) {
+			case DXGI_FORMAT_D32_FLOAT:
+			case DXGI_FORMAT_R32_TYPELESS:
+				return DXGI_FORMAT_R32_TYPELESS;
+			case DXGI_FORMAT_D24_UNORM_S8_UINT:
+			case DXGI_FORMAT_R24G8_TYPELESS:
+				return DXGI_FORMAT_R24G8_TYPELESS;
+			case DXGI_FORMAT_D16_UNORM:
+			case DXGI_FORMAT_R16_TYPELESS:
+				return DXGI_FORMAT_R16_TYPELESS;
+			case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
+			case DXGI_FORMAT_R32G8X24_TYPELESS:
+				return DXGI_FORMAT_R32G8X24_TYPELESS;
+			default:
+				return DXGI_FORMAT_UNKNOWN;
+			}
+		};
+
+		auto getDepthSRVFormat = [](DXGI_FORMAT format) -> DXGI_FORMAT {
+			switch (format) {
+			case DXGI_FORMAT_D32_FLOAT:
+			case DXGI_FORMAT_R32_TYPELESS:
+				return DXGI_FORMAT_R32_FLOAT;
+			case DXGI_FORMAT_D24_UNORM_S8_UINT:
+			case DXGI_FORMAT_R24G8_TYPELESS:
+				return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+			case DXGI_FORMAT_D16_UNORM:
+			case DXGI_FORMAT_R16_TYPELESS:
+				return DXGI_FORMAT_R16_UNORM;
+			case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
+			case DXGI_FORMAT_R32G8X24_TYPELESS:
+				return DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+			default:
+				return DXGI_FORMAT_UNKNOWN;
+			}
+		};
+
+		DXGI_FORMAT typelessFormat = getTypelessDepthFormat(depthDesc.Format);
+		DXGI_FORMAT srvFormat = getDepthSRVFormat(depthDesc.Format);
+		if (typelessFormat == DXGI_FORMAT_UNKNOWN || srvFormat == DXGI_FORMAT_UNKNOWN) {
+			logger::warn("BackupDepthBuffer: Unsupported depth format {:X}", (UINT)depthDesc.Format);
+			D3DPERF_EndEvent();
+			return false;
+		}
+
+		bool needsRecreate = !m_depthBackupCreated;
+		if (m_depthBackupCreated && m_depthBackupTex) {
+			D3D11_TEXTURE2D_DESC backupDesc{};
+			m_depthBackupTex->GetDesc(&backupDesc);
+			if (backupDesc.Width != depthDesc.Width || backupDesc.Height != depthDesc.Height || backupDesc.Format != typelessFormat) {
+				needsRecreate = true;
+			}
+		}
+
+		if (needsRecreate) {
+			if (m_depthBackupSRV) {
+				m_depthBackupSRV->Release();
+				m_depthBackupSRV = nullptr;
+			}
+			if (m_depthBackupTex) {
+				m_depthBackupTex->Release();
+				m_depthBackupTex = nullptr;
+			}
+
 			// 创建可用于 SRV 的深度备份纹理
 			D3D11_TEXTURE2D_DESC backupDesc = depthDesc;
 			backupDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-			backupDesc.Format = DXGI_FORMAT_R32_FLOAT;  // 使用可读取的格式
+			backupDesc.Format = typelessFormat;
 			backupDesc.Usage = D3D11_USAGE_DEFAULT;
+			backupDesc.CPUAccessFlags = 0;
 
 			if (FAILED(m_device->CreateTexture2D(&backupDesc, nullptr, &m_depthBackupTex))) {
 				logger::error("Failed to create depth backup texture");
@@ -403,7 +467,7 @@ namespace ThroughScope
 			// 创建 SRV
 			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
 			ZeroMemory(&srvDesc, sizeof(srvDesc));
-			srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+			srvDesc.Format = srvFormat;
 			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 			srvDesc.Texture2D.MipLevels = 1;
 			srvDesc.Texture2D.MostDetailedMip = 0;
@@ -414,6 +478,13 @@ namespace ThroughScope
 				m_depthBackupTex = nullptr;
 				D3DPERF_EndEvent();
 				return false;
+			}
+
+			static bool s_depthBackupLogged = false;
+			if (!s_depthBackupLogged) {
+				logger::info("Depth backup created: depth={:X}, typeless={:X}, srv={:X}, size={}x{}",
+					(UINT)depthDesc.Format, (UINT)typelessFormat, (UINT)srvFormat, depthDesc.Width, depthDesc.Height);
+				s_depthBackupLogged = true;
 			}
 
 			m_depthBackupCreated = true;
@@ -447,29 +518,22 @@ namespace ThroughScope
 			D3DPERF_EndEvent();
 		}
 
-		// 设置性能标记
 		D3DPERF_BeginEvent(0xffffffff, L"Second Render_PreUI");
 
-
-
-		// 配置DrawWorld系统使用瞄具相机
+		// 配置 DrawWorld 使用瞄具相机
 		DrawWorld::SetCamera(m_scopeCamera);
 		DrawWorld::SetUpdateCameraFOV(true);
 		DrawWorld::SetAdjusted1stPersonFOV(ScopeCamera::GetTargetFOV());
 		DrawWorld::SetCameraFov(ScopeCamera::GetTargetFOV());
 
-		// 同步BSShaderManager的相机指针
 		*ptr_BSShaderManagerSpCamera = m_scopeCamera;
 
-		// 设置渲染标志
 		ScopeCamera::SetRenderingForScope(true);
-
 		ScopedCameraBackup cameraGuard;
 
-		// 获取渲染状态
 		auto gState = RE::BSGraphics::State::GetSingleton();
 
-		// 在 SetCameraData 前重新配置视锥体（NiCamera::Update 调用可能重置了 viewFrustum）
+		// 重配视锥体（NiCamera::Update 可能已重置）
 		{
 			float targetFOV = ScopeCamera::GetTargetFOV();
 			float fovRad = targetFOV * 0.01745329251f;  // degrees to radians
@@ -500,8 +564,7 @@ namespace ThroughScope
 		*ptr_DrawWorldCamera = m_scopeCamera;
 		*ptr_DrawWorldVisCamera = m_scopeCamera;
 
-		// 更新渲染系统的相机数据（视图/投影矩阵）
-		// 这对于正确渲染天空盒和其他依赖相机数据的效果至关重要
+		// 更新视图/投影矩阵（天空盒等依赖）
 		gState.SetCameraData(m_scopeCamera, true,
 			m_scopeCamera->viewFrustum.nearPlane,
 			m_scopeCamera->viewFrustum.farPlane);
@@ -591,12 +654,8 @@ namespace ThroughScope
 			// Perform Second Pass Render
 			auto hookMgr = HookManager::GetSingleton();
 			
-			// 缓存瞄具视锥体平面用于 BSCullingGroup::Add 过滤
-			// 必须在相机数据（viewFrustum, world transform）设置完成后调用
+			// 瞄具视锥体 -> 自定义裁剪平面
 			UpdateCachedScopeFrustumPlanes(m_scopeCamera);
-			
-			// 使用自定义裁剪平面
-			// 从瞄具相机计算视锥体平面，设置为自定义裁剪平面
 			{
 				ScopedCustomCulling cullGuard(*DrawWorldCullingProcess, m_scopeCamera);
 				hookMgr->g_RenderPreUIOriginal(savedDrawWorld);

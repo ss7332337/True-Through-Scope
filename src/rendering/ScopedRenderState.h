@@ -76,6 +76,38 @@ namespace ThroughScope
 		}
 	};
 
+	struct PSStateCache
+	{
+		// Pixel Shader
+		Microsoft::WRL::ComPtr<ID3D11PixelShader> pixelShader;
+
+		// Constant Buffers
+		static constexpr UINT MAX_CONSTANT_BUFFERS = 14;
+		Microsoft::WRL::ComPtr<ID3D11Buffer> constantBuffers[MAX_CONSTANT_BUFFERS];
+
+		// Shader Resources
+		static constexpr UINT MAX_SHADER_RESOURCES = 128;
+		Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> shaderResources[MAX_SHADER_RESOURCES];
+
+		// Samplers
+		static constexpr UINT MAX_SAMPLERS = 16;
+		Microsoft::WRL::ComPtr<ID3D11SamplerState> samplers[MAX_SAMPLERS];
+
+		void Clear()
+		{
+			pixelShader.Reset();
+			for (int i = 0; i < MAX_CONSTANT_BUFFERS; ++i) {
+				constantBuffers[i].Reset();
+			}
+			for (int i = 0; i < MAX_SHADER_RESOURCES; ++i) {
+				shaderResources[i].Reset();
+			}
+			for (int i = 0; i < MAX_SAMPLERS; ++i) {
+				samplers[i].Reset();
+			}
+		}
+	};
+
 	struct RSStateCache
 	{
 		Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerState;
@@ -100,6 +132,44 @@ namespace ThroughScope
 			}
 			depthStencilView.Reset();
 			numRenderTargets = 0;
+		}
+	};
+
+	struct OMDepthStencilStateCache
+	{
+		Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthStencilState;
+		UINT stencilRef = 0;
+
+		void Clear()
+		{
+			depthStencilState.Reset();
+			stencilRef = 0;
+		}
+	};
+
+	struct BlendStateCache
+	{
+		Microsoft::WRL::ComPtr<ID3D11BlendState> blendState;
+		float blendFactor[4]{};
+		UINT sampleMask = 0;
+
+		void Clear()
+		{
+			blendState.Reset();
+			blendFactor[0] = blendFactor[1] = blendFactor[2] = blendFactor[3] = 0.0f;
+			sampleMask = 0;
+		}
+	};
+
+	struct ViewportStateCache
+	{
+		static constexpr UINT MAX_VIEWPORTS = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+		D3D11_VIEWPORT viewports[MAX_VIEWPORTS]{};
+		UINT numViewports = 0;
+
+		void Clear()
+		{
+			numViewports = 0;
 		}
 	};
 
@@ -291,6 +361,178 @@ namespace ThroughScope
 	};
 
 	/**
+	 * @brief RAII guard for Pixel Shader state
+	 *
+	 * Backs up pixel shader, constant buffers, shader resources, and samplers.
+	 */
+	class ScopedPSState
+	{
+	public:
+		explicit ScopedPSState(ID3D11DeviceContext* context)
+			: m_context(context)
+		{
+			if (!m_context) return;
+
+			// Backup Pixel Shader
+			ID3D11ClassInstance* classInstances[256];
+			UINT numClassInstances = 256;
+			m_context->PSGetShader(m_state.pixelShader.GetAddressOf(),
+				classInstances, &numClassInstances);
+
+			for (UINT i = 0; i < numClassInstances; ++i) {
+				if (classInstances[i]) {
+					classInstances[i]->Release();
+				}
+			}
+
+			// Backup Constant Buffers
+			ID3D11Buffer* constantBuffers[PSStateCache::MAX_CONSTANT_BUFFERS]{};
+			m_context->PSGetConstantBuffers(0, PSStateCache::MAX_CONSTANT_BUFFERS, constantBuffers);
+			for (UINT i = 0; i < PSStateCache::MAX_CONSTANT_BUFFERS; ++i) {
+				m_state.constantBuffers[i].Attach(constantBuffers[i]);
+			}
+
+			// Backup Shader Resources
+			ID3D11ShaderResourceView* shaderResources[PSStateCache::MAX_SHADER_RESOURCES]{};
+			m_context->PSGetShaderResources(0, PSStateCache::MAX_SHADER_RESOURCES, shaderResources);
+			for (UINT i = 0; i < PSStateCache::MAX_SHADER_RESOURCES; ++i) {
+				m_state.shaderResources[i].Attach(shaderResources[i]);
+			}
+
+			// Backup Samplers
+			ID3D11SamplerState* samplers[PSStateCache::MAX_SAMPLERS]{};
+			m_context->PSGetSamplers(0, PSStateCache::MAX_SAMPLERS, samplers);
+			for (UINT i = 0; i < PSStateCache::MAX_SAMPLERS; ++i) {
+				m_state.samplers[i].Attach(samplers[i]);
+			}
+		}
+
+		~ScopedPSState()
+		{
+			if (!m_context) return;
+
+			m_context->PSSetShader(m_state.pixelShader.Get(), nullptr, 0);
+
+			ID3D11Buffer* constantBuffers[PSStateCache::MAX_CONSTANT_BUFFERS];
+			for (UINT i = 0; i < PSStateCache::MAX_CONSTANT_BUFFERS; ++i) {
+				constantBuffers[i] = m_state.constantBuffers[i].Get();
+			}
+			m_context->PSSetConstantBuffers(0, PSStateCache::MAX_CONSTANT_BUFFERS, constantBuffers);
+
+			ID3D11ShaderResourceView* shaderResources[PSStateCache::MAX_SHADER_RESOURCES];
+			for (UINT i = 0; i < PSStateCache::MAX_SHADER_RESOURCES; ++i) {
+				shaderResources[i] = m_state.shaderResources[i].Get();
+			}
+			m_context->PSSetShaderResources(0, PSStateCache::MAX_SHADER_RESOURCES, shaderResources);
+
+			ID3D11SamplerState* samplers[PSStateCache::MAX_SAMPLERS];
+			for (UINT i = 0; i < PSStateCache::MAX_SAMPLERS; ++i) {
+				samplers[i] = m_state.samplers[i].Get();
+			}
+			m_context->PSSetSamplers(0, PSStateCache::MAX_SAMPLERS, samplers);
+		}
+
+		ScopedPSState(const ScopedPSState&) = delete;
+		ScopedPSState& operator=(const ScopedPSState&) = delete;
+		ScopedPSState(ScopedPSState&&) = delete;
+		ScopedPSState& operator=(ScopedPSState&&) = delete;
+
+	private:
+		ID3D11DeviceContext* m_context;
+		PSStateCache m_state{};
+	};
+
+	/**
+	 * @brief RAII guard for depth-stencil state
+	 */
+	class ScopedOMDepthStencilState
+	{
+	public:
+		explicit ScopedOMDepthStencilState(ID3D11DeviceContext* context)
+			: m_context(context)
+		{
+			if (!m_context) return;
+			m_context->OMGetDepthStencilState(m_state.depthStencilState.GetAddressOf(), &m_state.stencilRef);
+		}
+
+		~ScopedOMDepthStencilState()
+		{
+			if (!m_context) return;
+			m_context->OMSetDepthStencilState(m_state.depthStencilState.Get(), m_state.stencilRef);
+		}
+
+		ScopedOMDepthStencilState(const ScopedOMDepthStencilState&) = delete;
+		ScopedOMDepthStencilState& operator=(const ScopedOMDepthStencilState&) = delete;
+		ScopedOMDepthStencilState(ScopedOMDepthStencilState&&) = delete;
+		ScopedOMDepthStencilState& operator=(ScopedOMDepthStencilState&&) = delete;
+
+	private:
+		ID3D11DeviceContext* m_context;
+		OMDepthStencilStateCache m_state{};
+	};
+
+	/**
+	 * @brief RAII guard for blend state
+	 */
+	class ScopedBlendState
+	{
+	public:
+		explicit ScopedBlendState(ID3D11DeviceContext* context)
+			: m_context(context)
+		{
+			if (!m_context) return;
+			m_context->OMGetBlendState(m_state.blendState.GetAddressOf(), m_state.blendFactor, &m_state.sampleMask);
+		}
+
+		~ScopedBlendState()
+		{
+			if (!m_context) return;
+			m_context->OMSetBlendState(m_state.blendState.Get(), m_state.blendFactor, m_state.sampleMask);
+		}
+
+		ScopedBlendState(const ScopedBlendState&) = delete;
+		ScopedBlendState& operator=(const ScopedBlendState&) = delete;
+		ScopedBlendState(ScopedBlendState&&) = delete;
+		ScopedBlendState& operator=(ScopedBlendState&&) = delete;
+
+	private:
+		ID3D11DeviceContext* m_context;
+		BlendStateCache m_state{};
+	};
+
+	/**
+	 * @brief RAII guard for viewports
+	 */
+	class ScopedViewportState
+	{
+	public:
+		explicit ScopedViewportState(ID3D11DeviceContext* context)
+			: m_context(context)
+		{
+			if (!m_context) return;
+			m_state.numViewports = ViewportStateCache::MAX_VIEWPORTS;
+			m_context->RSGetViewports(&m_state.numViewports, m_state.viewports);
+		}
+
+		~ScopedViewportState()
+		{
+			if (!m_context) return;
+			if (m_state.numViewports > 0) {
+				m_context->RSSetViewports(m_state.numViewports, m_state.viewports);
+			}
+		}
+
+		ScopedViewportState(const ScopedViewportState&) = delete;
+		ScopedViewportState& operator=(const ScopedViewportState&) = delete;
+		ScopedViewportState(ScopedViewportState&&) = delete;
+		ScopedViewportState& operator=(ScopedViewportState&&) = delete;
+
+	private:
+		ID3D11DeviceContext* m_context;
+		ViewportStateCache m_state{};
+	};
+
+	/**
 	 * @brief RAII guard for Output Merger state (render targets and depth stencil)
 	 */
 	class ScopedOMState
@@ -368,6 +610,40 @@ namespace ThroughScope
 		ScopedIAState m_iaState;
 		ScopedVSState m_vsState;
 		ScopedRSState m_rsState;
+	};
+
+	/**
+	 * @brief Combined RAII guard for full render state used around scope rendering
+	 */
+	class ScopedFullRenderState
+	{
+	public:
+		explicit ScopedFullRenderState(ID3D11DeviceContext* context)
+			: m_omState(context)
+			, m_omDepthState(context)
+			, m_blendState(context)
+			, m_rsState(context)
+			, m_viewportState(context)
+			, m_iaState(context)
+			, m_vsState(context)
+			, m_psState(context)
+		{
+		}
+
+		ScopedFullRenderState(const ScopedFullRenderState&) = delete;
+		ScopedFullRenderState& operator=(const ScopedFullRenderState&) = delete;
+		ScopedFullRenderState(ScopedFullRenderState&&) = delete;
+		ScopedFullRenderState& operator=(ScopedFullRenderState&&) = delete;
+
+	private:
+		ScopedOMState m_omState;
+		ScopedOMDepthStencilState m_omDepthState;
+		ScopedBlendState m_blendState;
+		ScopedRSState m_rsState;
+		ScopedViewportState m_viewportState;
+		ScopedIAState m_iaState;
+		ScopedVSState m_vsState;
+		ScopedPSState m_psState;
 	};
 
 	/**

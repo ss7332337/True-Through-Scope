@@ -10,6 +10,7 @@
 #include "rendering/SecondPassRenderer.h"
 #include "rendering/RenderTargetMerger.h"
 #include "rendering/RenderStateManager.h"
+#include "rendering/ScopedRenderState.h"
 #include "ENBIntegration.h"
 #include "FGCompatibility.h"
 #include "rendering/ScopeCulling.h"
@@ -537,28 +538,38 @@ namespace ThroughScope
 				if (context && d3dHooks) { // 需要 d3dHooks 实例来传递给 SecondPassRenderer
 					device = d3dHooks->GetDevice(); // Ensure device matches
 					
-					D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_SecondPass");
-					SecondPassRenderer renderer(context, device, d3dHooks);
-					if (!renderer.ExecuteSecondPass()) {
-						logger::warn("[Render_PreUI Hook] SecondPassRenderer failed");
-					}
-
-					// Merge Render Targets
-					RenderTargetMerger::GetInstance().MergeRenderTargets(context, device);
-
-					if (!FGInterop::IsActive()) FGInterop::Initialize();
-
-					if (FGInterop::IsMaskAPIAvailable()) {
-						ID3D11RenderTargetView* maskRTV = FGInterop::GetMaskRTV();
-						if (maskRTV) {
-							renderer.WriteToMVRegionOverrideMask(maskRTV);
+					{
+						static bool s_stateGuardLogged = false;
+						if (!s_stateGuardLogged) {
+							logger::info("[Render_PreUI Hook] Scope render state guard enabled");
+							s_stateGuardLogged = true;
 						}
+
+						ScopedFullRenderState stateGuard(context);
+
+						D3DPERF_BeginEvent(0xFF00FFFF, L"TrueThroughScope_SecondPass");
+						SecondPassRenderer renderer(context, device, d3dHooks);
+						if (!renderer.ExecuteSecondPass()) {
+							logger::warn("[Render_PreUI Hook] SecondPassRenderer failed");
+						}
+
+						// Merge Render Targets
+						RenderTargetMerger::GetInstance().MergeRenderTargets(context, device);
+
+						if (!FGInterop::IsActive()) FGInterop::Initialize();
+
+						if (FGInterop::IsMaskAPIAvailable()) {
+							ID3D11RenderTargetView* maskRTV = FGInterop::GetMaskRTV();
+							if (maskRTV) {
+								renderer.WriteToMVRegionOverrideMask(maskRTV);
+							}
+						}
+						
+						FGInterop::NotifyMVComplete();
+						
+						D3DPERF_EndEvent();
+						g_scopeRenderMgr->OnFrameEnd();
 					}
-					
-					FGInterop::NotifyMVComplete();
-					
-					D3DPERF_EndEvent();
-					g_scopeRenderMgr->OnFrameEnd();
 				}
 			}
 

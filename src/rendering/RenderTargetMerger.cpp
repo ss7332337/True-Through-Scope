@@ -301,6 +301,23 @@ namespace ThroughScope
 		Microsoft::WRL::ComPtr<ID3D11InputLayout> oldInputLayout;
 		context->IAGetInputLayout(oldInputLayout.GetAddressOf());
 
+		Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> oldPSSRV[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT];
+		Microsoft::WRL::ComPtr<ID3D11SamplerState> oldPSSamplers[D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT];
+		{
+			ID3D11ShaderResourceView* oldPSSRVRaw[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT]{};
+			ID3D11SamplerState* oldPSSamplersRaw[D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT]{};
+
+			context->PSGetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, oldPSSRVRaw);
+			context->PSGetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, oldPSSamplersRaw);
+
+			for (UINT i = 0; i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; ++i) {
+				oldPSSRV[i].Attach(oldPSSRVRaw[i]);
+			}
+			for (UINT i = 0; i < D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT; ++i) {
+				oldPSSamplers[i].Attach(oldPSSamplersRaw[i]);
+			}
+		}
+
 		try {
 			// Setup common state for all merges
 			D3D11_RASTERIZER_DESC rsDesc;
@@ -359,6 +376,17 @@ namespace ThroughScope
 		context->PSSetShader(oldPS.Get(), nullptr, 0);
 		context->IASetPrimitiveTopology(oldTopology);
 		context->IASetInputLayout(oldInputLayout.Get());
+
+		ID3D11ShaderResourceView* restorePSSRV[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT];
+		ID3D11SamplerState* restorePSSamplers[D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT];
+		for (UINT i = 0; i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; ++i) {
+			restorePSSRV[i] = oldPSSRV[i].Get();
+		}
+		for (UINT i = 0; i < D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT; ++i) {
+			restorePSSamplers[i] = oldPSSamplers[i].Get();
+		}
+		context->PSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, restorePSSRV);
+		context->PSSetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, restorePSSamplers);
 
 		D3DPERF_EndEvent();
 	}
