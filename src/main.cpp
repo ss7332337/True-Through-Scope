@@ -332,6 +332,7 @@ F4SE_EXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 			// ThroughScope::SetLaserInvestigationMode(true);
 		} else if (msg->type == F4SE::MessagingInterface::kPostLoadGame) {
 			logger::info("TrueThroughScope: Load a save, reset scope status");
+			ThroughScope::ImGuiManager::GetSingleton()->ForceHideCursor();
 			ResetFirstSpawnState();
 		}
 		else if (msg->type == F4SE::MessagingInterface::kNewGame)

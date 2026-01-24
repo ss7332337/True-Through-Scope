@@ -14,6 +14,8 @@
 #include <DDSTextureLoader11.h>
 #include "ImGuiManager.h"
 
+// 使用 XInput 读取手柄按钮状态
+// 注意：XInput 原生只支持 Xbox 控制器，但 Steam Input 会自动将 PS 控制器映射为 XInput
 #include <xinput.h>
 #pragma comment(lib, "xinput.lib")
 #pragma comment(lib, "d3dcompiler.lib")
@@ -1215,7 +1217,8 @@ namespace ThroughScope {
 			if (imguiMgr->IsMenuOpen())
 			{
 				ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
-				return true;
+				// Chain message to allow other hooks (ENB) to see input.
+				// Game logic ignores input via ControlMap override.
 			}
 			
 		}
@@ -1272,40 +1275,30 @@ namespace ThroughScope {
 
 	void D3DHooks::ProcessGamepadFOVInput()
 	{
-		// 获取当前时间，防止输入过于频繁
+		// 先通过游戏的输入管理器检测手柄是否连接
+		auto inputMgr = RE::BSInputDeviceManager::GetSingleton();
+		if (!inputMgr || !inputMgr->IsGamepadConnected())
+			return;
+		
 		DWORD64 currentTime = GetTickCount64();
 		if (currentTime - s_LastGamepadInputTime < 100)  // 100ms防抖
 			return;
 
+		// 使用 XInput 读取手柄状态
+		// Steam Input 会自动将 PS 控制器（DualShock 4、DualSense）映射为 XInput
 		XINPUT_STATE state;
 		ZeroMemory(&state, sizeof(XINPUT_STATE));
 
-		// 检查第一个手柄
-		if (XInputGetState(0, &state) == ERROR_SUCCESS) {
-			// 使用右摇杆Y轴或肩键来调整FOV
-			SHORT rightThumbY = state.Gamepad.sThumbRY;
+		if (XInputGetState(0, &state) != ERROR_SUCCESS)
+			return;
 
-			// 设置死区
-			const SHORT THUMB_DEADZONE = 8000;
-
-			if (abs(rightThumbY) > THUMB_DEADZONE) {
-				// 将摇杆值转换为FOV调整量
-				float normalizedInput = (float)rightThumbY / 32767.0f;
-				float fovDelta = normalizedInput * s_FOVAdjustmentSensitivity;
-
-				ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() + fovDelta);
-				s_LastGamepadInputTime = currentTime;
-				return;
-			}
-
-			// 检查肩键 (LB/RB)
-			if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) {
-				ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() - s_FOVAdjustmentSensitivity * 2);
-				s_LastGamepadInputTime = currentTime;
-			} else if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) {
-				ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() + s_FOVAdjustmentSensitivity * 2);
-				s_LastGamepadInputTime = currentTime;
-			}
+		// D-pad 调整 FOV
+		if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) {
+			ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() - s_FOVAdjustmentSensitivity * 2);
+			s_LastGamepadInputTime = currentTime;
+		} else if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) {
+			ScopeCamera::SetTargetFOV(ScopeCamera::GetTargetFOV() + s_FOVAdjustmentSensitivity * 2);
+			s_LastGamepadInputTime = currentTime;
 		}
 	}
 

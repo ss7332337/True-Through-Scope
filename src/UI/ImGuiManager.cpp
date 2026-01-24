@@ -34,6 +34,9 @@ namespace ThroughScope
 			}
 		}
 
+
+
+
 		// 检查是否已经有ImGui上下文存在（避免与其他MOD冲突）
 		if (ImGui::GetCurrentContext() != nullptr) {
 			logger::warn("ImGui context already exists, using existing context");
@@ -261,7 +264,27 @@ namespace ThroughScope
 		{
 			ToggleMenu();
 			auto mc = RE::MenuCursor::GetSingleton();
-			REX::W32::ShowCursor(m_MenuOpen);
+			
+			if (m_MenuOpen) {
+				// Show cursor (respecting external visibility)
+				int count = REX::W32::ShowCursor(TRUE);
+				if (count > 0) {
+					// Already visible, borrow it
+					REX::W32::ShowCursor(FALSE);
+					m_BorrowedCursor = true;
+				} else {
+					m_BorrowedCursor = false;
+					// Ensure visibility (capped)
+					int safety = 0;
+					while (count < 0 && safety++ < 50) count = REX::W32::ShowCursor(TRUE);
+				}
+			} else {
+				if (m_BorrowedCursor) {
+					m_BorrowedCursor = false;
+				} else {
+					REX::W32::ShowCursor(FALSE);
+				}
+			}
 
 			auto input = RE::BSInputDeviceManager::GetSingleton();
 			RE::ControlMap::GetSingleton()->ignoreKeyboardMouse = m_MenuOpen;
@@ -610,6 +633,19 @@ namespace ThroughScope
 	{
 		m_FontRebuildRequested = true;
 
+	}
+
+	void ImGuiManager::ForceHideCursor()
+	{
+		int count = REX::W32::ShowCursor(FALSE);
+		int safety = 0;
+		while (count >= 0 && safety++ < 50) {
+			count = REX::W32::ShowCursor(FALSE);
+		}
+		
+		if (safety >= 50) {
+			logger::warn("ForceHideCursor failed to hide cursor (count stuck at {})", count);
+		}
 	}
 
 }

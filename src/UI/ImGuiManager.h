@@ -91,6 +91,10 @@ namespace ThroughScope
 		bool m_HasUnsavedChanges = false;
 		bool m_FontRebuildRequested = false;  // 添加字体重建请求标志
 		bool m_CreatedImGuiContext = false;   // 跟踪是否由我们创建了ImGui上下文
+		bool m_BorrowedCursor = false;        // Track if we are sharing visibility with another tool (e.g. ENB)
+
+	public:
+		void ForceHideCursor();
 
 		static UINT s_unsavedChangeCount;
 		// 调试信息
