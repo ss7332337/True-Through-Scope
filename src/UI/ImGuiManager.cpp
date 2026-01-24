@@ -214,6 +214,21 @@ namespace ThroughScope
 		if (!m_Initialized || !m_MenuOpen)
 			return;
 
+		ImGuiContext* ctx = ImGui::GetCurrentContext();
+		if (ctx == nullptr)
+			return;
+
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		if (rendererData && rendererData->renderWindow && rendererData->renderWindow->swapChain) {
+			auto swapchain = (IDXGISwapChain*)static_cast<void*>(rendererData->renderWindow->swapChain);
+			DXGI_SWAP_CHAIN_DESC sd;
+			if (SUCCEEDED(swapchain->GetDesc(&sd))) {
+				if (GetForegroundWindow() != sd.OutputWindow) {
+					return;
+				}
+			}
+		}
+
 		// 开始ImGui帧
 		ImGui_ImplDX11_NewFrame();
 		ImGui_ImplWin32_NewFrame();

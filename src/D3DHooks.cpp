@@ -150,9 +150,6 @@ namespace ThroughScope {
 
 	bool D3DHooks::isSelfDrawCall = false;
 
-	ImGuiIO io;
-
-
 	void D3DHooks::UpdateScopeParallaxSettings(float parallaxStrength, float exitPupilRadius, float vignetteStrength, float vignetteRadius)
 	{
 		s_ParallaxStrength = parallaxStrength;
@@ -1186,7 +1183,11 @@ namespace ThroughScope {
 		HRESULT result = S_OK;
 
 		if (imguiMgr && imguiMgr->IsInitialized()) {
-			io.WantCaptureMouse = imguiMgr->IsMenuOpen();
+			ImGuiContext* ctx = ImGui::GetCurrentContext();
+			if (ctx != nullptr) {
+				ImGuiIO& io = ImGui::GetIO();
+				io.WantCaptureMouse = imguiMgr->IsMenuOpen();
+			}
 			imguiMgr->Update();
 			imguiMgr->Render();
 		}
@@ -1200,6 +1201,27 @@ namespace ThroughScope {
 
 	LRESULT CALLBACK D3DHooks::hkWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	{
+		if (uMsg == WM_ACTIVATE) {
+			WORD activateState = LOWORD(wParam);
+			if (activateState == WA_INACTIVE) {
+				if (imguiMgr && imguiMgr->IsMenuOpen()) {
+					imguiMgr->ToggleMenu();
+					imguiMgr->ForceHideCursor();
+					RE::ControlMap::GetSingleton()->ignoreKeyboardMouse = false;
+				}
+				return CallWindowProc(s_OriginalWndProc, hWnd, uMsg, wParam, lParam);
+			}
+		}
+
+		if (uMsg == WM_KILLFOCUS) {
+			if (imguiMgr && imguiMgr->IsMenuOpen()) {
+				imguiMgr->ToggleMenu();
+				imguiMgr->ForceHideCursor();
+				RE::ControlMap::GetSingleton()->ignoreKeyboardMouse = false;
+			}
+			return CallWindowProc(s_OriginalWndProc, hWnd, uMsg, wParam, lParam);
+		}
+
 		auto playerChar = RE::PlayerCharacter::GetSingleton();
 		if (uMsg == WM_MOUSEWHEEL && s_EnableFOVAdjustment && playerChar && Utilities::IsInADS(playerChar)) {
 			if (ScopeCamera::s_CurrentScopeNode) {
@@ -1209,18 +1231,13 @@ namespace ThroughScope {
 			}
 		}
 
-		
-
-		if (imguiMgr && imguiMgr->IsInitialized() && imguiMgr->IsMenuOpen()) 
-		{
-			io = ImGui::GetIO();
-			if (imguiMgr->IsMenuOpen())
-			{
-				ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
-				// Chain message to allow other hooks (ENB) to see input.
-				// Game logic ignores input via ControlMap override.
+		if (imguiMgr && imguiMgr->IsInitialized() && imguiMgr->IsMenuOpen()) {
+			if (GetForegroundWindow() == hWnd) {
+				ImGuiContext* ctx = ImGui::GetCurrentContext();
+				if (ctx != nullptr) {
+					ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
+				}
 			}
-			
 		}
 
 		return CallWindowProc(s_OriginalWndProc, hWnd, uMsg, wParam, lParam);
