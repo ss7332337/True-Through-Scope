@@ -345,30 +345,55 @@ namespace ThroughScope
 				// 检查是否应该跳过裁剪（重要/特殊物体）
 				bool skipCulling = false;
 				
-				// 1. 跳过没有有效包围球的物体（可能是特殊几何体）
-				const RE::NiBound& wb = apObj->worldBound;
-				if (wb.fRadius <= 0.0f) {
+				// 1. 跳过第一人称CullingGroup（k1stPersonCullingGroup）
+				if (thisPtr == ptr_k1stPersonCullingGroup.get()) {
 					skipCulling = true;
 				}
 				
-				// 2. 跳过包围球中心在原点附近的物体（可能是屏幕空间几何体）
+				// 2. 跳过无效包围球
 				if (!skipCulling) {
-					float distFromOrigin = sqrtf(wb.center.x * wb.center.x + 
-					                             wb.center.y * wb.center.y + 
-					                             wb.center.z * wb.center.z);
-					if (distFromOrigin < 500.0f) {  // 小于500单位视为屏幕空间物体
+					const RE::NiBound& wb = apObj->worldBound;
+					if (wb.fRadius <= 0.0f) {
 						skipCulling = true;
 					}
 				}
 				
-				// 3. 跳过特定名称的物体（天空、天气、瞄具等）
+				// 3. 跳过原点附近物体（屏幕空间几何体）
+				if (!skipCulling) {
+					const RE::NiBound& wb = apObj->worldBound;
+					float distFromOrigin = sqrtf(wb.center.x * wb.center.x + 
+					                             wb.center.y * wb.center.y + 
+					                             wb.center.z * wb.center.z);
+					if (distFromOrigin < 500.0f) {
+						skipCulling = true;
+					}
+				}
+				
+				// 4. 跳过特定名称物体
 				if (!skipCulling && apObj->name.c_str()) {
 					const char* name = apObj->name.c_str();
 					if (strstr(name, "Sky") || strstr(name, "Weather") 
-						|| strstr(name, "Scope") || strstr(name, "TTS") 
-						//|| strstr(name, "Cloud") || strstr(name, "Lens")
-						) {
+						|| strstr(name, "Scope") || strstr(name, "TTS")) {
 						skipCulling = true;
+					}
+				}
+				
+				// 5. Shadow Caster保护：跳过近距离物体以保留阴影
+				if (!skipCulling) {
+					auto scopeCamera = ScopeCamera::GetScopeCamera();
+					if (scopeCamera) {
+						const RE::NiBound& wb = apObj->worldBound;
+						const RE::NiPoint3& camPos = scopeCamera->world.translate;
+						
+						float dx = wb.center.x - camPos.x;
+						float dy = wb.center.y - camPos.y;
+						float dz = wb.center.z - camPos.z;
+						float distToCamera = sqrtf(dx * dx + dy * dy + dz * dz);
+						
+						const float kShadowCasterRange = GetShadowCasterRange();
+						if (distToCamera < kShadowCasterRange) {
+							skipCulling = true;
+						}
 					}
 				}
 				

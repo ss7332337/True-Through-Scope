@@ -211,10 +211,13 @@ namespace ThroughScope
 	{
 		RenderSectionHeader(LOC("settings.advanced"));
 		
-		// 裁剪安全余量
-		float margin = GetCullingSafetyMargin();
-		// 允许调整范围 -2.0 到 2.0 (-200% ~ +200%)
-		// 默认 0.05 (5%)
+		// 从 DataPersistence 读取当前值
+		// auto dataPersistence = DataPersistence::GetSingleton();
+		// auto globalSettings = dataPersistence->GetGlobalSettings();
+		
+		// 使用临时变量
+		// float margin = globalSettings.cullingSafetyMargin;
+		// float shadowRange = globalSettings.shadowCasterRange;
 
 		// Show Culling Stats
 		ImGui::Spacing();
@@ -223,7 +226,6 @@ namespace ThroughScope
 		ImGui::Text(LOC("debug.culling_stats"));
 
 		uint32_t tested, passed, filtered;
-		// Removed ScopeCulling:: prefix
 		GetLastFrameCullingStats(tested, passed, filtered);
 		float rate = tested > 0 ? (float)filtered / tested * 100.0f : 0.0f;
 
@@ -233,10 +235,21 @@ namespace ThroughScope
 		ImGui::SameLine();
 		ImGui::Text("Filtered: %d (%.1f%%)", filtered, rate);
 
-		if (ImGui::SliderFloat("Culling Safety Margin", &margin, -2.0f, 2.0f, "%.2f")) {
-			SetCullingSafetyMargin(margin);
+		bool changed = false;
+		
+		if (ImGui::SliderFloat(LOC("settings.advanced.culling_margin"), &m_TempCullingSafetyMargin, -2.0f, 2.0f, "%.2f")) {
+			// 仅实时应用以供预览，但不保存
+			SetCullingSafetyMargin(m_TempCullingSafetyMargin);
+			MarkSettingsChanged();
 		}
-		RenderHelpTooltip("Adjusts the frustum culling bound safety margin.\nPositive values ensure less culling (safer).\nNegative values cull more aggressively (riskier).\nDefault: 0.05");
+		RenderHelpTooltip(LOC("settings.advanced.culling_margin.desc"));
+
+		if (ImGui::SliderFloat(LOC("settings.advanced.shadow_range"), &m_TempShadowCasterRange, 500.0f, 10000.0f, "%.0f")) {
+			// 仅实时应用以供预览，但不保存
+			SetShadowCasterRange(m_TempShadowCasterRange);
+			MarkSettingsChanged();
+		}
+		RenderHelpTooltip(LOC("settings.advanced.shadow_range.desc"));
 	}
 
 	void SettingsPanel::RenderActionButtons()
@@ -311,6 +324,15 @@ namespace ThroughScope
 		
 
 
+
+		// 初始化高级设置的临时变量
+		m_TempCullingSafetyMargin = globalSettings.cullingSafetyMargin;
+		m_TempShadowCasterRange = globalSettings.shadowCasterRange;
+		
+		// 确保引擎也使用了当前的设置值
+		SetCullingSafetyMargin(m_TempCullingSafetyMargin);
+		SetShadowCasterRange(m_TempShadowCasterRange);
+
 		m_SettingsChanged = false;
 		return true;
 	}
@@ -337,8 +359,10 @@ namespace ThroughScope
 			globalSettings.nightVisionKeyBindings[0] = ImGuiKeyToVK(m_KeyBindingSettings.nightVisionKeys.primaryKey);
 			globalSettings.nightVisionKeyBindings[1] = ImGuiKeyToVK(m_KeyBindingSettings.nightVisionKeys.modifier);
 			globalSettings.nightVisionKeyBindings[2] = 0;  // 无第二修饰键
-			
-
+						
+			// 保存高级设置
+			globalSettings.cullingSafetyMargin = m_TempCullingSafetyMargin;
+			globalSettings.shadowCasterRange = m_TempShadowCasterRange;
 			
 			// 保存到DataPersistence
 			dataPersistence->SetGlobalSettings(globalSettings);
@@ -355,6 +379,15 @@ namespace ThroughScope
 	{
 		m_UISettings = UISettings{};
 		m_KeyBindingSettings = KeyBindingSettings{};
+		
+		// 重置高级设置
+		m_TempCullingSafetyMargin = 0.05f;
+		m_TempShadowCasterRange = 5500.0f;
+		
+		// 立即应用重置的效果以便用户看到变化（但仍需保存确认）
+		SetCullingSafetyMargin(m_TempCullingSafetyMargin);
+		SetShadowCasterRange(m_TempShadowCasterRange);
+		
 		MarkSettingsChanged();
 	}
 

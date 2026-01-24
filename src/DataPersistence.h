@@ -129,6 +129,10 @@ namespace ThroughScope
 			
 			// 语言设置
 			int selectedLanguage = 0;  // 0 = English (Language::English)
+			
+			// 高级裁剪设置
+			float cullingSafetyMargin = 0.05f;  // 默认 5%
+			float shadowCasterRange = 5500.0f;   // 默认 5500 游戏单位
 		};
 
 		struct WeaponInfo

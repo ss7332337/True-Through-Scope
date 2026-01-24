@@ -141,4 +141,9 @@ namespace ThroughScope
      * @brief Get current safety margin
      */
     float GetCullingSafetyMargin();
+
+    // ========== Shadow Caster Range ==========
+
+    void SetShadowCasterRange(float range);
+    float GetShadowCasterRange();
 }

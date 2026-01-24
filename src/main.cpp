@@ -23,6 +23,7 @@
 #include "rendering/RenderStateManager.h"
 #include "rendering/ScopeRenderingManager.h"
 #include "rendering/RenderTargetMerger.h"
+#include "rendering/ScopeCulling.h"
 #include "ENBIntegration.h"
 
 using namespace RE;
@@ -196,6 +197,12 @@ DWORD WINAPI InitThread(HMODULE hModule)
 	g_renderStateMgr->SetScopeReady(scopeReady);
 	g_renderStateMgr->SetRenderReady(renderReady);
 	ThroughScope::ggg_ScopeCamera = ThroughScope::ScopeCamera::GetScopeCamera();
+	
+	// 从 DataPersistence 加载并应用高级裁剪设置
+	auto dataPersistence = ThroughScope::DataPersistence::GetSingleton();
+	const auto& globalSettings = dataPersistence->GetGlobalSettings();
+	ThroughScope::SetCullingSafetyMargin(globalSettings.cullingSafetyMargin);
+	ThroughScope::SetShadowCasterRange(globalSettings.shadowCasterRange);
 
 	logger::info("TrueThroughScope: ThroughScope initialization completed");
 	return 0;

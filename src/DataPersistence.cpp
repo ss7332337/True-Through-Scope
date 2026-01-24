@@ -456,7 +456,9 @@ namespace ThroughScope
 				{ "menuKeyBindings", m_GlobalSettings.menuKeyBindings },
 				{ "nightVisionKeyBindings", m_GlobalSettings.nightVisionKeyBindings },
 
-				{ "selectedLanguage", m_GlobalSettings.selectedLanguage }
+				{ "selectedLanguage", m_GlobalSettings.selectedLanguage },
+				{ "cullingSafetyMargin", m_GlobalSettings.cullingSafetyMargin },
+				{ "shadowCasterRange", m_GlobalSettings.shadowCasterRange }
 			};
 
 			// Create directory if it doesn't exist
@@ -486,8 +488,9 @@ namespace ThroughScope
 
 				m_GlobalSettings.menuKeyBindings = { 113, 0, 0 };          // F2
 				m_GlobalSettings.nightVisionKeyBindings = { 88, 16, 0 };    // LShift + X
-
 				m_GlobalSettings.selectedLanguage = 0;  // Default to English
+				m_GlobalSettings.cullingSafetyMargin = 0.05f;  // 5%
+				m_GlobalSettings.shadowCasterRange = 5500.0f;
 
 				return SaveGlobalConfig();
 			}
@@ -508,13 +511,24 @@ namespace ThroughScope
 				m_GlobalSettings.nightVisionKeyBindings = { 88, 16, 0 };
 			}
 
-
-
 			// 加载语言设置
 			if (globalJson.contains("selectedLanguage")) {
 				m_GlobalSettings.selectedLanguage = globalJson["selectedLanguage"].get<int>();
 			} else {
 				m_GlobalSettings.selectedLanguage = 0;  // Default to English
+			}
+			
+			// 加载高级裁剪设置
+			if (globalJson.contains("cullingSafetyMargin")) {
+				m_GlobalSettings.cullingSafetyMargin = globalJson["cullingSafetyMargin"].get<float>();
+			} else {
+				m_GlobalSettings.cullingSafetyMargin = 0.05f;
+			}
+			
+			if (globalJson.contains("shadowCasterRange")) {
+				m_GlobalSettings.shadowCasterRange = globalJson["shadowCasterRange"].get<float>();
+			} else {
+				m_GlobalSettings.shadowCasterRange = 5500.0f;
 			}
 
 			return true;
@@ -524,8 +538,9 @@ namespace ThroughScope
 			// Set default key bindings
 			m_GlobalSettings.menuKeyBindings = { 113, 0, 0 };
 			m_GlobalSettings.nightVisionKeyBindings = { 88, 16, 0 };
-
 			m_GlobalSettings.selectedLanguage = 0;  // Default to English
+			m_GlobalSettings.cullingSafetyMargin = 0.05f;
+			m_GlobalSettings.shadowCasterRange = 5500.0f;
 
 			return SaveGlobalConfig();
 		}

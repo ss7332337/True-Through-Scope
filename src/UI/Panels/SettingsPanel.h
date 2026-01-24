@@ -65,6 +65,10 @@ namespace ThroughScope
         UISettings m_UISettings;
         KeyBindingSettings m_KeyBindingSettings;
         
+        // 临时设置变量（用于延迟保存）
+        float m_TempCullingSafetyMargin = 0.05f;
+        float m_TempShadowCasterRange = 5500.0f;
+        
         // UI状态
         bool m_SettingsChanged = false;
         bool m_ShowAdvancedSettings = false;

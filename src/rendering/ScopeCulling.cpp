@@ -321,4 +321,18 @@ namespace ThroughScope
     {
         return s_CullSafetyMargin;
     }
+
+    // ========== Shadow Caster Range ==========
+    
+    static float s_ShadowCasterRange = 5500.0f;
+
+    void SetShadowCasterRange(float range)
+    {
+        s_ShadowCasterRange = range;
+    }
+
+    float GetShadowCasterRange()
+    {
+        return s_ShadowCasterRange;
+    }
 }
