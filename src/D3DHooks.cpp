@@ -106,6 +106,15 @@ namespace ThroughScope {
     bool D3DHooks::s_IsCapturingHDR = false; // 定义静态变量
     uint64_t D3DHooks::s_FrameNumber = 0;  // 帧计数器
 
+	// Parallax accumulation state
+	bool D3DHooks::s_ParallaxInitialized = false;
+	RE::NiPoint3 D3DHooks::s_AccumulatedParallaxOffset(0, 0, 0);
+
+	void D3DHooks::ResetParallaxState()
+	{
+		s_ParallaxInitialized = false;
+		s_AccumulatedParallaxOffset = RE::NiPoint3(0, 0, 0);
+	}
 
 	// 夜视效果参数初始化
 	float D3DHooks::s_NightVisionIntensity = 1.0f;
@@ -889,33 +898,42 @@ namespace ThroughScope {
 			// 上一帧的前方向
 			RE::NiPoint3 lastForward(lastRot.entry[1].x, lastRot.entry[1].y, lastRot.entry[1].z);
 			
-			// 计算帧间朝向变化（这就是"晃动"量）
-			RE::NiPoint3 forwardDelta = currentForward - lastForward;
+			// Decay factor for accumulated offset
+			constexpr float decayFactor = 0.95f;
+			constexpr float sensitivityFactor = 500.0f;
 			
-			// 将朝向变化放大并转换为"位置偏移"
-			// 使用累积效果：每帧的变化会平滑累积
-			static RE::NiPoint3 accumulatedOffset(0, 0, 0);
-			static float decayFactor = 0.95f;  // 衰减系数，控制偏移的持续时间
-			
-			// 累积新的偏移（放大因子控制灵敏度）
-			float sensitivityFactor = 500.0f;  // 朝向变化非常小，需要放大
-			accumulatedOffset = accumulatedOffset * decayFactor + forwardDelta * sensitivityFactor;
+			if (!s_ParallaxInitialized) {
+				s_ParallaxInitialized = true;
+				s_AccumulatedParallaxOffset = RE::NiPoint3(0, 0, 0);
+				// Don't accumulate on first frame - just initialize
+			} else {
+				RE::NiPoint3 forwardDelta = currentForward - lastForward;
+				
+				float deltaLen = std::sqrt(forwardDelta.x * forwardDelta.x + 
+				                           forwardDelta.y * forwardDelta.y + 
+				                           forwardDelta.z * forwardDelta.z);
+				if (deltaLen > 0.1f) {
+					// Reset and skip this frame
+					s_AccumulatedParallaxOffset = RE::NiPoint3(0, 0, 0);
+				} else {
+					// Normal case: accumulate offset
+					s_AccumulatedParallaxOffset = s_AccumulatedParallaxOffset * decayFactor + forwardDelta * sensitivityFactor;
+				}
+			}
 			
 			// 限制最大偏移量
 			float maxOffset = 50.0f;
-			float offsetLen = std::sqrt(accumulatedOffset.x * accumulatedOffset.x + 
-			                           accumulatedOffset.y * accumulatedOffset.y + 
-			                           accumulatedOffset.z * accumulatedOffset.z);
+			float offsetLen = std::sqrt(s_AccumulatedParallaxOffset.x * s_AccumulatedParallaxOffset.x + 
+			                           s_AccumulatedParallaxOffset.y * s_AccumulatedParallaxOffset.y + 
+			                           s_AccumulatedParallaxOffset.z * s_AccumulatedParallaxOffset.z);
 			if (offsetLen > maxOffset) {
 				float scale = maxOffset / offsetLen;
-				accumulatedOffset.x *= scale;
-				accumulatedOffset.y *= scale;
-				accumulatedOffset.z *= scale;
+				s_AccumulatedParallaxOffset.x *= scale;
+				s_AccumulatedParallaxOffset.y *= scale;
+				s_AccumulatedParallaxOffset.z *= scale;
 			}
-			
-			// cameraPos = scopePos + 累积偏移
-			// 这样 HLSL 中 (cameraPos - scopePos) = accumulatedOffset
-			cameraPos = scopePos + accumulatedOffset;
+		
+			cameraPos = scopePos + s_AccumulatedParallaxOffset;
 			lastCameraPos = lastScopePos;  // 上一帧相对位置接近0
 		}
 

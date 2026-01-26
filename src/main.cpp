@@ -147,6 +147,7 @@ namespace ThroughScope
 		ScopeCamera::hasFirstSpawnNode = false;
 		ScopeCamera::isDelayStarted = false;
 		ScopeCamera::isFirstScopeRender = true;
+		D3DHooks::ResetParallaxState();
 
 		// 读档后立即恢复ZoomData
 		std::thread([]() {
@@ -155,8 +156,6 @@ namespace ThroughScope
 			logger::info("Restored ZoomData after load game");
 		}).detach();
 	}
-
-
 } // namespace ThroughScope
 
 

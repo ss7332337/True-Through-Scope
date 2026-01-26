@@ -235,8 +235,7 @@ namespace ThroughScope {
 
 		static bool isSelfDrawCall;
 
-
-
+		static void ResetParallaxState();
 	private:
 		struct BufferInfo
 		{
@@ -311,6 +310,10 @@ namespace ThroughScope {
 
 
 	private:
+		// Parallax accumulation state (moved from local statics for reset capability)
+		static bool s_ParallaxInitialized;
+		static RE::NiPoint3 s_AccumulatedParallaxOffset;
+
 		static bool s_EnableFOVAdjustment;
 		static float s_FOVAdjustmentSensitivity;
 		static DWORD64 s_LastGamepadInputTime;  // 防止手柄输入过于频繁
