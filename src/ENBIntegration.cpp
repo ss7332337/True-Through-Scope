@@ -11,6 +11,12 @@ namespace ThroughScope
 
 	bool ENBIntegration::Initialize()
 	{
+		// [TEMP] 临时禁用 ENB 集成
+		logger::info("[ENB Integration] ENB integration is temporarily disabled");
+		m_enbDetected = false;
+		m_integrationEnabled = false;
+		return false;
+
 		logger::info("[ENB Integration] Initializing ENB integration...");
 
 		// 尝试获取 ENB API

@@ -84,6 +84,14 @@ struct PS_INPUT
     //float4 fogColor : COLOR1;
 };
 
+// Output struct for ENB SSAO compatibility
+// SV_Depth outputs far-plane depth (0.0 in reversed-Z) to clear vanilla scope footprint
+struct PS_OUTPUT
+{
+    float4 Color : SV_Target0;
+    float Depth : SV_Depth;
+};
+
 // ============================================================================
 // 新的科学视差系统 - 基于真实瞄镜光学原理
 // ============================================================================
@@ -376,7 +384,7 @@ float4 sampleWithSphericalDistortionAndChromatic(Texture2D tex, SamplerState sam
     return lerp(originalSample, distortedSample, borderMask);
 }
 
-float4 main(PS_INPUT input) : SV_TARGET
+PS_OUTPUT main(PS_INPUT input)
 {
     float2 texCoord = input.position.xy / float2(viewportWidth, viewportHeight);
     float2 aspectCorrectTex = aspect_ratio_correction(texCoord);
@@ -471,5 +479,11 @@ float4 main(PS_INPUT input) : SV_TARGET
     // 亮度增强（可选，用于补偿整体变暗）
     finalColor *= max(brightnessBoost, 1.0);
 
-    return float4(finalColor, color.a);
+    // Create output with color and far-plane depth
+    PS_OUTPUT output;
+    output.Color = float4(finalColor, color.a);
+    // Output far-plane depth (0.0 in Fallout 4's reversed-Z) to clear vanilla scope footprint
+    // This prevents ENB SSAO from seeing the scope quad as an occluder
+    output.Depth = 0.0;
+    return output;
 }

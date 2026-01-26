@@ -1087,6 +1087,14 @@ namespace ThroughScope {
 			if (rendererData && rendererData->depthStencilTargets[2].dsView[0]) {
 				stencilDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[2].dsView[0];
 			}
+			
+			// 如果没有有效的 DSV，无法写入深度和 stencil
+			if (!stencilDSV) {
+				logger::warn("SetScopeTexture: No valid DSV available, skipping depth/stencil write");
+				D3DPERF_EndEvent();
+				device->Release();
+				return;
+			}
 
 			// 使用 RT4 作为渲染目标 (Upscaling 兼容)
 			// Upscaling MOD 从 RT4 复制数据，所以必须渲染到 RT4
@@ -1107,12 +1115,14 @@ namespace ThroughScope {
 			D3D11_VIEWPORT oldViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
 			pContext->RSGetViewports(&numViewports, oldViewports);
 
-			// 创建写入 stencil 的 DSS（禁用深度测试，避免被场景深度遮挡）
+			// 创建写入 stencil 和深度的 DSS
+			// 深度测试总是通过，这样 ScopeQuad 不会被场景深度遮挡
+			// 但我们仍然写入深度，以便后续效果（如景深、SSAO）可以正确处理瞄具区域
 			D3D11_DEPTH_STENCIL_DESC dssDesc;
 			ZeroMemory(&dssDesc, sizeof(dssDesc));
-			dssDesc.DepthEnable = FALSE;  // 禁用深度测试，避免 ScopeQuad 被场景深度遮挡
-			dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;  // 不写入深度
-			dssDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+			dssDesc.DepthEnable = TRUE;   // 启用深度，但使用 ALWAYS 比较确保不被遮挡
+			dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;  // 写入深度值
+			dssDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;  // 总是通过深度测试
 			dssDesc.StencilEnable = TRUE;
 			dssDesc.StencilReadMask = 0xFF;
 			dssDesc.StencilWriteMask = 0xFF;  // 允许写入 stencil

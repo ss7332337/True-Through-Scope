@@ -325,7 +325,20 @@ namespace ThroughScope
 		}
 
 		// 清理深度模板缓冲区
-		m_context->ClearDepthStencilView(m_mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+		// [ENB FIX] 使用 0.0f (远平面) 而不是 1.0f (近平面) 清除深度
+		// 在 Fallout 4 的 reversed-Z 系统中：0.0 = 远平面，1.0 = 近平面
+		// 清除到远平面让 ENB Detailed Shadow 认为此区域没有遮挡物
+		m_context->ClearDepthStencilView(m_mainDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 0.0f, 0);
+
+		// [FIX] 清理 Shadow Map 深度缓冲区 (depthStencilTargets[8])
+		// 这是解决 RT58 (DeferredDiffuse) 中出现第一次渲染武器阴影的关键
+		// Shadow Map 存储了从光源视角的深度信息，如果不清理，延迟光照会使用第一次渲染的阴影数据
+		constexpr int kShadowMapDSIndex = 8;
+		if (rendererData->depthStencilTargets[kShadowMapDSIndex].dsView[0]) {
+			ID3D11DepthStencilView* shadowMapDSV = (ID3D11DepthStencilView*)rendererData->depthStencilTargets[kShadowMapDSIndex].dsView[0];
+			// [ENB FIX] 同样使用 0.0f 清除 Shadow Map
+			m_context->ClearDepthStencilView(shadowMapDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 0.0f, 0);
+		}
 
 		static const int allGBuffers[] = { 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 };
 		for (int bufIdx : allGBuffers) {
@@ -749,7 +762,8 @@ namespace ThroughScope
 				
 				if (frameBufferRTV) {
 					targetRTV = frameBufferRTV;
-					m_context->OMSetRenderTargets(1, &frameBufferRTV, nullptr);
+					// [FIX] 绑定 DSV 以确保 SetScopeTexture 可以正确写入深度
+					m_context->OMSetRenderTargets(1, &frameBufferRTV, m_mainDSV);
 					
 					// 获取 FrameBuffer 尺寸
 					ID3D11Resource* rtResource = nullptr;
@@ -769,7 +783,8 @@ namespace ThroughScope
 				}
 			} else if (m_savedRTVs[1]) {
 				targetRTV = m_savedRTVs[1];
-				m_context->OMSetRenderTargets(1, &m_savedRTVs[1], nullptr);
+				// [FIX] 绑定 DSV 以确保 SetScopeTexture 可以正确写入深度
+				m_context->OMSetRenderTargets(1, &m_savedRTVs[1], m_mainDSV);
 				
 				// 获取渲染目标的实际尺寸
 				ID3D11Resource* rtResource = nullptr;
@@ -789,7 +804,8 @@ namespace ThroughScope
 				// PreUI 阶段或其他情况: 使用主渲染目标
 				if (rendererData && m_mainRTV) {
 					targetRTV = m_mainRTV;
-					m_context->OMSetRenderTargets(1, &m_mainRTV, nullptr);
+					// [FIX] 绑定 DSV 以确保 SetScopeTexture 可以正确写入深度
+					m_context->OMSetRenderTargets(1, &m_mainRTV, m_mainDSV);
 					
 					if (m_mainRTTexture) {
 						D3D11_TEXTURE2D_DESC mainDesc;
